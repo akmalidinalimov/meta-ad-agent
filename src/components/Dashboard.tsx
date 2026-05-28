@@ -45,6 +45,7 @@ import {
   deriveCreativeScores,
   deriveFunnel,
   derivePlacementScores,
+  deriveRankingRows,
   deriveTrend,
   filterMetricsForDashboard,
   formatNumber,
@@ -61,6 +62,7 @@ import type {
   DailyAdMetric,
   IconName,
   Placement,
+  RankingRow,
   TrackingHealthItem,
   Tone,
 } from '../types/marketing'
@@ -79,6 +81,7 @@ const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'rankings', label: 'Rankings', icon: BarChart3 },
   { id: 'creatives', label: 'Creatives', icon: Film },
   { id: 'funnel', label: 'Funnel', icon: MousePointerClick },
   { id: 'audiences', label: 'Audiences', icon: Users },
@@ -248,6 +251,7 @@ export function Dashboard({ data }: DashboardProps) {
               placements={placements}
             />
           )}
+          {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
           {activeView === 'creatives' && (
             <CreativesView
               data={data}
@@ -831,6 +835,92 @@ function CreativesView({
         )}
       </article>
     </section>
+  )
+}
+
+function RankingsView({ data, metrics }: { data: DashboardData; metrics: DailyAdMetric[] }) {
+  const campaignRankings = deriveRankingRows(
+    metrics,
+    data.campaigns.map((campaign) => ({
+      id: campaign.id,
+      name: campaign.name,
+      category: 'campaign',
+      metricIds: new Set([campaign.id]),
+    })),
+  )
+  const creativeRankings = deriveRankingRows(
+    metrics,
+    data.creatives.map((creative) => ({
+      id: creative.id,
+      name: creative.name,
+      category: 'creative',
+      metricIds: new Set([creative.id]),
+    })),
+  )
+  const audienceRankings = deriveRankingRows(
+    metrics,
+    data.adSets.map((adSet) => ({
+      id: adSet.id,
+      name: adSet.name,
+      category: 'audience',
+      metricIds: new Set([adSet.id]),
+    })),
+  )
+  const placementRankings = deriveRankingRows(
+    metrics,
+    Array.from(new Set(metrics.map((metric) => metric.placement))).map((placement) => ({
+      id: placement,
+      name: labelPlacement(placement),
+      category: 'placement',
+      metricIds: new Set([placement]),
+    })),
+  )
+
+  return (
+    <section className="rankings-grid">
+      <RankingPanel title="Campaign Ranking" rows={campaignRankings} />
+      <RankingPanel title="Creative Ranking" rows={creativeRankings} />
+      <RankingPanel title="Audience / Ad Set Ranking" rows={audienceRankings} />
+      <RankingPanel title="Placement Ranking" rows={placementRankings} />
+    </section>
+  )
+}
+
+function RankingPanel({ title, rows }: { title: string; rows: RankingRow[] }) {
+  return (
+    <article className="panel panel-wide">
+      <PanelHeading eyebrow="Quality-adjusted" title={title} icon={BarChart3} />
+      {rows.length > 0 ? <RankingTable rows={rows.slice(0, 12)} /> : <EmptyState compact />}
+    </article>
+  )
+}
+
+function RankingTable({ rows }: { rows: RankingRow[] }) {
+  return (
+    <div className="ranking-table">
+      <div className="ranking-head">
+        <span>Rank</span>
+        <span>Name</span>
+        <span>Spend</span>
+        <span>Leads</span>
+        <span>Bot starts</span>
+        <span>Buyers</span>
+        <span>Quality</span>
+        <span>Action</span>
+      </div>
+      {rows.map((row) => (
+        <div className="ranking-row" key={`${row.category}-${row.id}`}>
+          <span>#{row.rank}</span>
+          <strong title={row.name}>{row.name}</strong>
+          <span>{formatCurrency(row.spendUsd)}</span>
+          <span>{formatNumber(row.leads)}</span>
+          <span>{formatNumber(row.telegramSubscribers)}</span>
+          <span>{formatNumber(row.purchases)}</span>
+          <em className={row.tone}>{row.qualityScore}</em>
+          <small>{row.recommendedAction}</small>
+        </div>
+      ))}
+    </div>
   )
 }
 

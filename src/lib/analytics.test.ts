@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   campaignOverlapsWindow,
   deriveCreativeScores,
+  deriveRankingRows,
   filterMetricsForDashboard,
   getCampaignOptions,
   getDateWindow,
@@ -14,6 +15,56 @@ describe('getDateWindow', () => {
       start: '2026-04-29',
       end: '2026-05-28',
     })
+  })
+})
+
+describe('deriveRankingRows', () => {
+  it('ranks groups by quality instead of raw clicks', () => {
+    const rows = deriveRankingRows(
+      [
+        {
+          date: '2026-05-20',
+          campaignId: 'campaign_quality',
+          adSetId: 'adset_1',
+          adId: 'ad_1',
+          creativeId: 'creative_1',
+          placement: 'instagram_reels',
+          spendUsd: 100,
+          impressions: 1000,
+          clicks: 100,
+          landingPageViews: 80,
+          leads: 40,
+          telegramSubscribers: 30,
+          webinarAttendees: 0,
+          purchases: 4,
+          purchaseRevenueUsd: 1000,
+        },
+        {
+          date: '2026-05-20',
+          campaignId: 'campaign_clicks',
+          adSetId: 'adset_2',
+          adId: 'ad_2',
+          creativeId: 'creative_2',
+          placement: 'instagram_reels',
+          spendUsd: 100,
+          impressions: 10000,
+          clicks: 900,
+          landingPageViews: 600,
+          leads: 100,
+          telegramSubscribers: 5,
+          webinarAttendees: 0,
+          purchases: 0,
+          purchaseRevenueUsd: 0,
+        },
+      ],
+      [
+        { id: 'campaign_quality', name: 'Quality', category: 'campaign', metricIds: new Set(['campaign_quality']) },
+        { id: 'campaign_clicks', name: 'Clicks', category: 'campaign', metricIds: new Set(['campaign_clicks']) },
+      ],
+    )
+
+    expect(rows[0].id).toBe('campaign_quality')
+    expect(rows[0].rank).toBe(1)
   })
 })
 

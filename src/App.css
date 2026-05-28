@@ -342,6 +342,7 @@
 
 .kpi-grid,
 .dashboard-grid,
+.rankings-grid,
 .bottom-grid,
 .detail-layout {
   display: grid;
@@ -355,6 +356,10 @@
 
 .dashboard-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.rankings-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .bottom-grid,
@@ -531,6 +536,72 @@
 
 .creative-table {
   overflow-x: auto;
+}
+
+.ranking-table {
+  display: grid;
+  overflow-x: auto;
+}
+
+.ranking-head,
+.ranking-row {
+  display: grid;
+  grid-template-columns: 58px minmax(220px, 1fr) 92px 82px 92px 78px 82px 130px;
+  gap: 12px;
+  align-items: center;
+  min-width: 860px;
+}
+
+.ranking-head {
+  padding: 0 12px 10px;
+  border-bottom: 1px solid #d9e1eb;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.ranking-row {
+  padding: 13px 12px;
+  border-bottom: 1px solid #e7edf4;
+  color: #334155;
+}
+
+.ranking-row strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 0.92rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-row em {
+  justify-self: start;
+  min-width: 42px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-style: normal;
+  font-weight: 900;
+  text-align: center;
+}
+
+.ranking-row em.good {
+  color: #047857;
+  background: #dff8ec;
+}
+
+.ranking-row em.warning {
+  color: #a16207;
+  background: #fef3c7;
+}
+
+.ranking-row em.danger {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.ranking-row small {
+  color: #64748b;
+  font-weight: 800;
 }
 
 .table-head,

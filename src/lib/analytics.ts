@@ -16,6 +16,7 @@ import type {
   MetricGlossaryItem,
   Placement,
   PlacementScore,
+  RankingRow,
   TrackingHealthItem,
   TrendPoint,
 } from '../types/marketing'
@@ -257,6 +258,64 @@ export function derivePlacementScores(metrics: DailyAdMetric[]): PlacementScore[
     value: totalSpend === 0 ? 0 : Math.round((value.spend / totalSpend) * 100),
     buyers: value.buyers,
   }))
+}
+
+export function deriveRankingRows(
+  metrics: DailyAdMetric[],
+  groups: Array<{ id: string; name: string; category: RankingRow['category']; metricIds: Set<string> }>,
+): RankingRow[] {
+  return groups
+    .map((group) => {
+      const rows = metrics.filter(
+        (metric) =>
+          group.metricIds.has(metric.adId) ||
+          group.metricIds.has(metric.creativeId) ||
+          group.metricIds.has(metric.campaignId) ||
+          group.metricIds.has(metric.adSetId) ||
+          group.metricIds.has(metric.placement),
+      )
+      const spendUsd = sumBy(rows, (row) => row.spendUsd)
+      const clicks = sumBy(rows, (row) => row.clicks)
+      const leads = sumBy(rows, (row) => row.leads)
+      const telegramSubscribers = sumBy(rows, (row) => row.telegramSubscribers)
+      const purchases = sumBy(rows, (row) => row.purchases)
+      const cpl = leads === 0 ? 0 : spendUsd / leads
+      const costPerTelegramStart = telegramSubscribers === 0 ? 0 : spendUsd / telegramSubscribers
+      const buyerRate = leads === 0 ? 0 : purchases / leads
+      const telegramRate = clicks === 0 ? 0 : telegramSubscribers / clicks
+      const leadRate = clicks === 0 ? 0 : leads / clicks
+      const qualityScore = Math.round(
+        Math.min(45, buyerRate * 1000) + Math.min(35, telegramRate * 100) + Math.min(20, leadRate * 50),
+      )
+      const tone: RankingRow['tone'] = qualityScore >= 70 ? 'good' : qualityScore >= 40 ? 'warning' : 'danger'
+      const recommendedAction =
+        purchases > 0 || qualityScore >= 70
+          ? 'Scale carefully'
+          : clicks > 0 && telegramSubscribers === 0
+            ? 'Audit funnel'
+            : 'Review'
+
+      return {
+        id: group.id,
+        rank: 0,
+        name: group.name,
+        category: group.category,
+        spendUsd,
+        clicks,
+        leads,
+        telegramSubscribers,
+        purchases,
+        cpl,
+        costPerTelegramStart,
+        buyerRate,
+        qualityScore,
+        recommendedAction,
+        tone,
+      }
+    })
+    .filter((row) => row.spendUsd > 0 || row.clicks > 0 || row.leads > 0)
+    .sort((a, b) => b.qualityScore - a.qualityScore || b.purchases - a.purchases || b.telegramSubscribers - a.telegramSubscribers)
+    .map((row, index) => ({ ...row, rank: index + 1 }))
 }
 
 export function composeDashboardData(args: {

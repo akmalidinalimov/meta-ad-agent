@@ -171,6 +171,24 @@ export interface PlacementScore {
   buyers: number
 }
 
+export interface RankingRow {
+  id: string
+  rank: number
+  name: string
+  category: 'segment' | 'campaign' | 'audience' | 'creative' | 'placement'
+  spendUsd: number
+  clicks: number
+  leads: number
+  telegramSubscribers: number
+  purchases: number
+  cpl: number
+  costPerTelegramStart: number
+  buyerRate: number
+  qualityScore: number
+  recommendedAction: string
+  tone: Tone
+}
+
 export interface AudienceScore {
   segment: string
   spend: number
