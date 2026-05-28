@@ -28,6 +28,34 @@ Each segment will have approximately 8-10 creative videos. The agent must compar
 - Segment level: which funnel theme produces the best lead quality and buyer quality.
 - Creative level: which individual video attracts the best audience inside each segment.
 
+### 2.1 Initial Launch Budget and Scaling Rule
+
+Initial launch budget:
+
+- Income VSL: $100/day
+- Business automation VSL: $100/day
+- Content creator/video editor VSL: $100/day
+
+Scaling rule:
+
+- Increase winning budgets by up to 20% per day or every 2 days.
+- Do not increase budget only because CPL is cheap.
+- Require quality signals before scaling: Telegram bot starts, form button clicks, qualified leads, and later CRM/payment quality.
+- If sales lead volume exceeds sales-team capacity, do not scale until quality improves or capacity increases.
+
+Primary early success metric:
+
+- Qualified lead = a person who clicks `START` in the Telegram bot and enters the funnel with preserved attribution.
+
+Later success metrics:
+
+- CRM form submission
+- qualified CRM lead
+- high-intent CRM stage
+- partial buyer
+- full buyer
+- revenue
+
 ## 3. Source Systems
 
 ### 3.1 Meta Marketing API
@@ -314,6 +342,15 @@ Examples:
 - Test narrower age groups if CRM quality proves stronger.
 - Split business automation into business owners vs freelancers vs operators.
 
+Initial 48-hour rules:
+
+- Do not kill an ad set only because CPL is higher if Telegram start quality is strong.
+- Flag a creative for review if it spends meaningfully and produces high clicks but weak Telegram starts.
+- Flag a funnel mismatch if click and landing visit rates are healthy but Telegram starts are weak.
+- Flag a sales capacity risk if projected daily form leads exceed 160-200 leads/day.
+- Recommend scaling only when a segment or creative has both adequate volume and stronger quality than the account average.
+- Recommend budget increases in 20% steps, not aggressive jumps.
+
 ### 7.6 Execution Agent
 
 Later version only. Makes changes in Meta Ads after explicit approval.
@@ -335,6 +372,17 @@ Blocked without approval:
 - Pausing high-spend campaigns
 - Changing payment or account settings
 - Removing campaigns, ad sets, ads, or creatives
+
+Approval channels:
+
+- Dashboard approval queue
+- Telegram approval bot with approve/reject buttons
+
+Execution rule:
+
+- The agent may analyze and recommend autonomously.
+- The agent must ask for approval every time before executing a Meta Ads change.
+- Every approved action must store the approving user, timestamp, reason, before/after settings, and execution result.
 
 ## 8. Dashboard Requirements
 
@@ -447,6 +495,29 @@ The chat must cite the data source used:
 - Creative analysis
 - Agent knowledge base
 
+### 8.8 Rankings Hub
+
+The dashboard should provide ranking views for:
+
+- Segments
+- Campaigns
+- Ad sets/audiences
+- Creatives
+- Placements
+- Regions/cities
+
+Ranking logic should support:
+
+- cheapest raw lead
+- best Telegram-start cost
+- best qualified lead quality
+- best buyer quality
+- highest waste
+- highest scale opportunity
+- strongest proof/creative quality
+
+The default ranking should be quality-adjusted, not raw lead volume.
+
 ## 9. Knowledge Base
 
 The system should maintain a persistent knowledge base from historical data and manual observations.
@@ -482,6 +553,13 @@ Approval levels:
 | L4 autonomous optimization | Execute approved playbooks automatically | Future only |
 
 Version 1 and Version 2 must stay in L0-L1 mode.
+
+Current user preference:
+
+- Recommendations can be autonomous and detailed.
+- Execution must always require approval.
+- Approvals should be possible from both the dashboard and Telegram bot.
+- Telegram alerts should include approve/reject buttons for executable recommendations.
 
 ## 11. Technical Architecture
 
@@ -674,7 +752,9 @@ Deliverables:
 - Alert rules.
 - Top 2-3 recommended actions per alert.
 - Dashboard alert inbox.
-- Optional Telegram/email notifications.
+- Telegram bot notifications.
+- Dashboard notifications.
+- Approval buttons for executable recommendations.
 
 ### Version 0.9: Experiment Planner
 
@@ -700,6 +780,7 @@ Deliverables:
 - Budget adjustment requests.
 - Pause/scale recommendations.
 - Approval queue.
+- Telegram approval bot.
 - Audit log of every action.
 
 ## 14. First Build Sequence
@@ -724,7 +805,6 @@ These should be answered one by one before building the related version:
 3. Can the outsourced sales team add and confirm hidden Bitrix24 fields?
 4. What columns will appear in the first Google Sheet/CSV export?
 5. What should count as a qualified lead once the sales team shares stage names?
-6. What budget limits should the agent respect?
-7. Which actions can the agent prepare as drafts, and which actions should remain manual?
-8. Where should alerts be sent: dashboard only, Telegram, email, or all?
-
+6. What are the final daily/monthly maximum budget limits beyond the initial $100/day per VSL?
+7. Which Meta Ads changes should the agent be allowed to execute after approval in Version 1.0?
+8. What Telegram account/group should receive agent alerts and approval buttons?

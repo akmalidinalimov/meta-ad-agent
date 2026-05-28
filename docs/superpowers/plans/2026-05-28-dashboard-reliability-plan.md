@@ -19,11 +19,13 @@ In scope:
 - Dashboard date filtering must only show campaigns and metrics inside the selected 7/30/90 day window.
 - Multi-campaign selection must work without creating false "No matching data" states.
 - Creative scores must be ranked and displayed in score order.
+- The dashboard must expose first-pass rankings for creatives, audiences/ad sets, campaigns, placements, and segments where current data supports it.
 - Creatives must preserve campaign/ad set/ad attribution from Meta data.
 - Thumbnails should show where available.
 - Videos should only be presented as playable when a real video source URL exists.
 - Refresh/chat loading states should not get stuck.
 - Waste/recommendation rows should be deduplicated.
+- Creative media cards should clearly separate thumbnail-only assets from playable videos.
 
 Out of scope:
 
@@ -32,6 +34,8 @@ Out of scope:
 - Bitrix24/Google Sheet import.
 - Scheduled 4-hour monitoring.
 - Full creative video AI analysis.
+- Telegram approval bot.
+- Budget execution.
 
 ## File Structure
 
@@ -714,7 +718,191 @@ git commit -m "fix: show creative media availability accurately"
 
 ---
 
-### Task 5: Fix Chat and Refresh Loading States
+### Task 5: Add First-Pass Rankings Hub
+
+**Files:**
+
+- Modify: `src/lib/analytics.ts`
+- Modify: `src/components/Dashboard.tsx`
+- Modify: `src/types/marketing.ts`
+- Modify: `src/App.css`
+- Modify: `src/lib/analytics.test.ts`
+
+- [ ] **Step 1: Add ranking types**
+
+In `src/types/marketing.ts`, add:
+
+```ts
+export interface RankingRow {
+  id: string
+  rank: number
+  name: string
+  category: 'segment' | 'campaign' | 'audience' | 'creative' | 'placement'
+  spendUsd: number
+  clicks: number
+  leads: number
+  telegramSubscribers: number
+  purchases: number
+  cpl: number
+  costPerTelegramStart: number
+  buyerRate: number
+  qualityScore: number
+  recommendedAction: string
+  tone: Tone
+}
+```
+
+- [ ] **Step 2: Add generic ranking helper**
+
+In `src/lib/analytics.ts`, add:
+
+```ts
+export function deriveRankingRows(
+  metrics: DailyAdMetric[],
+  groups: Array<{ id: string; name: string; category: RankingRow['category']; metricIds: Set<string> }>,
+): RankingRow[] {
+  return groups
+    .map((group) => {
+      const rows = metrics.filter((metric) => group.metricIds.has(metric.adId) || group.metricIds.has(metric.creativeId) || group.metricIds.has(metric.campaignId) || group.metricIds.has(metric.adSetId) || group.metricIds.has(metric.placement))
+      const spendUsd = sumBy(rows, (row) => row.spendUsd)
+      const clicks = sumBy(rows, (row) => row.clicks)
+      const leads = sumBy(rows, (row) => row.leads)
+      const telegramSubscribers = sumBy(rows, (row) => row.telegramSubscribers)
+      const purchases = sumBy(rows, (row) => row.purchases)
+      const cpl = leads === 0 ? 0 : spendUsd / leads
+      const costPerTelegramStart = telegramSubscribers === 0 ? 0 : spendUsd / telegramSubscribers
+      const buyerRate = leads === 0 ? 0 : purchases / leads
+      const qualityScore = Math.round(
+        Math.min(45, buyerRate * 1000) +
+          Math.min(35, telegramSubscribers === 0 ? 0 : (telegramSubscribers / Math.max(1, clicks)) * 100) +
+          Math.min(20, clicks === 0 ? 0 : (leads / clicks) * 50),
+      )
+      const tone: Tone = qualityScore >= 70 ? 'good' : qualityScore >= 40 ? 'warning' : 'danger'
+      const recommendedAction =
+        purchases > 0 || qualityScore >= 70 ? 'Scale carefully' : clicks > 0 && telegramSubscribers === 0 ? 'Audit funnel' : 'Review'
+
+      return {
+        id: group.id,
+        rank: 0,
+        name: group.name,
+        category: group.category,
+        spendUsd,
+        clicks,
+        leads,
+        telegramSubscribers,
+        purchases,
+        cpl,
+        costPerTelegramStart,
+        buyerRate,
+        qualityScore,
+        recommendedAction,
+        tone,
+      }
+    })
+    .filter((row) => row.spendUsd > 0 || row.clicks > 0 || row.leads > 0)
+    .sort((a, b) => b.qualityScore - a.qualityScore || b.purchases - a.purchases || b.telegramSubscribers - a.telegramSubscribers)
+    .map((row, index) => ({ ...row, rank: index + 1 }))
+}
+```
+
+- [ ] **Step 3: Add ranking tests**
+
+Append to `src/lib/analytics.test.ts`:
+
+```ts
+import { deriveRankingRows } from './analytics'
+
+describe('deriveRankingRows', () => {
+  it('ranks groups by quality instead of raw clicks', () => {
+    const rows = deriveRankingRows(
+      [
+        {
+          date: '2026-05-20',
+          campaignId: 'campaign_quality',
+          adSetId: 'adset_1',
+          adId: 'ad_1',
+          creativeId: 'creative_1',
+          placement: 'instagram_reels',
+          spendUsd: 100,
+          impressions: 1000,
+          clicks: 100,
+          landingPageViews: 80,
+          leads: 40,
+          telegramSubscribers: 30,
+          webinarAttendees: 0,
+          purchases: 4,
+          purchaseRevenueUsd: 1000,
+        },
+        {
+          date: '2026-05-20',
+          campaignId: 'campaign_clicks',
+          adSetId: 'adset_2',
+          adId: 'ad_2',
+          creativeId: 'creative_2',
+          placement: 'instagram_reels',
+          spendUsd: 100,
+          impressions: 10000,
+          clicks: 900,
+          landingPageViews: 600,
+          leads: 100,
+          telegramSubscribers: 5,
+          webinarAttendees: 0,
+          purchases: 0,
+          purchaseRevenueUsd: 0,
+        },
+      ],
+      [
+        { id: 'campaign_quality', name: 'Quality', category: 'campaign', metricIds: new Set(['campaign_quality']) },
+        { id: 'campaign_clicks', name: 'Clicks', category: 'campaign', metricIds: new Set(['campaign_clicks']) },
+      ],
+    )
+
+    expect(rows[0].id).toBe('campaign_quality')
+    expect(rows[0].rank).toBe(1)
+  })
+})
+```
+
+- [ ] **Step 4: Add rankings view**
+
+In `src/components/Dashboard.tsx`, add a nav item:
+
+```ts
+{ id: 'rankings', label: 'Rankings', icon: BarChart3 },
+```
+
+Add a `RankingsView` that shows tabs/cards for:
+
+- Campaigns
+- Creatives
+- Audiences/ad sets
+- Placements
+
+Use quality-adjusted ranking as the default.
+
+- [ ] **Step 5: Verify tests and build**
+
+Run:
+
+```powershell
+npm test -- --run src/lib/analytics.test.ts
+npm run build
+```
+
+Expected: tests and build pass.
+
+- [ ] **Step 6: Commit Task 5**
+
+Run:
+
+```powershell
+git add src/lib/analytics.ts src/components/Dashboard.tsx src/types/marketing.ts src/App.css src/lib/analytics.test.ts
+git commit -m "feat: add dashboard rankings hub"
+```
+
+---
+
+### Task 6: Fix Chat and Refresh Loading States
 
 **Files:**
 
@@ -808,7 +996,7 @@ Manual check:
 - Confirm one user message gets one relevant agent answer.
 - Confirm send button disables while thinking.
 
-- [ ] **Step 6: Commit Task 5**
+- [ ] **Step 6: Commit Task 6**
 
 Run:
 
@@ -819,7 +1007,7 @@ git commit -m "fix: stabilize agent chat requests"
 
 ---
 
-### Task 6: Add Dashboard Verification Checklist
+### Task 7: Add Dashboard Verification Checklist
 
 **Files:**
 
@@ -875,7 +1063,7 @@ python -m pytest backend/test_analysis_engine.py -v
 
 Expected: all checks pass.
 
-- [ ] **Step 4: Commit Task 6**
+- [ ] **Step 4: Commit Task 7**
 
 Run:
 
@@ -895,12 +1083,12 @@ Spec coverage:
 - Creative-to-campaign mapping: covered by Task 3.
 - Creative ranking: covered by Task 1 and existing `deriveCreativeScores`.
 - Thumbnail/video honesty: covered by Task 4.
-- Chat request state: covered by Task 5.
-- Verification before GitHub push: covered by Task 6.
+- Rankings hub: covered by Task 5.
+- Chat request state: covered by Task 6.
+- Verification before GitHub push: covered by Task 7.
 
 Known follow-up after this plan:
 
 - Version 0.3 should add reliable Meta read-only import with persisted snapshots.
 - Version 0.4 should add the three-segment landing/Telegram event API.
 - Version 0.5 should add CRM Google Sheet import and stage mapping.
-
