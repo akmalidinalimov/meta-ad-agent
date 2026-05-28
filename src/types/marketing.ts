@@ -316,3 +316,57 @@ export interface CampaignPlaybook {
   createdAt?: string
   updatedAt?: string
 }
+
+export interface MetaSettingsAudit {
+  summary: {
+    campaigns: number
+    adsets: number
+    ads: number
+    advantageAudienceAdsets: number
+    instagramOnlyAdsets: number
+    facebookMixedAdsets: number
+    countryTargetedAdsets: number
+    regionTargetedAdsets: number
+  }
+  campaigns: Array<{
+    id: string
+    name: string
+    status: string
+    objective: string
+    dailyBudgetUsd: number
+    lifetimeBudgetUsd: number
+    startTime?: string
+    stopTime?: string
+  }>
+  adsets: Array<{
+    id: string
+    campaignId: string
+    name: string
+    status: string
+    optimizationGoal: string
+    dailyBudgetUsd: number
+    ageMin: number
+    ageMax: number
+    genders: string[]
+    locations: string[]
+    geoStrategy: string
+    interests: string[]
+    advantageAudience: boolean
+    placements: string[]
+    platformStrategy: string
+    recommendedUse: string
+  }>
+  placementMix: Array<{ placement: string; adsetCount: number }>
+  objectiveMix: Array<{ objective: string; campaignCount: number }>
+  risks: Array<{
+    severity: 'info' | 'warning' | 'danger'
+    area: string
+    title: string
+    detail: string
+  }>
+  policy: {
+    executionMode: string
+    primaryInterface: string
+    browserFallback: string
+  }
+}

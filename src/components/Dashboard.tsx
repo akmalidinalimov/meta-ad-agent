@@ -63,6 +63,7 @@ import type {
   DailyAdMetric,
   IconName,
   MetaSnapshot,
+  MetaSettingsAudit,
   Placement,
   RankingRow,
   TrackingHealthItem,
@@ -89,6 +90,7 @@ const navItems = [
   { id: 'audiences', label: 'Audiences', icon: Users },
   { id: 'placements', label: 'Placements', icon: RadioTower },
   { id: 'experiments', label: 'Experiments', icon: FlaskConical },
+  { id: 'settingsAudit', label: 'Settings Audit', icon: ClipboardCheck },
   { id: 'tracking', label: 'Tracking Health', icon: ShieldAlert },
   { id: 'alerts', label: 'Alerts', icon: AlertTriangle },
   { id: 'settings', label: 'Settings', icon: Settings },
@@ -269,6 +271,7 @@ export function Dashboard({ data }: DashboardProps) {
           {activeView === 'audiences' && <AudiencesView data={data} />}
           {activeView === 'placements' && <PlacementsView placements={placements} />}
           {activeView === 'experiments' && <ExperimentsView data={data} />}
+          {activeView === 'settingsAudit' && <SettingsAuditView />}
           {activeView === 'tracking' && <TrackingView data={data} />}
           {activeView === 'alerts' && <AlertsView data={data} />}
           {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} />}
@@ -1096,6 +1099,139 @@ function ExperimentsView({ data }: { data: DashboardData }) {
   )
 }
 
+function SettingsAuditView() {
+  const [audit, setAudit] = useState<MetaSettingsAudit | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      setError('Settings audit API cannot be loaded in this browser sandbox.')
+      return
+    }
+
+    void fetch('/api/meta/settings-audit')
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+      .then((result: { available?: boolean; audit?: MetaSettingsAudit; error?: string }) => {
+        if (!result.available || !result.audit) {
+          setError(result.error ?? 'No saved Meta settings audit yet.')
+          return
+        }
+        setAudit(result.audit)
+      })
+      .catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Could not load settings audit.'))
+  }, [])
+
+  if (error && !audit) {
+    return (
+      <section className="dashboard-grid">
+        <article className="panel panel-wide empty-state">
+          <AlertTriangle size={24} />
+          <strong>Settings audit unavailable</strong>
+          <p>{error}</p>
+        </article>
+      </section>
+    )
+  }
+
+  if (!audit) {
+    return (
+      <section className="dashboard-grid">
+        <article className="panel panel-wide empty-state">
+          <RefreshCcw size={24} />
+          <strong>Loading settings audit</strong>
+          <p>Reading campaign, ad set, placement, and targeting settings from the saved Meta snapshot.</p>
+        </article>
+      </section>
+    )
+  }
+
+  return (
+    <section className="dashboard-grid">
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Execution Safety" title="Agent control baseline" icon={ShieldAlert} />
+        <div className="settings-summary-grid">
+          <MiniMetric label="Mode" value={audit.policy.executionMode.replaceAll('_', ' ')} />
+          <MiniMetric label="Primary interface" value={audit.policy.primaryInterface.replaceAll('_', ' ')} />
+          <MiniMetric label="Browser fallback" value={audit.policy.browserFallback.replaceAll('_', ' ')} />
+        </div>
+      </article>
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Settings Extractor" title="Meta setup summary" icon={ClipboardCheck} />
+        <div className="settings-summary-grid">
+          <MiniMetric label="Campaigns" value={audit.summary.campaigns.toLocaleString()} />
+          <MiniMetric label="Ad sets" value={audit.summary.adsets.toLocaleString()} />
+          <MiniMetric label="Ads" value={audit.summary.ads.toLocaleString()} />
+          <MiniMetric label="Advantage+ audience" value={audit.summary.advantageAudienceAdsets.toLocaleString()} />
+          <MiniMetric label="IG-only ad sets" value={audit.summary.instagramOnlyAdsets.toLocaleString()} />
+          <MiniMetric label="Mixed FB/IG ad sets" value={audit.summary.facebookMixedAdsets.toLocaleString()} />
+          <MiniMetric label="Country targeting" value={audit.summary.countryTargetedAdsets.toLocaleString()} />
+          <MiniMetric label="Region/city targeting" value={audit.summary.regionTargetedAdsets.toLocaleString()} />
+        </div>
+      </article>
+      <article className="panel">
+        <PanelHeading eyebrow="Risk Watchlist" title="Settings to review" icon={AlertTriangle} />
+        <div className="insight-list">
+          {audit.risks.length > 0 ? audit.risks.map((risk) => (
+            <div className={`insight ${risk.severity === 'warning' ? 'warning' : risk.severity === 'danger' ? 'danger' : 'neutral'}`} key={`${risk.area}-${risk.title}`}>
+              <strong>{risk.title}</strong>
+              <p>{risk.detail}</p>
+              <small>{risk.area}</small>
+            </div>
+          )) : (
+            <div className="insight good">
+              <strong>No settings risk detected yet</strong>
+              <p>The saved Meta settings do not show obvious guardrail conflicts.</p>
+            </div>
+          )}
+        </div>
+      </article>
+      <article className="panel">
+        <PanelHeading eyebrow="Placement Mix" title="Where ad sets can deliver" icon={RadioTower} />
+        <div className="metric-list">
+          {audit.placementMix.slice(0, 10).map((item) => (
+            <div key={item.placement}>
+              <strong>{labelRawSetting(item.placement)}</strong>
+              <span>{item.adsetCount} ad sets</span>
+            </div>
+          ))}
+        </div>
+      </article>
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Ad Set Settings" title="Top extracted controls" icon={SlidersHorizontal} />
+        <div className="settings-table">
+          <div className="settings-row settings-head">
+            <span>Ad set</span>
+            <span>Age / gender</span>
+            <span>Geo</span>
+            <span>Audience</span>
+            <span>Placements</span>
+            <span>Use</span>
+          </div>
+          {audit.adsets.slice(0, 14).map((adset) => (
+            <div className="settings-row" key={adset.id}>
+              <span><strong>{adset.name}</strong><small>{shortText(adset.id, 18)}</small></span>
+              <span>{adset.ageMin}-{adset.ageMax} / {adset.genders.join(', ')}</span>
+              <span>{adset.locations.slice(0, 3).join(', ')}<small>{adset.geoStrategy}</small></span>
+              <span>{adset.advantageAudience ? 'Advantage+ audience' : adset.interests.slice(0, 2).join(', ')}</span>
+              <span>{labelRawSetting(adset.platformStrategy)}</span>
+              <span>{adset.recommendedUse}</span>
+            </div>
+          ))}
+        </div>
+      </article>
+    </section>
+  )
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mini-metric">
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
 function TrackingView({ data }: { data: DashboardData }) {
   return (
     <section className="dashboard-grid">
@@ -1496,6 +1632,13 @@ function getDashboardAnchorDate(data: DashboardData): string {
 
 function labelPlacement(placement: Placement) {
   return placement
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function labelRawSetting(value: string) {
+  return value
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')

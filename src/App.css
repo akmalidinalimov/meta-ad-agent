@@ -1043,6 +1043,89 @@
   line-height: 1.45;
 }
 
+.settings-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mini-metric {
+  display: grid;
+  gap: 4px;
+  min-height: 74px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.mini-metric small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.mini-metric strong {
+  align-self: end;
+  color: #172033;
+  font-size: 18px;
+  line-height: 1.15;
+  text-transform: capitalize;
+}
+
+.settings-table {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 1.5fr 0.8fr 0.9fr 1.2fr 1fr 1.1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+  font-size: 13px;
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-row span {
+  min-width: 0;
+}
+
+.settings-row strong,
+.settings-row small {
+  display: block;
+}
+
+.settings-row strong {
+  color: #172033;
+}
+
+.settings-row small {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.settings-head {
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .connection-card {
   display: grid;
   gap: 12px;
@@ -1173,6 +1256,18 @@
   .score-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .settings-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-row {
+    grid-template-columns: 1.4fr 0.8fr 0.9fr;
+  }
+
+  .settings-row span:nth-child(n + 4) {
+    display: none;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1197,6 +1292,7 @@
   .dashboard-grid,
   .bottom-grid,
   .detail-layout,
+  .settings-summary-grid,
   .glossary-grid {
     grid-template-columns: 1fr;
   }
@@ -1219,6 +1315,14 @@
 
   .score-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-row {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-row span:nth-child(n + 4) {
+    display: block;
   }
 
   .app-nav button span {

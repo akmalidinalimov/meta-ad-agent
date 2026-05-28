@@ -25,6 +25,7 @@ from .meta_client import (
     mask_token,
 )
 from .playbook_store import load_playbooks, save_playbook
+from .settings_audit import build_settings_audit
 from .snapshot_store import build_snapshot_payload, list_snapshots, save_snapshot
 
 SYNC_END_DATE = date.today()
@@ -411,6 +412,14 @@ async def meta_sync(request: MetaSyncRequest | None = None) -> dict[str, Any]:
 @app.get("/api/meta/snapshots")
 def meta_snapshots() -> dict[str, Any]:
     return {"snapshots": list_snapshots()}
+
+
+@app.get("/api/meta/settings-audit")
+def meta_settings_audit() -> dict[str, Any]:
+    knowledge = load_knowledge_base()
+    if not knowledge:
+        return {"available": False, "error": "No Meta sync has been saved yet.", "audit": None}
+    return {"available": True, "audit": build_settings_audit(knowledge.get("raw", {}))}
 
 
 @app.get("/api/playbooks")
