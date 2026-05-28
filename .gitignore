@@ -15,6 +15,9 @@ dist-ssr
 .env.*
 !.env.example
 storage/
+__pycache__/
+*.py[cod]
+.pytest_cache/
 
 # Editor directories and files
 .vscode/*
