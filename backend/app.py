@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
+from .funnel_events import build_funnel_summary, save_funnel_event
 from .knowledge_base import load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
 from .meta_client import (
@@ -57,6 +58,10 @@ class MetaSyncRequest(BaseModel):
 
 class CampaignPlaybookRequest(BaseModel):
     playbook: dict[str, Any]
+
+
+class FunnelEventRequest(BaseModel):
+    event: dict[str, Any]
 
 
 campaigns = [
@@ -494,6 +499,17 @@ def knowledge_base() -> dict[str, Any]:
     if not knowledge:
         return {"available": False, "error": "No Meta sync has been saved yet."}
     return {"available": True, "knowledge": knowledge}
+
+
+@app.post("/api/funnel/events")
+def ingest_funnel_event(request: FunnelEventRequest) -> dict[str, Any]:
+    event = save_funnel_event(request.event)
+    return {"ok": True, "event": event, "summary": build_funnel_summary()}
+
+
+@app.get("/api/funnel/summary")
+def funnel_event_summary() -> dict[str, Any]:
+    return build_funnel_summary()
 
 
 @app.get("/api/dashboard")

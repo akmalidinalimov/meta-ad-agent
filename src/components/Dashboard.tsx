@@ -61,6 +61,7 @@ import type {
   DashboardFilters,
   DashboardKpi,
   DailyAdMetric,
+  FunnelEventSummary,
   IconName,
   MetaSnapshot,
   MetaSettingsAudit,
@@ -1233,8 +1234,30 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
 }
 
 function TrackingView({ data }: { data: DashboardData }) {
+  const [funnelEvents, setFunnelEvents] = useState<FunnelEventSummary | null>(null)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      return
+    }
+
+    void fetch('/api/funnel/summary')
+      .then((response) => response.ok ? response.json() : null)
+      .then((summary: FunnelEventSummary | null) => setFunnelEvents(summary))
+      .catch(() => setFunnelEvents(null))
+  }, [])
+
   return (
     <section className="dashboard-grid">
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Funnel Event Stream" title="Landing and Telegram tracking" icon={Bot} />
+        <div className="settings-summary-grid">
+          <MiniMetric label="Events received" value={(funnelEvents?.totalEvents ?? 0).toLocaleString()} />
+          <MiniMetric label="Unique visitors" value={(funnelEvents?.uniqueVisitors ?? 0).toLocaleString()} />
+          <MiniMetric label="Telegram users" value={(funnelEvents?.uniqueTelegramUsers ?? 0).toLocaleString()} />
+          <MiniMetric label="Latest event" value={funnelEvents?.latestEventAt ? formatDateTime(funnelEvents.latestEventAt) : 'Waiting'} />
+        </div>
+      </article>
       {data.trackingHealth.map((item) => (
         <article className={`panel tracking-card ${item.status}`} key={item.name}>
           <div className="tracking-head">

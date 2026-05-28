@@ -370,3 +370,12 @@ export interface MetaSettingsAudit {
     browserFallback: string
   }
 }
+
+export interface FunnelEventSummary {
+  totalEvents: number
+  eventsByName: Record<string, number>
+  eventsBySegment: Record<string, Record<string, number>>
+  uniqueVisitors: number
+  uniqueTelegramUsers: number
+  latestEventAt?: string | null
+}
