@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -517,6 +518,17 @@ def dashboard() -> dict[str, Any]:
             "syncErrors": [],
         },
     }
+
+
+@app.get("/api/dashboard.js")
+def dashboard_script(callback: str = "__META_AD_AGENT_DASHBOARD__") -> Response:
+    safe_callback = "".join(character for character in callback if character.isalnum() or character in "._$")
+    if not safe_callback:
+        safe_callback = "__META_AD_AGENT_DASHBOARD__"
+    return Response(
+        content=f"{safe_callback}({json.dumps(dashboard(), ensure_ascii=False)});",
+        media_type="application/javascript",
+    )
 
 
 @app.post("/api/agent/chat", response_model=ChatResponse)

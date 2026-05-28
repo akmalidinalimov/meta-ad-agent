@@ -13,6 +13,10 @@ export const mockDashboardDataProvider: DashboardDataProvider = {
 
 export const apiDashboardDataProvider: DashboardDataProvider = {
   async getDashboardData() {
+    if (typeof fetch !== 'function') {
+      return getDashboardDataFromScript()
+    }
+
     const response = await fetch('/api/dashboard')
 
     if (!response.ok) {
@@ -21,6 +25,41 @@ export const apiDashboardDataProvider: DashboardDataProvider = {
 
     return (await response.json()) as DashboardData
   },
+}
+
+function getDashboardDataFromScript() {
+  return new Promise<DashboardData>((resolve, reject) => {
+    if (typeof document === 'undefined') {
+      reject(new Error('Dashboard script fallback requires a browser document.'))
+      return
+    }
+
+    const callbackName = `__metaAdAgentDashboard${Date.now()}${Math.random().toString(16).slice(2)}`
+    const script = document.createElement('script')
+    const cleanup = () => {
+      delete (window as unknown as Record<string, unknown>)[callbackName]
+      script.remove()
+    }
+    const timeoutId = window.setTimeout(() => {
+      cleanup()
+      reject(new Error('Dashboard script fallback timed out.'))
+    }, 20000)
+
+    ;(window as unknown as Record<string, (payload: DashboardData) => void>)[callbackName] = (payload) => {
+      window.clearTimeout(timeoutId)
+      cleanup()
+      resolve(payload)
+    }
+
+    script.src = `/api/dashboard.js?callback=${encodeURIComponent(callbackName)}`
+    script.async = true
+    script.onerror = () => {
+      window.clearTimeout(timeoutId)
+      cleanup()
+      reject(new Error('Dashboard script fallback failed.'))
+    }
+    document.head.appendChild(script)
+  })
 }
 
 export const dashboardDataProvider: DashboardDataProvider = {
