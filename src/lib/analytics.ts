@@ -48,6 +48,50 @@ export function campaignOverlapsWindow(
   return campaignStart <= window.end && campaignEnd >= window.start
 }
 
+export function filterMetricsForDashboard(args: {
+  metrics: DailyAdMetric[]
+  campaigns: Campaign[]
+  ads: Ad[]
+  creatives: Creative[]
+  filters: {
+    start: string
+    campaignIds: string[]
+    creativeFormat: 'all' | Creative['format']
+    placement: 'all' | Placement
+    objective: 'all' | Campaign['objective']
+  }
+}) {
+  const campaignById = new Map(args.campaigns.map((campaign) => [campaign.id, campaign]))
+  const adIds = new Set(args.ads.map((ad) => ad.id))
+  const creativeById = new Map(args.creatives.map((creative) => [creative.id, creative]))
+
+  return args.metrics.filter((metric) => {
+    const creative = creativeById.get(metric.creativeId)
+    const campaign = campaignById.get(metric.campaignId)
+
+    return (
+      metric.date >= args.filters.start &&
+      (args.filters.campaignIds.includes('all') || args.filters.campaignIds.includes(metric.campaignId)) &&
+      (args.filters.creativeFormat === 'all' || creative?.format === args.filters.creativeFormat) &&
+      (args.filters.placement === 'all' || metric.placement === args.filters.placement) &&
+      (args.filters.objective === 'all' || campaign?.objective === args.filters.objective) &&
+      adIds.has(metric.adId)
+    )
+  })
+}
+
+export function getCampaignOptions(args: {
+  campaigns: Campaign[]
+  window: { start: string; end: string }
+  objective: 'all' | Campaign['objective']
+}) {
+  return args.campaigns.filter(
+    (campaign) =>
+      campaignOverlapsWindow(campaign, args.window) &&
+      (args.objective === 'all' || campaign.objective === args.objective),
+  )
+}
+
 export function formatNumber(value: number) {
   return new Intl.NumberFormat('en-US').format(value)
 }

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { campaignOverlapsWindow, deriveCreativeScores, getDateWindow } from './analytics'
+import {
+  campaignOverlapsWindow,
+  deriveCreativeScores,
+  filterMetricsForDashboard,
+  getCampaignOptions,
+  getDateWindow,
+} from './analytics'
 import type { Campaign, Creative, CreativeAnalysis, DailyAdMetric } from '../types/marketing'
 
 describe('getDateWindow', () => {
@@ -143,5 +149,119 @@ describe('deriveCreativeScores', () => {
     expect(scores[0].rank).toBe(1)
     expect(scores[1].id).toBe('creative_b')
     expect(scores[1].rank).toBe(2)
+  })
+})
+
+describe('dashboard filtering', () => {
+  const campaigns: Campaign[] = [
+    {
+      id: 'recent',
+      platform: 'meta',
+      name: 'Recent',
+      objective: 'leads',
+      status: 'active',
+      dailyBudgetUsd: 20,
+      startedAt: '2026-05-10',
+    },
+    {
+      id: 'old',
+      platform: 'meta',
+      name: 'Old',
+      objective: 'leads',
+      status: 'completed',
+      dailyBudgetUsd: 20,
+      startedAt: '2026-02-01',
+      endedAt: '2026-02-20',
+    },
+  ]
+
+  it('only offers campaigns that overlap the selected date window', () => {
+    expect(
+      getCampaignOptions({
+        campaigns,
+        window: { start: '2026-04-29', end: '2026-05-28' },
+        objective: 'all',
+      }).map((campaign) => campaign.id),
+    ).toEqual(['recent'])
+  })
+
+  it('filters metric rows by selected campaigns, date, placement, and objective', () => {
+    const metrics: DailyAdMetric[] = [
+      {
+        date: '2026-05-20',
+        campaignId: 'recent',
+        adSetId: 'adset_1',
+        adId: 'ad_1',
+        creativeId: 'creative_1',
+        placement: 'instagram_reels',
+        spendUsd: 10,
+        impressions: 100,
+        clicks: 10,
+        landingPageViews: 8,
+        leads: 4,
+        telegramSubscribers: 2,
+        webinarAttendees: 0,
+        purchases: 0,
+        purchaseRevenueUsd: 0,
+      },
+      {
+        date: '2026-03-20',
+        campaignId: 'old',
+        adSetId: 'adset_2',
+        adId: 'ad_2',
+        creativeId: 'creative_2',
+        placement: 'facebook_feed',
+        spendUsd: 10,
+        impressions: 100,
+        clicks: 10,
+        landingPageViews: 8,
+        leads: 4,
+        telegramSubscribers: 2,
+        webinarAttendees: 0,
+        purchases: 0,
+        purchaseRevenueUsd: 0,
+      },
+    ]
+
+    const filtered = filterMetricsForDashboard({
+      metrics,
+      campaigns,
+      ads: [
+        { id: 'ad_1', adSetId: 'adset_1', creativeId: 'creative_1', name: 'Ad 1', status: 'active' },
+        { id: 'ad_2', adSetId: 'adset_2', creativeId: 'creative_2', name: 'Ad 2', status: 'completed' },
+      ],
+      creatives: [
+        {
+          id: 'creative_1',
+          adId: 'ad_1',
+          name: 'Creative 1',
+          format: 'video',
+          theme: 'proof',
+          hookType: 'case study',
+          primaryPersona: 'worker',
+          cta: 'Watch',
+        },
+        {
+          id: 'creative_2',
+          adId: 'ad_2',
+          name: 'Creative 2',
+          format: 'image',
+          theme: 'old',
+          hookType: 'curiosity',
+          primaryPersona: 'broad',
+          cta: 'Watch',
+        },
+      ],
+      filters: {
+        start: '2026-04-29',
+        campaignIds: ['recent'],
+        creativeFormat: 'video',
+        placement: 'instagram_reels',
+        objective: 'leads',
+      },
+    })
+
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0].campaignId).toBe('recent')
   })
 })
