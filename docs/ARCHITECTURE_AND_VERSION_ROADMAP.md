@@ -28,24 +28,53 @@ Each segment will have approximately 8-10 creative videos. The agent must compar
 - Segment level: which funnel theme produces the best lead quality and buyer quality.
 - Creative level: which individual video attracts the best audience inside each segment.
 
-### 2.1 Initial Launch Budget and Scaling Rule
+### 2.1 Configurable Campaign Playbooks
 
-Initial launch budget:
+The system must not hardcode one campaign structure, one budget, or one success metric. Each new launch should be configured through a campaign playbook.
+
+Campaign playbook variables:
+
+- Campaign name
+- Campaign goal
+- Number of segments/VSLs
+- Segment names
+- Landing page URLs
+- Telegram bot URLs
+- Starting budget per segment
+- Maximum daily budget
+- Maximum total budget
+- Scaling step percentage
+- Scaling frequency
+- Primary success metric
+- Secondary success metrics
+- Sales capacity limit
+- Alert channels
+- Approval channels
+- Kill rules
+- Scale rules
+- Experiment duration
+
+The current three-VSL launch is the first playbook, not a permanent system assumption.
+
+Initial example playbook:
 
 - Income VSL: $100/day
 - Business automation VSL: $100/day
 - Content creator/video editor VSL: $100/day
+- Scaling step: up to 20%
+- Scaling frequency: daily or every 2 days
+- Primary early success metric: Telegram bot START
 
-Scaling rule:
+Future campaign example:
 
-- Increase winning budgets by up to 20% per day or every 2 days.
-- Do not increase budget only because CPL is cheap.
-- Require quality signals before scaling: Telegram bot starts, form button clicks, qualified leads, and later CRM/payment quality.
-- If sales lead volume exceeds sales-team capacity, do not scale until quality improves or capacity increases.
+- Segment count can be 1, 2, 3, 4, or more.
+- Starting budget can be $200/day or another value.
+- Primary success metric can change from Telegram START to CRM qualified lead, buyer, revenue, or another configured metric.
 
 Primary early success metric:
 
-- Qualified lead = a person who clicks `START` in the Telegram bot and enters the funnel with preserved attribution.
+- For the current first playbook, qualified lead = a person who clicks `START` in the Telegram bot and enters the funnel with preserved attribution.
+- For future playbooks, the user can choose a different primary success metric.
 
 Later success metrics:
 
@@ -55,6 +84,13 @@ Later success metrics:
 - partial buyer
 - full buyer
 - revenue
+
+General scaling rule:
+
+- Do not increase budget only because CPL is cheap.
+- Require the configured primary success metric and guardrail metrics before scaling.
+- If sales lead volume exceeds the configured sales-team capacity, do not scale until quality improves or capacity increases.
+- Never execute budget changes without approval.
 
 ## 3. Source Systems
 
@@ -560,6 +596,7 @@ Current user preference:
 - Execution must always require approval.
 - Approvals should be possible from both the dashboard and Telegram bot.
 - Telegram alerts should include approve/reject buttons for executable recommendations.
+- Budget, success metrics, segments, scaling rules, and campaign goals must be configurable per campaign playbook.
 
 ## 11. Technical Architecture
 
@@ -768,6 +805,23 @@ Deliverables:
 - Before/after comparison.
 - Lessons learned saved to knowledge base.
 
+### Version 0.9.5: Campaign Playbook Builder
+
+Goal: let the user configure reusable campaign playbooks instead of hardcoding campaign-specific assumptions.
+
+Deliverables:
+
+- Dashboard playbook settings page.
+- Telegram bot flow for creating/updating a playbook.
+- Segment/VSL configuration.
+- Budget and scaling configuration.
+- Success metric selection.
+- Guardrail metric selection.
+- Sales capacity configuration.
+- Approval and alert channel configuration.
+- Playbook version history.
+- Ability to clone a previous playbook for a new campaign.
+
 ### Version 1.0: Approval-Based Meta Execution
 
 Goal: prepare and execute Meta changes with user approval.
@@ -805,6 +859,6 @@ These should be answered one by one before building the related version:
 3. Can the outsourced sales team add and confirm hidden Bitrix24 fields?
 4. What columns will appear in the first Google Sheet/CSV export?
 5. What should count as a qualified lead once the sales team shares stage names?
-6. What are the final daily/monthly maximum budget limits beyond the initial $100/day per VSL?
+6. What are the final daily/monthly maximum budget limits for each campaign playbook?
 7. Which Meta Ads changes should the agent be allowed to execute after approval in Version 1.0?
 8. What Telegram account/group should receive agent alerts and approval buttons?
