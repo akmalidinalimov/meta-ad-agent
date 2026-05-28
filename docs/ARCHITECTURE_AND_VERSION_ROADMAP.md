@@ -15,7 +15,24 @@ The agent should optimize for two layers of success:
 
 ## 2. Campaign Structure
 
-The next campaign will use three separate funnel segments.
+The campaign structure must be configurable. A campaign playbook can use one VSL, three VSLs, five VSLs, or any other number that the user defines.
+
+Each playbook segment should be user-configurable:
+
+- Segment name
+- Segment description
+- VSL name/ID
+- Landing page URL
+- Telegram bot URL
+- Target audience notes
+- Pain points
+- Primary offer angle
+- Creative count target
+- Starting budget
+- Success metric override
+- Segment-specific guardrails
+
+The next campaign will use three separate funnel segments as the first example playbook.
 
 | Segment | VSL Theme | Funnel |
 | --- | --- | --- |
@@ -23,7 +40,7 @@ The next campaign will use three separate funnel segments.
 | business_automation | Productivity, automation, AI agents for businesses | Meta ads -> business landing page -> business Telegram bot -> Bitrix24 form |
 | content_creators | Content creators and video editors | Meta ads -> creator landing page -> creator Telegram bot -> Bitrix24 form |
 
-Each segment will have approximately 8-10 creative videos. The agent must compare performance at both levels:
+For the first example playbook, each segment will have approximately 8-10 creative videos. Future playbooks may use any number of creatives per segment. The agent must compare performance at both levels:
 
 - Segment level: which funnel theme produces the best lead quality and buyer quality.
 - Creative level: which individual video attracts the best audience inside each segment.
@@ -37,7 +54,10 @@ Campaign playbook variables:
 - Campaign name
 - Campaign goal
 - Number of segments/VSLs
-- Segment names
+- Segment definitions
+- Target audience definitions per segment
+- Pain points per segment
+- Offer/message angle per segment
 - Landing page URLs
 - Telegram bot URLs
 - Starting budget per segment
@@ -68,6 +88,7 @@ Initial example playbook:
 Future campaign example:
 
 - Segment count can be 1, 2, 3, 4, or more.
+- The user can input different target audiences and segmentation logic for each new campaign.
 - Starting budget can be $200/day or another value.
 - Primary success metric can change from Telegram START to CRM qualified lead, buyer, revenue, or another configured metric.
 
@@ -441,11 +462,13 @@ Show overall performance across all funnels:
 
 ### 8.2 Segment Comparison
 
-Compare:
+Compare user-defined playbook segments. For the first example playbook, this means:
 
 - Income
 - Business automation
 - Content creators
+
+For future playbooks, this view must render whatever segments the user configured.
 
 Charts:
 
@@ -813,7 +836,9 @@ Deliverables:
 
 - Dashboard playbook settings page.
 - Telegram bot flow for creating/updating a playbook.
-- Segment/VSL configuration.
+- Dynamic Segment/VSL configuration with no fixed segment count.
+- Target audience input per segment.
+- Pain point and offer-angle input per segment.
 - Budget and scaling configuration.
 - Success metric selection.
 - Guardrail metric selection.
