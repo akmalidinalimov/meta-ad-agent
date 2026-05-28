@@ -845,10 +845,14 @@ function MediaThumb({
   videoId?: string
   format: Creative['format']
 }) {
+  const hasPlayableVideo = Boolean(videoUrl)
+
   return (
-    <span className="creative-thumb" aria-label={`${format} creative preview`}>
+    <span className={`creative-thumb ${assetUrl ? 'has-image' : ''}`} aria-label={`${format} creative preview`}>
       {assetUrl ? <img src={assetUrl} alt="" loading="lazy" /> : <Film size={18} />}
-      {(videoUrl || videoId || format === 'video') && <i><Film size={12} /></i>}
+      {hasPlayableVideo && <i aria-label="Playable video">▶</i>}
+      {!hasPlayableVideo && videoId && <span title="Video ID exists, but source URL is unavailable">ID</span>}
+      {!assetUrl && <small>{format}</small>}
     </span>
   )
 }
@@ -887,11 +891,21 @@ function CreativePreview({ creative }: { creative: Creative }) {
       ) : resolvedPosterUrl ? (
         <img src={resolvedPosterUrl} alt={creative.name} />
       ) : (
-        <Film size={38} />
+        <div>
+          <Film size={24} />
+          <strong>No media preview available</strong>
+          <span>Meta returned metadata but no playable source URL.</span>
+        </div>
       )}
       <div>
         <strong>{creative.format.toUpperCase()}</strong>
-        <span>{creative.hookType}</span>
+        <span>
+          {resolvedVideoUrl
+            ? creative.hookType
+            : creative.videoId
+              ? `${creative.hookType} / video source unavailable`
+              : creative.hookType}
+        </span>
       </div>
     </div>
   )
