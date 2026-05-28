@@ -261,10 +261,58 @@ export interface DashboardData {
   approvalActions: ApprovalAction[]
   glossary: MetricGlossaryItem[]
   dataSource?: {
-    kind: 'mock' | 'meta'
+    kind: 'mock' | 'meta' | 'imported'
     label: string
     generatedAt?: string | null
+    snapshotId?: string
+    days?: number
     rawCounts?: Record<string, number>
     syncErrors?: Array<{ source: string; error: string }>
   }
+}
+
+export interface MetaSnapshot {
+  id: string
+  kind: 'meta'
+  accountId: string
+  days: number
+  generatedAt: string
+  rawCounts: Record<string, number>
+  summary?: Record<string, number>
+}
+
+export interface CampaignPlaybookSegment {
+  id: string
+  name: string
+  description?: string
+  vslId?: string
+  landingPageUrl?: string
+  telegramBotUrl?: string
+  targetAudienceNotes?: string
+  painPoints?: string[]
+  offerAngle?: string
+  creativeCountTarget?: number
+  startingBudgetUsd?: number
+  guardrails?: string[]
+}
+
+export interface CampaignPlaybook {
+  id: string
+  name: string
+  goal: string
+  primarySuccessMetric: string
+  secondarySuccessMetrics: string[]
+  segments: CampaignPlaybookSegment[]
+  rules: {
+    startingBudgetUsd: number
+    maxDailyBudgetUsd: number
+    scalingStepPercent: number
+    scalingFrequencyDays: number
+    salesCapacityLeadsPerDay: number
+    requiresApprovalForExecution: boolean
+  }
+  alertChannels: string[]
+  approvalChannels: string[]
+  createdAt?: string
+  updatedAt?: string
 }

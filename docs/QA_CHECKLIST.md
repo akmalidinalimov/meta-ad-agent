@@ -7,6 +7,7 @@ Run this before pushing dashboard changes.
 - `npm test`
 - `npm run build`
 - `python -m pytest backend/test_analysis_engine.py -v`
+- `python -m pytest backend/test_snapshot_store.py backend/test_sync_window.py backend/test_playbook_store.py -v`
 
 ## Manual Checks
 
@@ -18,3 +19,6 @@ Run this before pushing dashboard changes.
 - A play marker appears only when `videoUrl` exists.
 - Agent chat gives one answer per question and shows sources.
 - Meta connection status never exposes access tokens.
+- Settings can run either a 90-day or 180-day Meta sync.
+- Saved snapshots appear in Settings after a successful sync.
+- Campaign playbooks are configurable and not fixed to three VSL segments.

@@ -55,12 +55,14 @@ import {
 import { askAgent } from '../services/agentChatProvider'
 import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
 import type {
+  CampaignPlaybook,
   Creative,
   DashboardData,
   DashboardFilters,
   DashboardKpi,
   DailyAdMetric,
   IconName,
+  MetaSnapshot,
   Placement,
   RankingRow,
   TrackingHealthItem,
@@ -1129,8 +1131,27 @@ function AlertsView({ data }: { data: DashboardData }) {
 function SettingsView({ data, metaStatus }: { data: DashboardData; metaStatus: MetaStatus | null }) {
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const [syncDays, setSyncDays] = useState<90 | 180>(90)
+  const [snapshots, setSnapshots] = useState<MetaSnapshot[]>([])
+  const [playbooks, setPlaybooks] = useState<CampaignPlaybook[]>([])
   const syncErrors = data.dataSource?.syncErrors ?? []
   const rawCounts = data.dataSource?.rawCounts ?? {}
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      return
+    }
+
+    void fetch('/api/meta/snapshots')
+      .then((response) => response.ok ? response.json() : { snapshots: [] })
+      .then((result: { snapshots?: MetaSnapshot[] }) => setSnapshots(result.snapshots ?? []))
+      .catch(() => setSnapshots([]))
+
+    void fetch('/api/playbooks')
+      .then((response) => response.ok ? response.json() : { playbooks: [] })
+      .then((result: { playbooks?: CampaignPlaybook[] }) => setPlaybooks(result.playbooks ?? []))
+      .catch(() => setPlaybooks([]))
+  }, [])
 
   const runSync = async () => {
     if (isSyncing) {
@@ -1138,17 +1159,29 @@ function SettingsView({ data, metaStatus }: { data: DashboardData; metaStatus: M
     }
 
     setIsSyncing(true)
-    setSyncMessage('Syncing the last 90 days from Meta...')
+    setSyncMessage(`Syncing the last ${syncDays} days from Meta...`)
 
     try {
-      const response = await fetch('/api/meta/sync', { method: 'POST' })
-      const result = (await response.json()) as { ok?: boolean; error?: string; llmEnabled?: boolean }
+      const response = await fetch('/api/meta/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: syncDays }),
+      })
+      const result = (await response.json()) as {
+        ok?: boolean
+        error?: string
+        llmEnabled?: boolean
+        snapshot?: MetaSnapshot
+      }
 
       if (!response.ok || !result.ok) {
         setSyncMessage(result.error ?? `Sync failed with ${response.status}`)
         return
       }
 
+      if (result.snapshot) {
+        setSnapshots((current) => [result.snapshot as MetaSnapshot, ...current.filter((item) => item.id !== result.snapshot?.id)])
+      }
       setSyncMessage(result.llmEnabled ? 'Sync complete. LLM analysis saved.' : 'Sync complete. Rule-based analysis saved.')
       window.setTimeout(() => window.location.reload(), 900)
     } catch {
@@ -1187,12 +1220,24 @@ function SettingsView({ data, metaStatus }: { data: DashboardData; metaStatus: M
           <strong>{data.dataSource?.label ?? 'Dashboard data'}</strong>
           <p>
             {data.dataSource?.generatedAt
-              ? `Last analysis: ${formatDateTime(data.dataSource.generatedAt)}`
+              ? `Last analysis: ${formatDateTime(data.dataSource.generatedAt)}${data.dataSource.snapshotId ? ` (${data.dataSource.days ?? 90}d snapshot)` : ''}`
               : 'No saved Meta analysis timestamp yet.'}
           </p>
+          <div className="segmented-control compact">
+            {[90, 180].map((days) => (
+              <button
+                className={syncDays === days ? 'active' : ''}
+                key={days}
+                type="button"
+                onClick={() => setSyncDays(days as 90 | 180)}
+              >
+                {days} days
+              </button>
+            ))}
+          </div>
           <button className="sync-button" type="button" onClick={runSync} disabled={isSyncing || !metaStatus?.connected}>
             <RefreshCcw size={16} />
-            {isSyncing ? 'Syncing...' : 'Run 90-day sync'}
+            {isSyncing ? 'Syncing...' : `Run ${syncDays}-day sync`}
           </button>
           {syncMessage && <small className="sync-message">{syncMessage}</small>}
           <div className="metric-list">
@@ -1200,8 +1245,33 @@ function SettingsView({ data, metaStatus }: { data: DashboardData; metaStatus: M
             <div><strong>Ad sets</strong><span>{rawCounts.adsets ?? data.adSets.length}</span></div>
             <div><strong>Ads</strong><span>{rawCounts.ads ?? data.ads.length}</span></div>
             <div><strong>Insight rows</strong><span>{rawCounts.placementRows ?? data.metrics.length}</span></div>
+            <div><strong>Snapshot ID</strong><span>{data.dataSource?.snapshotId ? shortText(data.dataSource.snapshotId, 28) : 'Not saved yet'}</span></div>
             <div><strong>Sync warnings</strong><span>{syncErrors.length}</span></div>
           </div>
+        </div>
+      </article>
+      <article className="panel">
+        <PanelHeading eyebrow="Import Memory" title="Saved snapshots" icon={BookOpen} />
+        <div className="metric-list">
+          {snapshots.length > 0 ? snapshots.slice(0, 5).map((snapshot) => (
+            <div key={snapshot.id}>
+              <strong>{snapshot.days} days</strong>
+              <span>{formatDateTime(snapshot.generatedAt)}</span>
+            </div>
+          )) : (
+            <div><strong>No snapshots yet</strong><span>Run a Meta sync to create one.</span></div>
+          )}
+        </div>
+      </article>
+      <article className="panel">
+        <PanelHeading eyebrow="Campaign Playbooks" title="Configurable launch strategy" icon={ClipboardCheck} />
+        <div className="metric-list">
+          {playbooks.slice(0, 3).map((playbook) => (
+            <div key={playbook.id}>
+              <strong>{playbook.name}</strong>
+              <span>{playbook.segments.length} segments · {playbook.primarySuccessMetric}</span>
+            </div>
+          ))}
         </div>
       </article>
       <article className="panel panel-wide">
@@ -1434,6 +1504,10 @@ function labelPlacement(placement: Placement) {
 function shortCampaignLabel(name: string) {
   const cleanName = name.replace(/^DA\s*-\s*/i, '').trim()
   return cleanName.length <= 28 ? cleanName : `${cleanName.slice(0, 27)}...`
+}
+
+function shortText(value: string, limit: number) {
+  return value.length <= limit ? value : `${value.slice(0, limit - 1)}...`
 }
 
 function formatDateTime(value: string) {

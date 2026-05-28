@@ -747,6 +747,9 @@ Deliverables:
 - Breakdowns by age, gender, placement, region/city where available.
 - Store normalized snapshots.
 - Dashboard source badge: mock, imported, live.
+- Configurable sync window for 90-day or six-month reads.
+- Saved snapshot index so past imports can become the agent memory layer.
+- Initial campaign playbook store with arbitrary segment count, budget rules, and success metric configuration.
 
 ### Version 0.4: Three-Segment Funnel Tracking
 

@@ -23,6 +23,8 @@ from .meta_client import (
     get_video_source,
     mask_token,
 )
+from .playbook_store import load_playbooks, save_playbook
+from .snapshot_store import build_snapshot_payload, list_snapshots, save_snapshot
 
 SYNC_END_DATE = date.today()
 
@@ -45,6 +47,14 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[str]
     suggestedQuestions: list[str]
+
+
+class MetaSyncRequest(BaseModel):
+    days: int = 90
+
+
+class CampaignPlaybookRequest(BaseModel):
+    playbook: dict[str, Any]
 
 
 campaigns = [
@@ -339,10 +349,12 @@ async def meta_video(video_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/meta/sync")
-async def meta_sync() -> dict[str, Any]:
+async def meta_sync(request: MetaSyncRequest | None = None) -> dict[str, Any]:
     config = get_meta_config()
     if not config.is_configured:
         return {"ok": False, "error": "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to .env."}
+
+    days = normalize_sync_days(request.days if request else 90)
 
     try:
         raw = {
@@ -352,11 +364,11 @@ async def meta_sync() -> dict[str, Any]:
             "ads": await safe_list("ads", get_ads(config)),
             "permissions": await safe_list("permissions", get_token_permissions(config)),
             "insights": {
-                "base": await safe_chunked_insights(config, "insights_base", None),
-                "age_gender": await safe_chunked_insights(config, "insights_age_gender", ["age", "gender"]),
-                "country": await safe_chunked_insights(config, "insights_country", ["country"]),
-                "region": await safe_chunked_insights(config, "insights_region", ["region"]),
-                "placement": await safe_chunked_insights(config, "insights_placement", ["publisher_platform", "platform_position"]),
+                "base": await safe_chunked_insights(config, "insights_base", None, days=days),
+                "age_gender": await safe_chunked_insights(config, "insights_age_gender", ["age", "gender"], days=days),
+                "country": await safe_chunked_insights(config, "insights_country", ["country"], days=days),
+                "region": await safe_chunked_insights(config, "insights_region", ["region"], days=days),
+                "placement": await safe_chunked_insights(config, "insights_placement", ["publisher_platform", "platform_position"], days=days),
             },
         }
         analysis_preview = build_meta_analysis(raw)["analysis"]
@@ -375,9 +387,17 @@ async def meta_sync() -> dict[str, Any]:
             "lessons": analysis_preview["lessons"],
         })
         knowledge = build_meta_analysis(raw, llm_summary=llm_summary)
+        snapshot = save_snapshot(build_snapshot_payload(
+            raw=raw,
+            analysis=knowledge["analysis"],
+            account_id=config.ad_account_id,
+            days=days,
+        ))
+        knowledge["snapshot"] = snapshot
         save_knowledge_base(knowledge)
         return {
             "ok": True,
+            "snapshot": snapshot,
             "rawCounts": knowledge["analysis"]["rawCounts"],
             "summary": knowledge["analysis"]["summary"],
             "recommendations": knowledge["analysis"]["recommendations"],
@@ -387,6 +407,21 @@ async def meta_sync() -> dict[str, Any]:
         return {"ok": False, "error": str(error)}
 
 
+@app.get("/api/meta/snapshots")
+def meta_snapshots() -> dict[str, Any]:
+    return {"snapshots": list_snapshots()}
+
+
+@app.get("/api/playbooks")
+def campaign_playbooks() -> dict[str, Any]:
+    return {"playbooks": load_playbooks()}
+
+
+@app.post("/api/playbooks")
+def upsert_campaign_playbook(request: CampaignPlaybookRequest) -> dict[str, Any]:
+    return {"playbook": save_playbook(request.playbook)}
+
+
 async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:
     try:
         return await get_insights(config, breakdowns=breakdowns)
@@ -394,14 +429,17 @@ async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, An
         return [{"sync_error": str(error), "breakdowns": ",".join(breakdowns)}]
 
 
-async def safe_chunked_insights(config: Any, name: str, breakdowns: list[str] | None) -> list[dict[str, Any]]:
+async def safe_chunked_insights(
+    config: Any,
+    name: str,
+    breakdowns: list[str] | None,
+    *,
+    days: int = 90,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    start = SYNC_END_DATE - timedelta(days=89)
-    current = start
 
-    while current <= SYNC_END_DATE:
-        chunk_end = min(current + timedelta(days=6), SYNC_END_DATE)
+    for current, chunk_end in build_sync_windows(days=days, end_date=SYNC_END_DATE):
         try:
             rows.extend(await get_insights(config, breakdowns=breakdowns, since=current.isoformat(), until=chunk_end.isoformat()))
         except MetaApiError as error:
@@ -411,9 +449,26 @@ async def safe_chunked_insights(config: Any, name: str, breakdowns: list[str] | 
                 "since": current.isoformat(),
                 "until": chunk_end.isoformat(),
             })
-        current = chunk_end + timedelta(days=1)
 
     return rows or errors
+
+
+def normalize_sync_days(days: int) -> int:
+    if days <= 0:
+        return 90
+    return min(days, 186)
+
+
+def build_sync_windows(*, days: int, end_date: date, chunk_days: int = 7) -> list[tuple[date, date]]:
+    days = normalize_sync_days(days)
+    start = end_date - timedelta(days=days - 1)
+    windows: list[tuple[date, date]] = []
+    current = start
+    while current <= end_date:
+        chunk_end = min(current + timedelta(days=chunk_days - 1), end_date)
+        windows.append((current, chunk_end))
+        current = chunk_end + timedelta(days=1)
+    return windows
 
 
 async def safe_list(name: str, awaitable: Any) -> list[dict[str, Any]]:
@@ -608,6 +663,7 @@ def derive_kpis(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
     raw = knowledge.get("raw", {})
     analysis = knowledge.get("analysis", {})
+    snapshot = knowledge.get("snapshot", {})
     raw_campaigns = valid_rows(raw.get("campaigns", []))
     raw_adsets = valid_rows(raw.get("adsets", []))
     raw_ads = valid_rows(raw.get("ads", []))
@@ -650,8 +706,10 @@ def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
         "glossary": glossary,
         "dataSource": {
             "kind": "meta",
-            "label": "Real Meta 90-day analysis",
+            "label": f"Real Meta {snapshot.get('days') or 90}-day analysis",
             "generatedAt": analysis.get("generatedAt"),
+            "snapshotId": snapshot.get("id"),
+            "days": snapshot.get("days") or 90,
             "rawCounts": analysis.get("rawCounts", {}),
             "syncErrors": analysis.get("syncErrors", []),
         },
