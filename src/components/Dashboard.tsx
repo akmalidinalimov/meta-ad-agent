@@ -114,6 +114,7 @@ export function Dashboard({ data }: DashboardProps) {
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
+      id: 'initial-agent-message',
       role: 'agent',
       content: 'Ask me about creatives, placements, audiences, funnel leaks, experiments, or Meta connection status.',
       sources: ['agent'],
@@ -170,13 +171,14 @@ export function Dashboard({ data }: DashboardProps) {
 
     setChatInput('')
     setIsChatLoading(true)
-    setChatMessages((current) => [...current, { role: 'user', content: cleanMessage }])
+    setChatMessages((current) => [...current, { id: makeMessageId(), role: 'user', content: cleanMessage }])
 
     try {
       const response = await askAgent(cleanMessage)
       setChatMessages((current) => [
         ...current,
         {
+          id: makeMessageId(),
           role: 'agent',
           content: response.answer,
           sources: response.sources,
@@ -187,6 +189,7 @@ export function Dashboard({ data }: DashboardProps) {
       setChatMessages((current) => [
         ...current,
         {
+          id: makeMessageId(),
           role: 'agent',
           content: 'I could not reach the agent endpoint. Make sure the backend is running on port 8000.',
           sources: ['error'],
@@ -282,10 +285,15 @@ export function Dashboard({ data }: DashboardProps) {
 }
 
 interface ChatMessage {
+  id: string
   role: 'user' | 'agent'
   content: string
   sources?: string[]
   suggestedQuestions?: string[]
+}
+
+function makeMessageId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
 function Filters({
@@ -480,8 +488,8 @@ function AgentChatPanel({
       </div>
 
       <div className="agent-chat-messages">
-        {messages.map((message, index) => (
-          <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>
+        {messages.map((message) => (
+          <div className={`chat-message ${message.role}`} key={message.id}>
             <p>{message.content}</p>
             {message.sources && message.sources.length > 0 && (
               <small>Sources: {message.sources.join(', ')}</small>
@@ -498,7 +506,7 @@ function AgentChatPanel({
       {latestSuggestions && (
         <div className="chat-suggestions">
           {latestSuggestions.map((suggestion) => (
-            <button type="button" onClick={() => onSend(suggestion)} key={suggestion}>
+            <button type="button" onClick={() => onSend(suggestion)} disabled={isLoading} key={suggestion}>
               {suggestion}
             </button>
           ))}

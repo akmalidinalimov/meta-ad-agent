@@ -493,7 +493,10 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if knowledge:
-        llm_answer = await generate_chat_answer(question, knowledge_chat_preview(knowledge))
+        try:
+            llm_answer = await generate_chat_answer(question, knowledge_chat_preview(knowledge))
+        except Exception:
+            llm_answer = None
         if llm_answer and not llm_answer.startswith("LLM chat unavailable"):
             return ChatResponse(
                 answer=llm_answer,
