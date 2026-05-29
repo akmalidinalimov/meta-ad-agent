@@ -41,6 +41,35 @@ def test_send_telegram_message_reports_missing_config(monkeypatch):
     assert "not configured" in result["error"].lower()
 
 
+def test_send_telegram_message_accepts_chat_id_override(monkeypatch):
+    captured = {}
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "admin")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def fake_urlopen(request, timeout, context):
+        captured["body"] = request.data.decode("utf-8")
+        return FakeResponse()
+
+    monkeypatch.setattr("backend.telegram_outbound.urllib.request.urlopen", fake_urlopen)
+
+    from backend.telegram_outbound import send_telegram_message_sync
+
+    result = send_telegram_message_sync("Hello", chat_id="chat_123")
+
+    assert result["ok"] is True
+    assert '"chat_id": "chat_123"' in captured["body"]
+
+
 def test_prepare_campaign_execution_sends_telegram_notification(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
     sent = []

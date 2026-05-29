@@ -15,6 +15,7 @@ from backend.meta_execution import build_campaign_creation_approval
 
 def bind_tmp_command_store(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
+    sent = []
     monkeypatch.setattr(app_module, "create_agent_task", lambda task: create_agent_task(task, storage_dir=storage_dir))
     monkeypatch.setattr(app_module, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
     monkeypatch.setattr(
@@ -49,11 +50,16 @@ def bind_tmp_command_store(monkeypatch, tmp_path):
             storage_dir=storage_dir,
         ),
     )
-    return storage_dir
+    monkeypatch.setattr(
+        app_module,
+        "send_telegram_message_sync",
+        lambda text, **kwargs: sent.append((text, kwargs)) or {"ok": True, "mock": True},
+    )
+    return storage_dir, sent
 
 
 def test_telegram_command_creates_agent_task(monkeypatch, tmp_path):
-    bind_tmp_command_store(monkeypatch, tmp_path)
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
     monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
     client = TestClient(app)
 
@@ -78,6 +84,8 @@ def test_telegram_command_creates_agent_task(monkeypatch, tmp_path):
     assert payload["telegram"]["chatId"] == "1001"
     assert tasks[0]["requestedAction"].startswith("Create a campaign")
     assert tasks[0]["activeAgent"] == "orchestrator"
+    assert sent[0][1]["chat_id"] == "1001"
+    assert "approval-ready campaign plan" in sent[0][0]
 
 
 def test_telegram_command_rejects_invalid_secret(monkeypatch, tmp_path):
@@ -95,7 +103,7 @@ def test_telegram_command_rejects_invalid_secret(monkeypatch, tmp_path):
 
 
 def test_telegram_callback_can_approve_existing_approval(monkeypatch, tmp_path):
-    bind_tmp_command_store(monkeypatch, tmp_path)
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
     monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
     request = build_campaign_creation_approval(
         {
@@ -125,10 +133,12 @@ def test_telegram_callback_can_approve_existing_approval(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert response.json()["approval"]["status"] == "approved"
     assert approvals[0]["approvedBy"] == "telegram:akmal"
+    assert sent[0][1]["chat_id"] == "1001"
+    assert "Approval recorded" in sent[0][0]
 
 
 def test_telegram_callback_can_reject_existing_approval(monkeypatch, tmp_path):
-    bind_tmp_command_store(monkeypatch, tmp_path)
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
     monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
     saved = create_approval_request(
         build_campaign_creation_approval(
@@ -160,10 +170,11 @@ def test_telegram_callback_can_reject_existing_approval(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert response.json()["approval"]["status"] == "rejected"
     assert approvals[0]["rejectedBy"] == "telegram:akmal"
+    assert "rejected" in sent[0][0].lower()
 
 
 def test_telegram_callback_can_mark_approval_needs_changes(monkeypatch, tmp_path):
-    bind_tmp_command_store(monkeypatch, tmp_path)
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
     monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
     saved = create_approval_request(
         build_campaign_creation_approval(
@@ -195,3 +206,4 @@ def test_telegram_callback_can_mark_approval_needs_changes(monkeypatch, tmp_path
     assert response.status_code == 200
     assert response.json()["approval"]["status"] == "needs_changes"
     assert approvals[0]["changesRequestedBy"] == "telegram:akmal"
+    assert "needs changes" in sent[0][0].lower()

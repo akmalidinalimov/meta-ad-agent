@@ -141,6 +141,8 @@ All command sources must use the same orchestration path:
 - Telegram bot commands create `AgentTask` rows through `/api/telegram/command`.
 - Codex chat can create the same task shape when the user asks for campaign setup or execution planning.
 
+Telegram is treated as a manager chat surface, not a separate automation brain. Every Telegram text command is routed to the orchestrator and saved as an `AgentTask`. The bot replies in the same Telegram chat with the orchestrator answer, including questions, strategy summaries, or approval status.
+
 Telegram command webhooks must use `TELEGRAM_COMMAND_SECRET` and send it in `x-telegram-agent-secret` or the JSON `secret` field.
 
 Telegram approval buttons may send callback data in this format:
@@ -150,6 +152,16 @@ approve:approval_id
 ```
 
 This records human approval only. It does not publish, turn on spend, or bypass execution guardrails.
+
+Supported Telegram approval callbacks:
+
+```text
+approve:approval_id
+reject:approval_id
+changes:approval_id
+```
+
+Reject and needs-changes decisions update the approval record and notify the same Telegram chat. Only an approved request can proceed to execution, and publish/spend actions remain behind the separate execution guardrails.
 
 ## Current Level
 

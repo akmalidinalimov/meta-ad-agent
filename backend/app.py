@@ -690,11 +690,14 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
             raise HTTPException(status_code=404, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+        message = "Approval recorded. Execution still requires the configured execution endpoint."
+        telegram_reply = send_telegram_reply(command, message)
         return {
             "ok": True,
             "telegram": command,
             "approval": approval,
-            "message": "Approval recorded. Execution still requires the configured execution endpoint.",
+            "message": message,
+            "reply": telegram_reply,
         }
     if command.get("action") == "reject" and command.get("approvalId"):
         rejected_by = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
@@ -702,11 +705,14 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
             approval = reject_request(command["approvalId"], rejected_by=rejected_by, reason="Rejected from Telegram.")
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        message = "Approval request rejected from Telegram."
+        telegram_reply = send_telegram_reply(command, message)
         return {
             "ok": True,
             "telegram": command,
             "approval": approval,
-            "message": "Approval request rejected from Telegram.",
+            "message": message,
+            "reply": telegram_reply,
         }
     if command.get("action") in {"changes", "needs_changes"} and command.get("approvalId"):
         requested_by = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
@@ -718,27 +724,38 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
             )
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        message = "Approval request marked as needs changes from Telegram."
+        telegram_reply = send_telegram_reply(command, message)
         return {
             "ok": True,
             "telegram": command,
             "approval": approval,
-            "message": "Approval request marked as needs changes from Telegram.",
+            "message": message,
+            "reply": telegram_reply,
         }
 
     text = command.get("text") or ""
     if not text:
+        message = "Send a command message, or use callback data like approve:approval_id."
+        telegram_reply = send_telegram_reply(command, message)
         return {
             "ok": False,
             "telegram": command,
-            "message": "Send a command message, or use callback data like approve:approval_id.",
+            "message": message,
+            "reply": telegram_reply,
         }
 
     source_task = AgentTaskRequest(source="telegram", command=text)
     result = create_orchestrated_agent_task(source_task)
+    task = result.get("task", {})
+    plan = task.get("plan") or {}
+    answer = plan.get("answer") or "Telegram command sent to the orchestrator."
+    telegram_reply = send_telegram_reply(command, clamp_telegram_text(answer))
     return {
         **result,
         "telegram": command,
         "message": "Telegram command sent to the orchestrator.",
+        "reply": telegram_reply,
     }
 
 
@@ -746,6 +763,19 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
 def telegram_test_message(request: TelegramTestMessageRequest) -> dict[str, Any]:
     message = request.message.strip() or "Agent approval test"
     return {"ok": True, "telegram": send_telegram_message_sync(message)}
+
+
+def send_telegram_reply(command: dict[str, Any], message: str) -> dict[str, Any] | None:
+    chat_id = command.get("chatId")
+    if not chat_id:
+        return None
+    return send_telegram_message_sync(message, chat_id=chat_id)
+
+
+def clamp_telegram_text(message: str) -> str:
+    if len(message) <= 3900:
+        return message
+    return f"{message[:3890]}\n\n[truncated]"
 
 
 async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:

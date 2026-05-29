@@ -51,7 +51,7 @@ def send_approval_notification(approval: dict[str, Any]) -> dict[str, Any]:
 
 def send_telegram_message_sync(text: str, **kwargs: Any) -> dict[str, Any]:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+    chat_id = str(kwargs.pop("chat_id", "") or os.getenv("TELEGRAM_ADMIN_CHAT_ID", "")).strip()
     if not token or not chat_id:
         return {"ok": False, "skipped": True, "error": "Telegram bot token or admin chat ID is not configured."}
 
