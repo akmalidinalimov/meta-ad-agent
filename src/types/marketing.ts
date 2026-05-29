@@ -441,6 +441,41 @@ export interface ApprovalRequest {
   }
 }
 
+export interface AgentSpec {
+  id: string
+  name: string
+  purpose: string
+  inputs: string[]
+  outputs: string[]
+  tools: string[]
+  canExecuteLiveChanges: boolean
+  requiresApproval: boolean
+}
+
+export interface AgentTask {
+  id: string
+  source: 'dashboard' | 'telegram' | 'codex' | string
+  status: 'draft' | 'planning' | 'needs_approval' | 'approved' | 'executed' | 'failed' | string
+  requestedAction: string
+  campaignGroupId?: string | null
+  segmentIds: string[]
+  activeAgent?: string
+  plan?: {
+    answer?: string
+    activeAgent?: string
+    routeReason?: string
+    sources?: string[]
+    suggestedQuestions?: string[]
+    generatedPlaybook?: CampaignPlaybook
+    generatedStrategy?: LaunchStrategy
+  } | null
+  approvalId?: string | null
+  executionResult?: unknown
+  createdAt: string
+  updatedAt: string
+  history: Array<{ status: string; at: string }>
+}
+
 export interface MetaSettingsAudit {
   summary: {
     campaigns: number

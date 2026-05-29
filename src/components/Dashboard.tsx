@@ -60,8 +60,11 @@ import {
   summarizePlaybookReadiness,
 } from '../lib/playbookBuilder'
 import { askAgent } from '../services/agentChatProvider'
+import { createAgentTask, getAgentCommandCenter } from '../services/agentTaskProvider'
 import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
 import type {
+  AgentSpec,
+  AgentTask,
   CampaignPlaybook,
   CampaignPlaybookSegment,
   ApprovalRequest,
@@ -95,6 +98,7 @@ const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'commandCenter', label: 'Command Center', icon: Bot },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
   { id: 'creatives', label: 'Creatives', icon: Film },
   { id: 'funnel', label: 'Funnel', icon: MousePointerClick },
@@ -273,6 +277,7 @@ export function Dashboard({ data }: DashboardProps) {
               placements={placements}
             />
           )}
+          {activeView === 'commandCenter' && <CommandCenterView data={data} />}
           {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
           {activeView === 'creatives' && (
             <CreativesView
@@ -869,6 +874,188 @@ function CreativesView({
       </article>
     </section>
   )
+}
+
+function CommandCenterView({ data }: { data: DashboardData }) {
+  const [tasks, setTasks] = useState<AgentTask[]>([])
+  const [agents, setAgents] = useState<AgentSpec[]>([])
+  const [command, setCommand] = useState('Create a campaign with 3 VSLs: income, business automation, content creators. Use $100 each and optimize for Telegram START.')
+  const [source, setSource] = useState<'dashboard' | 'telegram' | 'codex'>('dashboard')
+  const [campaignGroupId, setCampaignGroupId] = useState('next-launch')
+  const [segmentIds, setSegmentIds] = useState('income, business, creators')
+  const [prepareApproval, setPrepareApproval] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const loadCommandCenter = async () => {
+    const result = await getAgentCommandCenter()
+    setTasks(result.tasks)
+    setAgents(result.agents)
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void getAgentCommandCenter()
+      .then((result) => {
+        if (!cancelled) {
+          setTasks(result.tasks)
+          setAgents(result.agents)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMessage('Could not load the command center. Make sure the backend is running.')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const submitTask = async () => {
+    if (!command.trim() || isSubmitting) {
+      return
+    }
+
+    setIsSubmitting(true)
+    setMessage('Sending command to the orchestrator...')
+    try {
+      const result = await createAgentTask({
+        source,
+        command,
+        campaignGroupId: campaignGroupId.trim() || undefined,
+        segmentIds: parseCsvList(segmentIds),
+        prepareApproval,
+      })
+      setTasks((current) => [result.task, ...current.filter((task) => task.id !== result.task.id)])
+      setMessage(
+        result.task.approvalId
+          ? 'Task planned and approval request created. It will still not publish or spend.'
+          : 'Task planned. Review the plan before turning it into an approval request.',
+      )
+      await loadCommandCenter()
+    } catch {
+      setMessage('Could not create the task. Check the backend task endpoint.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const recentCampaigns = data.campaigns.slice(0, 8)
+  const approvalAgents = agents.filter((agent) => agent.requiresApproval).length
+  const pendingTasks = tasks.filter((task) => task.status === 'planning' || task.status === 'needs_approval').length
+
+  return (
+    <section className="dashboard-grid">
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Command Center" title="Give work to the orchestrator" icon={Bot} />
+        <div className="command-grid">
+          <label className="command-field-wide">
+            <span>Command</span>
+            <textarea value={command} onChange={(event) => setCommand(event.target.value)} />
+          </label>
+          <label>
+            <span>Input source</span>
+            <select value={source} onChange={(event) => setSource(event.target.value as typeof source)}>
+              <option value="dashboard">Dashboard</option>
+              <option value="telegram">Telegram bot</option>
+              <option value="codex">Codex chat</option>
+            </select>
+          </label>
+          <label>
+            <span>Campaign group ID</span>
+            <input value={campaignGroupId} onChange={(event) => setCampaignGroupId(event.target.value)} />
+          </label>
+          <label>
+            <span>Segment / VSL IDs</span>
+            <input value={segmentIds} onChange={(event) => setSegmentIds(event.target.value)} />
+          </label>
+        </div>
+        <div className="command-actions">
+          <label className="approval-toggle">
+            <input
+              type="checkbox"
+              checked={prepareApproval}
+              onChange={(event) => setPrepareApproval(event.target.checked)}
+            />
+            <span>Create approval request if campaign plan is complete</span>
+          </label>
+          <button className="sync-button" type="button" onClick={submitTask} disabled={isSubmitting || !command.trim()}>
+            <Send size={16} />
+            {isSubmitting ? 'Planning...' : 'Send command'}
+          </button>
+          {message && <small className="sync-message">{message}</small>}
+        </div>
+      </article>
+
+      <article className="panel">
+        <PanelHeading eyebrow="Task Queue" title="Recent orchestrator work" icon={ListChecks} />
+        <div className="builder-summary command-summary">
+          <MiniMetric label="Tasks" value={tasks.length.toString()} />
+          <MiniMetric label="Pending" value={pendingTasks.toString()} />
+          <MiniMetric label="Agents" value={agents.length.toString()} />
+          <MiniMetric label="Approval agents" value={approvalAgents.toString()} />
+        </div>
+        <div className="task-list">
+          {tasks.length > 0 ? tasks.slice(0, 8).map((task) => (
+            <div className={`task-item ${task.status}`} key={task.id}>
+              <div>
+                <strong>{task.requestedAction || 'Untitled task'}</strong>
+                <p>{task.plan?.answer ? shortText(task.plan.answer, 180) : 'The orchestrator has captured this task.'}</p>
+                <small>{task.source} / {task.activeAgent ?? 'orchestrator'} / {formatDateTime(task.updatedAt)}</small>
+                {task.approvalId && <small>Approval: {task.approvalId}</small>}
+              </div>
+              <span>{labelRawSetting(task.status)}</span>
+            </div>
+          )) : (
+            <EmptyState compact />
+          )}
+        </div>
+      </article>
+
+      <article className="panel">
+        <PanelHeading eyebrow="Agent Availability" title="Specialists and execution safety" icon={ShieldAlert} />
+        <div className="agent-status-grid">
+          {agents.map((agent) => (
+            <div className={`agent-status-card ${agentStatusTone(agent)}`} key={agent.id}>
+              <div>
+                <strong>{agent.name}</strong>
+                <p>{agent.purpose}</p>
+              </div>
+              <span>{agent.requiresApproval ? 'Approval required' : 'Analysis ready'}</span>
+            </div>
+          ))}
+          {agents.length === 0 && <EmptyState compact />}
+        </div>
+      </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Campaign Mapping" title="Connect Meta campaigns to reusable launch groups" icon={Target} />
+        <div className="campaign-map-grid">
+          <div className="mapping-note">
+            <strong>Mapping rule</strong>
+            <p>
+              Use a stable campaign group ID plus segment/VSL IDs. The same structure works for one VSL, three VSLs, or five VSLs later.
+            </p>
+          </div>
+          {recentCampaigns.map((campaign) => (
+            <div className="campaign-map-row" key={campaign.id}>
+              <strong>{campaign.name}</strong>
+              <span>{campaign.id}</span>
+              <small>{campaign.objective} / {campaign.status} / {formatCurrency(campaign.dailyBudgetUsd)}/day</small>
+            </div>
+          ))}
+        </div>
+      </article>
+    </section>
+  )
+}
+
+function agentStatusTone(agent: AgentSpec) {
+  if (agent.canExecuteLiveChanges) {
+    return 'danger'
+  }
+  return agent.requiresApproval ? 'warning' : 'good'
 }
 
 function RankingsView({ data, metrics }: { data: DashboardData; metrics: DailyAdMetric[] }) {

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
 from .agent_orchestrator import agent_registry, orchestrate_agent_chat
+from .agent_task_store import create_agent_task, list_agent_tasks, update_agent_task
 from .approval_store import approve_request, create_approval_request, list_approval_requests, update_approval_request
 from .chatplace_events import normalize_chatplace_event
 from .funnel_events import build_funnel_summary, save_funnel_event
@@ -101,6 +102,14 @@ class ApprovalExecutionRequest(BaseModel):
 
 class FunnelEventRequest(BaseModel):
     event: dict[str, Any]
+
+
+class AgentTaskRequest(BaseModel):
+    source: str = "dashboard"
+    command: str
+    campaignGroupId: str | None = None
+    segmentIds: list[str] = []
+    prepareApproval: bool = False
 
 
 campaigns = [
@@ -555,6 +564,66 @@ def agents() -> dict[str, Any]:
         "approvalRequiredForLiveChanges": True,
         "liveWriteScope": "paused_campaign_and_adset_creation_only" if live_writes_enabled else "disabled",
     }
+
+
+@app.get("/api/tasks")
+def agent_tasks() -> dict[str, Any]:
+    return {"tasks": list_agent_tasks()}
+
+
+@app.post("/api/tasks")
+def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
+    command = request.command.strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="Task command is required.")
+
+    task = create_agent_task(
+        {
+            "source": request.source,
+            "command": command,
+            "campaignGroupId": request.campaignGroupId,
+            "segmentIds": request.segmentIds,
+            "status": "planning",
+        }
+    )
+    knowledge = load_knowledge_base()
+    orchestrated = orchestrate_agent_chat(command, knowledge=knowledge, playbooks=load_playbooks())
+    plan = orchestrated or {
+        "activeAgent": "orchestrator",
+        "answer": "Task captured. The orchestrator needs more campaign context before it can prepare an execution plan.",
+        "sources": ["agent_task_store"],
+        "suggestedQuestions": [
+            "Which VSL or segment should this task use?",
+            "What daily budget should the plan use?",
+            "Should this become an approval request?",
+        ],
+    }
+
+    patch: dict[str, Any] = {
+        "status": "planning",
+        "activeAgent": plan.get("activeAgent") or "orchestrator",
+        "plan": plan,
+    }
+
+    generated_playbook = plan.get("generatedPlaybook") if isinstance(plan, dict) else None
+    if generated_playbook:
+        saved_playbook = save_playbook(generated_playbook)
+        plan["generatedPlaybook"] = saved_playbook
+        if plan.get("generatedStrategy"):
+            plan["generatedStrategy"]["playbookId"] = saved_playbook["id"]
+
+        if request.prepareApproval:
+            approval = build_campaign_creation_approval(
+                saved_playbook,
+                account_id=get_meta_config().ad_account_id or "unconfigured_ad_account",
+                reason=f"Task {task['id']}: prepare paused Meta campaign structure from command.",
+            )
+            saved_approval = create_approval_request(approval)
+            patch["approvalId"] = saved_approval["id"]
+            patch["status"] = "needs_approval"
+
+    updated = update_agent_task(task["id"], patch)
+    return {"ok": True, "task": updated}
 
 
 async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:
