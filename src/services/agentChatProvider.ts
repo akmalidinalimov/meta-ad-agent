@@ -2,6 +2,8 @@ export interface AgentChatResponse {
   answer: string
   sources: string[]
   suggestedQuestions: string[]
+  activeAgent?: string | null
+  routeReason?: string | null
 }
 
 export async function askAgent(message: string): Promise<AgentChatResponse> {

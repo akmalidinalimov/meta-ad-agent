@@ -199,6 +199,8 @@ export function Dashboard({ data }: DashboardProps) {
           content: response.answer,
           sources: response.sources,
           suggestedQuestions: response.suggestedQuestions,
+          activeAgent: response.activeAgent ?? undefined,
+          routeReason: response.routeReason ?? undefined,
         },
       ])
     } catch {
@@ -309,6 +311,8 @@ interface ChatMessage {
   content: string
   sources?: string[]
   suggestedQuestions?: string[]
+  activeAgent?: string
+  routeReason?: string
 }
 
 function makeMessageId() {
@@ -510,6 +514,7 @@ function AgentChatPanel({
         {messages.map((message) => (
           <div className={`chat-message ${message.role}`} key={message.id}>
             <p>{message.content}</p>
+            {message.activeAgent && <small>Agent: {labelRawSetting(message.activeAgent)}{message.routeReason ? ` · ${message.routeReason}` : ''}</small>}
             {message.sources && message.sources.length > 0 && (
               <small>Sources: {message.sources.join(', ')}</small>
             )}

@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
+from .agent_orchestrator import agent_registry, orchestrate_agent_chat
 from .chatplace_events import normalize_chatplace_event
 from .funnel_events import build_funnel_summary, save_funnel_event
 from .knowledge_base import load_knowledge_base, save_knowledge_base
@@ -62,6 +63,8 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[str]
     suggestedQuestions: list[str]
+    activeAgent: str | None = None
+    routeReason: str | None = None
 
 
 class MetaSyncRequest(BaseModel):
@@ -464,6 +467,15 @@ def generate_strategy(request: StrategyRequest) -> dict[str, Any]:
     }
 
 
+@app.get("/api/agents")
+def agents() -> dict[str, Any]:
+    return {
+        "agents": list(agent_registry().values()),
+        "executionEnabled": False,
+        "approvalRequiredForLiveChanges": True,
+    }
+
+
 async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:
     try:
         return await get_insights(config, breakdowns=breakdowns)
@@ -616,6 +628,9 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
     dashboard_data = dashboard()
     meta = await meta_status()
     knowledge = load_knowledge_base()
+    orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks())
+    if orchestrated:
+        return ChatResponse(**orchestrated)
 
     wants_tracking_answer = any(word in lower for word in ["pixel", "tracking", "visit", "landing", "lead rate", "funnel"])
     wants_connection_status = any(word in lower for word in ["token", "meta api", "account id", "ad account", "api status"])
