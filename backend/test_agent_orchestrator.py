@@ -18,9 +18,12 @@ def test_agent_registry_contains_required_specialists_with_safe_permissions():
         "funnel",
         "monitoring",
         "experiment",
+        "meta_ai_advisor",
         "execution",
         "browser_operator",
     }.issubset(registry)
+    assert registry["meta_ai_advisor"]["canExecuteLiveChanges"] is False
+    assert registry["meta_ai_advisor"]["requiresApproval"] is False
     assert registry["execution"]["canExecuteLiveChanges"] is False
     assert registry["browser_operator"]["canExecuteLiveChanges"] is False
     assert registry["execution"]["requiresApproval"] is True
@@ -32,6 +35,7 @@ def test_route_question_selects_specialist_without_live_execution():
     assert route_question("Should we target Tashkent or Uzbekistan broad?")["agentId"] == "audience"
     assert route_question("Set up a new campaign with $100 per segment")["agentId"] == "orchestrator"
     assert route_question("Go to browser and change the budget")["agentId"] == "execution"
+    assert route_question("Ask Meta AI to analyze this ad set and compare it with our funnel data")["agentId"] == "meta_ai_advisor"
 
 
 def test_orchestrator_generates_campaign_plan_from_latest_playbook():
@@ -91,3 +95,18 @@ def test_execution_agent_blocks_browser_fallback_until_specific_approval():
     assert response["activeAgent"] == "execution"
     assert "specific approved action" in response["answer"].lower()
     assert "api first" in response["answer"].lower()
+
+
+def test_meta_ai_advisor_explains_browser_capture_workflow():
+    response = orchestrate_agent_chat(
+        "Use Meta AI Analyze for this campaign and tell me whether to trust it",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "meta_ai_advisor"
+    assert "read-only" in response["answer"].lower()
+    assert "orchestrator" in response["answer"].lower()
+    assert "telegram" in response["answer"].lower()
+    assert "Meta AI" in response["answer"]

@@ -34,6 +34,14 @@ The default operating mode is read-only. The agent may inspect data, summarize h
 - Converts recommendations into experiments.
 - Defines hypothesis, variable, budget, duration, primary metric, guardrails, and stop/scale rules.
 
+### Meta AI Advisor Agent
+
+- Uses Ads Manager Analyze only as read-only evidence.
+- Captures recommendation text, selected object, date range, and screenshot evidence.
+- Sends the recommendation to the Orchestrator for specialist validation.
+- Cannot execute, publish, pause, or change budgets.
+- Converts Meta AI advice into `accept_as_experiment`, `accept_with_modification`, `reject_for_business_quality`, or `needs_more_data`.
+
 ### Execution Agent
 
 - Executes only approved actions.

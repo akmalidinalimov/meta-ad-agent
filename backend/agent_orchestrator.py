@@ -79,6 +79,15 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
         "canExecuteLiveChanges": False,
         "requiresApproval": False,
     },
+    "meta_ai_advisor": {
+        "name": "Meta AI Advisor Agent",
+        "purpose": "Capture and interpret Ads Manager AI Analyze recommendations as read-only platform-side evidence.",
+        "inputs": ["selected campaign/ad set/ad", "Meta AI Analyze panel text", "screenshot evidence", "Meta API metrics"],
+        "outputs": ["Meta AI recommendation summary", "trust level", "business-side countercheck", "handoff to specialist agents"],
+        "tools": ["browser_read_only_capture", "knowledge_base", "orchestrator_handoff"],
+        "canExecuteLiveChanges": False,
+        "requiresApproval": False,
+    },
     "execution": {
         "name": "Meta Execution Agent",
         "purpose": "After explicit approval, execute a specific Meta Ads change by API first, browser fallback second.",
@@ -108,6 +117,8 @@ def route_question(question: str) -> dict[str, Any]:
     lower = question.lower()
     if any(word in lower for word in ["sub-agent", "subagent", "agent role", "orchestrator", "specialist"]):
         return route("orchestrator", "Agent architecture/status question.")
+    if any(word in lower for word in ["meta ai", "ads manager ai", "analyze button", "opportunity score", "opportunity-score"]):
+        return route("meta_ai_advisor", "Meta AI Analyze request should be captured read-only and validated against business data.")
     if any(word in lower for word in ["setup", "set up", "create campaign", "launch campaign", "new campaign", "campaign plan", "vsl"]):
         return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
     if any(word in lower for word in ["execute", "change budget", "browser", "go to meta", "pause", "publish", "upload creative"]):
@@ -161,6 +172,18 @@ def orchestrate_agent_chat(
                 "Draft an approval request for this campaign change.",
                 "What information do you need before execution?",
                 "Generate a campaign plan first.",
+            ],
+        )
+
+    if routed["agentId"] == "meta_ai_advisor":
+        return response(
+            routed,
+            answer=describe_meta_ai_workflow(),
+            sources=["docs/META_AI_ADVISOR_WORKFLOW.md", "agent_orchestrator", "Meta Ads Manager Analyze panel"],
+            suggested=[
+                "Capture Meta AI analysis for the selected campaign.",
+                "Compare Meta AI recommendations with Telegram START quality.",
+                "Turn accepted Meta AI advice into an experiment plan.",
             ],
         )
 
@@ -234,6 +257,7 @@ def describe_agent_system() -> str:
         "funnel",
         "monitoring",
         "experiment",
+        "meta_ai_advisor",
         "execution",
         "browser_operator",
     ]:
@@ -243,6 +267,17 @@ def describe_agent_system() -> str:
     lines.append("")
     lines.append("Current safety level: analysis and recommendations are enabled; live execution remains blocked until approval queue and execution logs are implemented.")
     return "\n".join(lines)
+
+
+def describe_meta_ai_workflow() -> str:
+    return (
+        "Meta AI is useful as read-only platform-side evidence, not as the final decision-maker. "
+        "The Meta AI Advisor Agent should use the browser to capture the Ads Manager Analyze output for the selected campaign, ad set, or ad. "
+        "It then sends that text and screenshot evidence to the Orchestrator. The Orchestrator delegates the recommendation to the right specialist: "
+        "Creative Intelligence for hook/video advice, Audience Strategist for targeting advice, Placement Optimizer for placement advice, and Funnel Tracking for Telegram/landing-page quality checks. "
+        "We trust Meta AI more for auction, delivery, creative efficiency, learning, and Opportunity Score signals. We trust our agents more for business-side quality: Telegram START quality, VSL intent, CRM/sales capacity, purchasing power, and course-buyer fit. "
+        "No Meta AI recommendation can execute directly; it must become an experiment or approval request first."
+    )
 
 
 def format_strategy_answer(strategy: dict[str, Any], source_label: str = "the saved playbook and knowledge base") -> str:
