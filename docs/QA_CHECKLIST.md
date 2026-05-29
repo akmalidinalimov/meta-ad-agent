@@ -19,6 +19,7 @@ Run this before pushing dashboard changes.
 - A play marker appears only when `videoUrl` exists.
 - Agent chat gives one answer per question and shows sources.
 - Agent chat shows the routed specialist when the orchestrator handles sub-agent, campaign planning, or execution-safety questions.
+- A complete campaign brief in chat creates a draft playbook and does not execute Meta changes.
 - `GET /api/agents` returns every configured specialist and confirms live execution is disabled.
 - Meta connection status never exposes access tokens.
 - Settings can run either a 90-day or 180-day Meta sync.

@@ -65,6 +65,8 @@ class ChatResponse(BaseModel):
     suggestedQuestions: list[str]
     activeAgent: str | None = None
     routeReason: str | None = None
+    generatedPlaybook: dict[str, Any] | None = None
+    generatedStrategy: dict[str, Any] | None = None
 
 
 class MetaSyncRequest(BaseModel):
@@ -630,6 +632,13 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
     knowledge = load_knowledge_base()
     orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks())
     if orchestrated:
+        generated_playbook = orchestrated.get("generatedPlaybook")
+        if generated_playbook:
+            saved_playbook = save_playbook(generated_playbook)
+            orchestrated["generatedPlaybook"] = saved_playbook
+            if orchestrated.get("generatedStrategy"):
+                orchestrated["generatedStrategy"]["playbookId"] = saved_playbook["id"]
+            orchestrated["answer"] += "\n\nI saved this as a draft playbook in the dashboard. It is still not executed in Meta Ads."
         return ChatResponse(**orchestrated)
 
     wants_tracking_answer = any(word in lower for word in ["pixel", "tracking", "visit", "landing", "lead rate", "funnel"])

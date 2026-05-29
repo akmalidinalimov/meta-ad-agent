@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .chat_campaign_planner import build_playbook_from_chat, can_build_playbook_from_chat
 from .strategy_generator import generate_launch_strategy
 
 
@@ -107,7 +108,7 @@ def route_question(question: str) -> dict[str, Any]:
     lower = question.lower()
     if any(word in lower for word in ["sub-agent", "subagent", "agent role", "orchestrator", "specialist"]):
         return route("orchestrator", "Agent architecture/status question.")
-    if any(word in lower for word in ["setup", "set up", "create campaign", "launch campaign", "new campaign", "campaign plan"]):
+    if any(word in lower for word in ["setup", "set up", "create campaign", "launch campaign", "new campaign", "campaign plan", "vsl"]):
         return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
     if any(word in lower for word in ["execute", "change budget", "browser", "go to meta", "pause", "publish", "upload creative"]):
         return route("execution", "Live Meta change request requires approval and API-first execution policy.")
@@ -163,7 +164,24 @@ def orchestrate_agent_chat(
             ],
         )
 
-    if routed["agentId"] == "orchestrator" and any(word in lower for word in ["setup", "set up", "create campaign", "launch", "campaign plan"]):
+    if routed["agentId"] == "orchestrator" and any(word in lower for word in ["setup", "set up", "create campaign", "launch", "campaign plan", "vsl"]):
+        if can_build_playbook_from_chat(question):
+            playbook = build_playbook_from_chat(question, knowledge=knowledge)
+            strategy = generate_launch_strategy(playbook, knowledge)
+            result = response(
+                routed,
+                answer=format_strategy_answer(strategy, source_label="your chat brief"),
+                sources=["chat_campaign_planner", "strategy_generator", "storage/meta_knowledge_base.json", "docs/AGENT_OPERATING_POLICY.md"],
+                suggested=[
+                    "Save this playbook for the dashboard.",
+                    "Turn this into approval requests.",
+                    "What should we test in the first 48 hours?",
+                ],
+            )
+            result["generatedPlaybook"] = playbook
+            result["generatedStrategy"] = strategy
+            return result
+
         playbook = first_playbook_with_segments(playbooks)
         if not playbook:
             return response(
@@ -227,7 +245,7 @@ def describe_agent_system() -> str:
     return "\n".join(lines)
 
 
-def format_strategy_answer(strategy: dict[str, Any]) -> str:
+def format_strategy_answer(strategy: dict[str, Any], source_label: str = "the saved playbook and knowledge base") -> str:
     segment_lines = [
         f"- {segment['name']}: ${segment['budgetUsd']:,.0f}/day, placements {', '.join(segment['recommendedPlacements'])}, interests {', '.join(segment['interestStrategy'][:3])}."
         for segment in strategy.get("segments", [])
@@ -236,7 +254,7 @@ def format_strategy_answer(strategy: dict[str, Any]) -> str:
     action_lines = [f"- {action['title']}: {action['impact']}" for action in strategy.get("approvalActions", [])[:3]]
     return "\n".join(
         [
-            f"I generated an approval-ready campaign plan from the saved playbook and knowledge base. {strategy['summary']}",
+            f"I generated an approval-ready campaign plan from {source_label}. {strategy['summary']}",
             "",
             f"Budget: ${strategy['budget']['totalDailyBudgetUsd']:,.0f}/day total. Estimated lead load: {strategy['budget']['estimatedDailyLeadLoad']:g}/day.",
             "",

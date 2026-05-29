@@ -85,3 +85,27 @@ Build Chat-to-Campaign Planner:
 - User approves specific actions.
 
 This is the bridge between conversation and future Meta execution.
+
+## Chat-to-Campaign Planner
+
+Implemented in:
+
+- `backend/chat_campaign_planner.py`
+
+The planner can turn a clear chat brief into a local draft campaign playbook. Example:
+
+```text
+Create a campaign with 3 VSLs: earning money, business automation, content creators. Use $100 each and optimize for Telegram START.
+```
+
+The generated playbook includes:
+
+- Arbitrary number of segments/VSLs
+- Segment IDs and names
+- Budget per segment
+- Primary success metric
+- Uzbekistan/Tashkent-style location inference
+- Instagram Reels, Stories, and Feed placements by default
+- Audience notes, pain points, offer angles, interests, age range, guardrails
+
+When the chat endpoint receives a complete campaign brief, it saves the generated playbook locally so it becomes available in the dashboard Strategy view. This is still a draft only. No Meta Ads changes are executed.

@@ -4,6 +4,8 @@ export interface AgentChatResponse {
   suggestedQuestions: string[]
   activeAgent?: string | null
   routeReason?: string | null
+  generatedPlaybook?: unknown
+  generatedStrategy?: unknown
 }
 
 export async function askAgent(message: string): Promise<AgentChatResponse> {

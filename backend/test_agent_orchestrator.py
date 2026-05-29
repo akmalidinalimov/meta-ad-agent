@@ -64,6 +64,22 @@ def test_orchestrator_asks_for_chat_variables_when_playbook_has_no_segments():
     assert "budget" in response["answer"].lower()
 
 
+def test_orchestrator_builds_campaign_plan_from_chat_brief_without_saved_playbook():
+    response = orchestrate_agent_chat(
+        "Create a campaign with 3 VSLs: earning money, business automation, content creators. Use $100 each and optimize for Telegram START.",
+        knowledge=sample_knowledge(),
+        playbooks=[{"id": "pb_empty", "name": "Empty", "segments": [], "rules": {}}],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    assert response["generatedPlaybook"]["id"].startswith("pb_chat_")
+    assert len(response["generatedPlaybook"]["segments"]) == 3
+    assert "chat_campaign_planner" in response["sources"]
+    assert "Earning Money" in response["answer"]
+    assert "I will not execute" in response["answer"]
+
+
 def test_execution_agent_blocks_browser_fallback_until_specific_approval():
     response = orchestrate_agent_chat(
         "Use browser fallback and change my Meta budget now",
