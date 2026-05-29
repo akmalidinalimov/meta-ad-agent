@@ -391,6 +391,56 @@ export interface LaunchStrategy {
   assumptions: string[]
 }
 
+export interface ApprovalRequest {
+  id: string
+  actionType: string
+  target: {
+    level: string
+    id: string
+    name: string
+  }
+  after: {
+    campaign?: {
+      name: string
+      objective: string
+      status: string
+    }
+    adsets?: Array<{
+      name: string
+      status: string
+      daily_budget: number
+      optimization_goal: string
+      targeting: {
+        publisher_platforms?: string[]
+        instagram_positions?: string[]
+        flexible_spec?: Array<{
+          interests?: Array<{ name: string }>
+        }>
+      }
+    }>
+  }
+  reason: string
+  risk: 'low' | 'medium' | 'high' | string
+  expectedImpact: string
+  guardrailResult: 'pass' | 'warn' | 'fail' | string
+  guardrailChecks: Array<{
+    result: 'pass' | 'warn' | 'fail' | string
+    message: string
+  }>
+  executionMethod: string
+  requiresApproval: boolean
+  status: string
+  createdAt: string
+  updatedAt?: string
+  approvedBy?: string
+  approvedAt?: string
+  lastExecutionResult?: {
+    ok?: boolean
+    dryRun?: boolean
+    note?: string
+  }
+}
+
 export interface MetaSettingsAudit {
   summary: {
     campaigns: number

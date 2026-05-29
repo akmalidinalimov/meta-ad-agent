@@ -5,9 +5,9 @@ Run this before pushing dashboard changes.
 ## Commands
 
 - `npm test`
+- `npm run lint`
 - `npm run build`
-- `python -m pytest backend/test_analysis_engine.py -v`
-- `python -m pytest backend/test_snapshot_store.py backend/test_sync_window.py backend/test_playbook_store.py -v`
+- `python -m pytest backend -q`
 
 ## Manual Checks
 
@@ -25,3 +25,7 @@ Run this before pushing dashboard changes.
 - Settings can run either a 90-day or 180-day Meta sync.
 - Saved snapshots appear in Settings after a successful sync.
 - Campaign playbooks are configurable and not fixed to three VSL segments.
+- Strategy view can prepare an execution approval request from a saved playbook.
+- Approval queue shows stored execution approvals with guardrail status and paused campaign/ad set preview.
+- Approving an execution request enables dry-run only; dry-run confirms no request was sent to Meta.
+- Live Meta write execution remains disabled until a separately approved release.

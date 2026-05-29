@@ -1,6 +1,6 @@
 # Meta Execution Safety
 
-Date: 2026-05-28
+Date: 2026-05-29
 
 ## Baseline
 
@@ -17,6 +17,13 @@ API execution is preferred because it is:
 - easier to test,
 - less fragile than browser clicks,
 - easier to rollback or compare before/after.
+
+Current implementation status:
+
+- The dashboard can prepare approval requests for paused campaign structures.
+- Generated campaigns and ad sets are always `PAUSED`.
+- Dry-run execution is implemented and does not send any request to Meta.
+- Live Meta write execution is intentionally disabled until the final confirmation endpoint and execution logs are reviewed.
 
 ## Browser Fallback
 
@@ -51,6 +58,7 @@ Need live change?
 -> Prepare proposed action.
 -> Check playbook guardrails.
 -> Ask approval.
+-> Dry-run the exact payload.
 -> If approved, try Meta API.
 -> If API succeeds, log result.
 -> If API fails, propose browser fallback.
@@ -74,7 +82,9 @@ Need live change?
   "risk": "low | medium | high",
   "expectedImpact": "string",
   "guardrailResult": "pass | warn | fail",
+  "guardrailChecks": [],
   "executionMethod": "api | browser_fallback",
+  "status": "needs_review | approved | dry_run_completed | executed | blocked",
   "requiresApproval": true
 }
 ```

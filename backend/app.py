@@ -12,10 +12,12 @@ from pydantic import BaseModel
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
 from .agent_orchestrator import agent_registry, orchestrate_agent_chat
+from .approval_store import approve_request, create_approval_request, list_approval_requests, update_approval_request
 from .chatplace_events import normalize_chatplace_event
 from .funnel_events import build_funnel_summary, save_funnel_event
 from .knowledge_base import load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
+from .meta_execution import build_campaign_creation_approval, execute_campaign_creation_approval
 from .meta_client import (
     MetaApiError,
     get_ad_account_summary,
@@ -79,6 +81,19 @@ class CampaignPlaybookRequest(BaseModel):
 
 class StrategyRequest(BaseModel):
     playbook: dict[str, Any] | None = None
+
+
+class CampaignExecutionPlanRequest(BaseModel):
+    playbook: dict[str, Any] | None = None
+    reason: str | None = None
+
+
+class ApprovalDecisionRequest(BaseModel):
+    approvedBy: str = "akmal"
+
+
+class ApprovalExecutionRequest(BaseModel):
+    dryRun: bool = True
 
 
 class FunnelEventRequest(BaseModel):
@@ -467,6 +482,57 @@ def generate_strategy(request: StrategyRequest) -> dict[str, Any]:
         "strategy": generate_launch_strategy(playbook, knowledge),
         "knowledgeAvailable": bool(knowledge),
     }
+
+
+@app.get("/api/approvals")
+def approvals() -> dict[str, Any]:
+    return {"approvals": list_approval_requests()}
+
+
+@app.post("/api/execution/prepare-campaign")
+def prepare_campaign_execution(request: CampaignExecutionPlanRequest) -> dict[str, Any]:
+    playbook = request.playbook or first_playbook_with_segments(load_playbooks())
+    if not playbook:
+        raise HTTPException(status_code=400, detail="Save a playbook with at least one segment before preparing execution.")
+
+    account_id = get_meta_config().ad_account_id or "unconfigured_ad_account"
+    approval = build_campaign_creation_approval(
+        playbook,
+        account_id=account_id,
+        reason=request.reason or "Prepare a paused Meta campaign structure for review.",
+    )
+    return {"ok": True, "approval": create_approval_request(approval)}
+
+
+@app.post("/api/approvals/{approval_id}/approve")
+def approve_approval_request(approval_id: str, request: ApprovalDecisionRequest) -> dict[str, Any]:
+    try:
+        return {"ok": True, "approval": approve_request(approval_id, approved_by=request.approvedBy)}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/approvals/{approval_id}/execute")
+def execute_approval_request(approval_id: str, request: ApprovalExecutionRequest) -> dict[str, Any]:
+    approval = next((item for item in list_approval_requests() if item.get("id") == approval_id), None)
+    if not approval:
+        raise HTTPException(status_code=404, detail=f"Approval request not found: {approval_id}")
+
+    result = execute_campaign_creation_approval(approval, dry_run=request.dryRun)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Execution failed."))
+
+    status = "dry_run_completed" if request.dryRun else "executed"
+    updated = update_approval_request(
+        approval_id,
+        {
+            "status": status,
+            "lastExecutionResult": result,
+        },
+    )
+    return {"ok": True, "approval": updated, "result": result}
 
 
 @app.get("/api/agents")
@@ -1508,6 +1574,13 @@ def default_questions() -> list[str]:
 
 def first(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     return items[0] if items else None
+
+
+def first_playbook_with_segments(playbooks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for playbook in playbooks:
+        if playbook.get("segments"):
+            return playbook
+    return None
 
 
 def last(items: list[dict[str, Any]]) -> dict[str, Any] | None:

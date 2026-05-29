@@ -64,6 +64,7 @@ import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
 import type {
   CampaignPlaybook,
   CampaignPlaybookSegment,
+  ApprovalRequest,
   Creative,
   DashboardData,
   DashboardFilters,
@@ -1472,6 +1473,7 @@ function StrategyView() {
   const [strategy, setStrategy] = useState<LaunchStrategy | null>(null)
   const [knowledgeAvailable, setKnowledgeAvailable] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isPreparing, setIsPreparing] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
   useEffect(() => {
@@ -1527,6 +1529,35 @@ function StrategyView() {
     }
   }
 
+  const prepareExecutionApproval = async () => {
+    if (isPreparing || !selectedPlaybookHasSegments) {
+      return
+    }
+
+    setIsPreparing(true)
+    setMessage('Preparing paused Meta campaign approval...')
+    try {
+      const response = await fetch('/api/execution/prepare-campaign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playbook: selectedPlaybook ?? null,
+          reason: 'Prepare a paused campaign shell from this playbook. Do not spend until approved.',
+        }),
+      })
+      const result = (await response.json()) as { ok?: boolean; approval?: ApprovalRequest; detail?: string; error?: string }
+      if (!response.ok || !result.ok || !result.approval) {
+        setMessage(result.detail ?? result.error ?? `Approval preparation failed with ${response.status}`)
+        return
+      }
+      setMessage(`Approval request created: ${result.approval.id}. Review it in the approval queue before dry-run execution.`)
+    } catch {
+      setMessage('Could not reach the execution approval endpoint.')
+    } finally {
+      setIsPreparing(false)
+    }
+  }
+
   return (
     <section className="dashboard-grid">
       <article className="panel panel-wide">
@@ -1545,6 +1576,10 @@ function StrategyView() {
           <button className="sync-button" type="button" onClick={generateStrategy} disabled={isGenerating || !selectedPlaybookHasSegments}>
             <TrendingUp size={16} />
             {isGenerating ? 'Generating...' : 'Generate strategy'}
+          </button>
+          <button className="sync-button secondary" type="button" onClick={prepareExecutionApproval} disabled={isPreparing || !selectedPlaybookHasSegments}>
+            <ShieldAlert size={16} />
+            {isPreparing ? 'Preparing...' : 'Prepare approval'}
           </button>
           {message && <small className="sync-message">{message}</small>}
         </div>
@@ -1966,9 +2001,111 @@ function InsightsPanel({ data }: { data: DashboardData }) {
 }
 
 function ApprovalQueue({ data }: { data: DashboardData }) {
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
+  const [message, setMessage] = useState<string | null>(null)
+
+  const fetchApprovals = async () => {
+    const response = await fetch('/api/approvals')
+    const result = (await response.json()) as { approvals?: ApprovalRequest[] }
+    return result.approvals ?? []
+  }
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      return
+    }
+    let cancelled = false
+    void fetchApprovals()
+      .then((nextApprovals) => {
+        if (!cancelled) {
+          setApprovals(nextApprovals)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMessage('Could not load execution approvals.')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const approve = async (approvalId: string) => {
+    setMessage('Approving request...')
+    try {
+      const response = await fetch(`/api/approvals/${approvalId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvedBy: 'dashboard' }),
+      })
+      if (!response.ok) {
+        const result = (await response.json()) as { detail?: string }
+        setMessage(result.detail ?? `Approval failed with ${response.status}`)
+        return
+      }
+      setMessage('Approved. You can now run a dry-run preview.')
+      setApprovals(await fetchApprovals())
+    } catch {
+      setMessage('Could not approve the request.')
+    }
+  }
+
+  const dryRun = async (approvalId: string) => {
+    setMessage('Running dry-run preview...')
+    try {
+      const response = await fetch(`/api/approvals/${approvalId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: true }),
+      })
+      const result = (await response.json()) as { result?: { note?: string }; detail?: string }
+      if (!response.ok) {
+        setMessage(result.detail ?? `Dry run failed with ${response.status}`)
+        return
+      }
+      setMessage(result.result?.note ?? 'Dry-run completed without sending a request to Meta.')
+      setApprovals(await fetchApprovals())
+    } catch {
+      setMessage('Could not run the dry-run preview.')
+    }
+  }
+
   return (
     <article className="panel">
       <PanelHeading eyebrow="Recommended Actions" title="Approval queue" icon={ClipboardCheck} />
+      {approvals.length > 0 && (
+        <div className="action-list execution-approval-list">
+          {approvals.map((approval) => (
+            <div className={`action-item ${approval.risk}`} key={approval.id}>
+              <div>
+                <strong>{approval.after.campaign?.name ?? approval.actionType}</strong>
+                <p>{approval.reason}</p>
+                <small>
+                  {approval.status} / {approval.guardrailResult} / {approval.executionMethod}
+                </small>
+                <small>
+                  {(approval.after.adsets ?? []).length} paused ad set(s), budget {formatCurrency((approval.after.adsets ?? []).reduce((total, adset) => total + adset.daily_budget / 100, 0))}/day
+                </small>
+              </div>
+              <div className="approval-button-stack">
+                {approval.status === 'needs_review' && (
+                  <button className="sync-button secondary" type="button" onClick={() => void approve(approval.id)}>
+                    Approve
+                  </button>
+                )}
+                {approval.status === 'approved' && (
+                  <button className="sync-button" type="button" onClick={() => void dryRun(approval.id)}>
+                    Dry run
+                  </button>
+                )}
+                <span>{approval.risk}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {message && <small className="sync-message">{message}</small>}
       <div className="action-list">
         {data.approvalActions.map((action) => (
           <div className={`action-item ${action.risk}`} key={action.id}>

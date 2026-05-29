@@ -877,6 +877,16 @@
   align-items: center;
 }
 
+.execution-approval-list {
+  margin-bottom: 14px;
+}
+
+.approval-button-stack {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
 .metric-list > div {
   display: flex;
   justify-content: space-between;
@@ -1400,6 +1410,12 @@
   color: #64748b;
   background: #e2e8f0;
   cursor: not-allowed;
+}
+
+.sync-button.secondary {
+  border-color: #cbd5e1;
+  color: #0f766e;
+  background: #ffffff;
 }
 
 .segmented-control {
