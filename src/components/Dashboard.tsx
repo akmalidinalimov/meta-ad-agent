@@ -13,6 +13,7 @@ import {
   FlaskConical,
   Gauge,
   LayoutDashboard,
+  ListChecks,
   MousePointerClick,
   RadioTower,
   RefreshCcw,
@@ -1263,6 +1264,25 @@ function TrackingView({ data }: { data: DashboardData }) {
           <MiniMetric label="Qualified lead rate" value={formatRate(funnelEvents?.rates?.qualifiedLeadRate)} />
         </div>
       </article>
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Observed Bot Funnel" title="Tracked Telegram steps" icon={ListChecks} />
+        <div className="table-list">
+          <div className="ranking-head event-steps-grid">
+            <span>Step</span>
+            <span>Events</span>
+            <span>Visitors</span>
+            <span>From previous</span>
+          </div>
+          {(funnelEvents?.eventSteps?.length ? funnelEvents.eventSteps : [{ eventName: 'waiting_for_events', count: 0, uniqueVisitors: 0, rateFromPrevious: null }]).map((step) => (
+            <div className="ranking-row event-steps-grid" key={step.eventName}>
+              <strong>{labelEventName(step.eventName)}</strong>
+              <span>{step.count.toLocaleString()}</span>
+              <span>{step.uniqueVisitors.toLocaleString()}</span>
+              <em>{step.rateFromPrevious === null ? 'First step' : formatRate(step.rateFromPrevious)}</em>
+            </div>
+          ))}
+        </div>
+      </article>
       {data.trackingHealth.map((item) => (
         <article className={`panel tracking-card ${item.status}`} key={item.name}>
           <div className="tracking-head">
@@ -1646,6 +1666,14 @@ function formatPercent(value: number, base: number) {
 
 function formatRate(value?: number) {
   return typeof value === 'number' ? `${value.toFixed(value % 1 === 0 ? 0 : 1)}%` : '0%'
+}
+
+function labelEventName(value: string) {
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 function getDashboardAnchorDate(data: DashboardData): string {

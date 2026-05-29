@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,7 +47,7 @@ FIELD_MAP = {
     "valueUsd": "valueUsd",
 }
 
-ALLOWED_EVENTS = {
+CANONICAL_EVENTS = {
     "landing_view",
     "vsl_button_click",
     "telegram_link_click",
@@ -61,6 +62,8 @@ ALLOWED_EVENTS = {
     "full_payment",
 }
 
+EVENT_NAME_PATTERN = re.compile(r"[^a-z0-9_]+")
+
 
 def normalize_funnel_event(payload: dict[str, Any]) -> dict[str, Any]:
     event: dict[str, Any] = {
@@ -71,8 +74,7 @@ def normalize_funnel_event(payload: dict[str, Any]) -> dict[str, Any]:
         value = payload.get(source)
         if value not in (None, ""):
             event[target] = value
-    event_name = str(event.get("eventName") or "unknown").strip().lower()
-    event["eventName"] = event_name if event_name in ALLOWED_EVENTS else "unknown"
+    event["eventName"] = normalize_event_name(event.get("eventName"))
     event["raw"] = {key: value for key, value in payload.items() if key not in FIELD_MAP}
     return event
 
@@ -108,17 +110,28 @@ def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
     visitors = set()
     telegram_users = set()
     visitors_by_event: dict[str, set[str]] = defaultdict(set)
+    event_steps: list[dict[str, Any]] = []
 
     for event in events:
         event_name = event.get("eventName", "unknown")
         segment = str(event.get("segment") or "unknown")
         by_segment[segment][event_name] += 1
+        if event_name not in [step["eventName"] for step in event_steps]:
+            event_steps.append({"eventName": event_name, "count": 0, "uniqueVisitors": 0, "rateFromPrevious": None})
         if event.get("visitorId"):
             visitor_id = str(event["visitorId"])
             visitors.add(visitor_id)
             visitors_by_event[event_name].add(visitor_id)
         if event.get("telegramUserId"):
             telegram_users.add(str(event["telegramUserId"]))
+
+    for step in event_steps:
+        step["count"] = by_name[step["eventName"]]
+        step["uniqueVisitors"] = len(visitors_by_event[step["eventName"]])
+    for index, step in enumerate(event_steps):
+        if index > 0:
+            previous = event_steps[index - 1]
+            step["rateFromPrevious"] = min(100, rate(step["uniqueVisitors"], previous["uniqueVisitors"]))
 
     return {
         "totalEvents": len(events),
@@ -127,6 +140,7 @@ def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
         "uniqueVisitors": len(visitors),
         "uniqueTelegramUsers": len(telegram_users),
         "latestEventAt": events[-1].get("receivedAt") if events else None,
+        "eventSteps": event_steps,
         "rates": {
             "telegramStartRate": visitor_rate(visitors_by_event, "bot_start", "telegram_link_click"),
             "keyMessageReachRate": visitor_rate(visitors_by_event, "vsl_key_message_sent", "bot_start"),
@@ -143,3 +157,10 @@ def rate(value: int | float, previous: int | float) -> float:
 
 def visitor_rate(visitors_by_event: dict[str, set[str]], event_name: str, previous_event_name: str) -> float:
     return min(100, rate(len(visitors_by_event[event_name]), len(visitors_by_event[previous_event_name])))
+
+
+def normalize_event_name(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = EVENT_NAME_PATTERN.sub("_", text).strip("_")
+    text = re.sub(r"_+", "_", text)
+    return text[:80] if text else "unknown"

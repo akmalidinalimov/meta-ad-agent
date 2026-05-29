@@ -26,7 +26,9 @@ storage/funnel_events.jsonl
 
 ## Event Names
 
-Supported event names:
+Event names are flexible. Use lowercase snake_case names for any step in the landing page, Telegram bot, CRM form, or sales funnel. The backend will normalize names like `Offer Button Clicked!` into `offer_button_clicked` and keep them in the event summary.
+
+Recommended baseline names:
 
 - `landing_view`
 - `vsl_button_click`
@@ -40,6 +42,15 @@ Supported event names:
 - `qualified_lead`
 - `partial_payment`
 - `full_payment`
+
+Optional custom examples:
+
+- `watched_first_lesson`
+- `watched_ai_income_vsl`
+- `clicked_homework_button`
+- `clicked_offer_button`
+- `joined_private_channel`
+- `requested_installment_info`
 
 ## Required Attribution Fields
 
@@ -235,7 +246,7 @@ If ChatPlace exposes the raw `/start` message instead of a clean variable, use:
 
 If ChatPlace cannot expose the deep-link payload at all, keep the `bot_start` request anyway and send `telegram_user_id`/`username`; the dashboard will count Telegram starts, but they will be unattributed until ChatPlace variable mapping is fixed.
 
-When the VSL sequence starts:
+When any Telegram funnel step happens, send a request with the step name you choose. For example, when the VSL sequence starts:
 
 ```json
 {
@@ -250,7 +261,7 @@ When the VSL sequence starts:
 }
 ```
 
-When the 20-minute key message is sent:
+If you later decide to send a key message, use any event name that matches the actual funnel. This is only an example:
 
 ```json
 {
@@ -309,7 +320,7 @@ Before running traffic:
 - In ChatPlace, click `Test request` on the first External request.
 - Confirm `/api/funnel/summary` shows one `bot_start`.
 - Confirm `telegramStartRate` appears in `rates`.
-- Continue to the 20-minute block and form button block with test users.
+- Continue through every Telegram step you decide to build and confirm each one appears in `eventSteps`.
 - If `bot_start` appears but attribution is missing, inspect the saved event and adjust which ChatPlace variable is sent as `visitor_id` or `message_text`.
 
 Example summary response:
@@ -355,8 +366,9 @@ https://inafform.bitrix24.site/crm_form_vospb/
 ## First Quality Metrics This Enables
 
 - Telegram START rate = `bot_start / telegram_link_click`
-- Key message reach rate = `vsl_key_message_sent / bot_start`
-- Form click rate = `form_button_click / vsl_key_message_sent`
+- Dynamic bot step rate = each observed step's unique visitors divided by the previous observed step's unique visitors
+- Key message reach rate = `vsl_key_message_sent / bot_start` if you use that step
+- Form click rate = `form_button_click / vsl_key_message_sent` if you use a key-message step before the form
 - Segment quality = downstream events per segment
 - Creative quality = downstream events per creative ID
 

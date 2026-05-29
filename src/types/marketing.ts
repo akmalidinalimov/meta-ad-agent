@@ -378,6 +378,12 @@ export interface FunnelEventSummary {
   uniqueVisitors: number
   uniqueTelegramUsers: number
   latestEventAt?: string | null
+  eventSteps?: Array<{
+    eventName: string
+    count: number
+    uniqueVisitors: number
+    rateFromPrevious: number | null
+  }>
   rates?: {
     telegramStartRate: number
     keyMessageReachRate: number
