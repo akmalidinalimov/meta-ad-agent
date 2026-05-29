@@ -294,6 +294,11 @@ export interface CampaignPlaybookSegment {
   creativeCountTarget?: number
   startingBudgetUsd?: number
   guardrails?: string[]
+  locations?: string[]
+  placements?: string[]
+  interests?: string[]
+  ageRange?: string
+  gender?: 'all' | 'female' | 'male'
 }
 
 export interface CampaignPlaybook {

@@ -1054,6 +1054,94 @@
   gap: 10px;
 }
 
+.builder-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.builder-grid label {
+  display: grid;
+  gap: 6px;
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.builder-grid input,
+.builder-grid select,
+.builder-grid textarea {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #cfd9e7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #102033;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 9px 10px;
+  text-transform: none;
+}
+
+.builder-grid textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.builder-field-wide {
+  grid-column: span 3;
+}
+
+.builder-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.segment-builder-list {
+  display: grid;
+  gap: 14px;
+}
+
+.segment-builder-card {
+  border: 1px solid #d9e1eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+}
+
+.segment-builder-head,
+.builder-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.segment-builder-head button {
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #b91c1c;
+  cursor: pointer;
+  font-weight: 900;
+  padding: 8px 10px;
+}
+
+.segment-builder-head button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.builder-actions {
+  justify-content: flex-start;
+  margin: 16px 0 0;
+}
+
 .mini-metric {
   display: grid;
   gap: 4px;
@@ -1266,6 +1354,15 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .builder-grid,
+  .builder-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .builder-field-wide {
+    grid-column: span 2;
+  }
+
   .settings-row {
     grid-template-columns: 1.4fr 0.8fr 0.9fr;
   }
@@ -1298,8 +1395,14 @@
   .bottom-grid,
   .detail-layout,
   .settings-summary-grid,
+  .builder-grid,
+  .builder-summary,
   .glossary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .builder-field-wide {
+    grid-column: span 1;
   }
 
   .panel-wide {

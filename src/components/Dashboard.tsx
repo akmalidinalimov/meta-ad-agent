@@ -53,10 +53,17 @@ import {
   getCampaignOptions,
   getDateWindow,
 } from '../lib/analytics'
+import {
+  buildEmptySegment,
+  buildPlaybookDraft,
+  parseCsvList,
+  summarizePlaybookReadiness,
+} from '../lib/playbookBuilder'
 import { askAgent } from '../services/agentChatProvider'
 import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
 import type {
   CampaignPlaybook,
+  CampaignPlaybookSegment,
   Creative,
   DashboardData,
   DashboardFilters,
@@ -92,6 +99,7 @@ const navItems = [
   { id: 'audiences', label: 'Audiences', icon: Users },
   { id: 'placements', label: 'Placements', icon: RadioTower },
   { id: 'experiments', label: 'Experiments', icon: FlaskConical },
+  { id: 'campaignBuilder', label: 'Campaign Builder', icon: ClipboardCheck },
   { id: 'settingsAudit', label: 'Settings Audit', icon: ClipboardCheck },
   { id: 'tracking', label: 'Tracking Health', icon: ShieldAlert },
   { id: 'alerts', label: 'Alerts', icon: AlertTriangle },
@@ -273,6 +281,7 @@ export function Dashboard({ data }: DashboardProps) {
           {activeView === 'audiences' && <AudiencesView data={data} />}
           {activeView === 'placements' && <PlacementsView placements={placements} />}
           {activeView === 'experiments' && <ExperimentsView data={data} />}
+          {activeView === 'campaignBuilder' && <CampaignBuilderView />}
           {activeView === 'settingsAudit' && <SettingsAuditView />}
           {activeView === 'tracking' && <TrackingView data={data} />}
           {activeView === 'alerts' && <AlertsView data={data} />}
@@ -1232,6 +1241,220 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
       <small>{label}</small>
       <strong>{value}</strong>
     </div>
+  )
+}
+
+function CampaignBuilderView() {
+  const [name, setName] = useState('Next AI course launch')
+  const [primarySuccessMetric, setPrimarySuccessMetric] = useState('bot_start')
+  const [startingBudgetUsd, setStartingBudgetUsd] = useState(100)
+  const [maxDailyBudgetUsd, setMaxDailyBudgetUsd] = useState(500)
+  const [salesCapacityLeadsPerDay, setSalesCapacityLeadsPerDay] = useState(200)
+  const [scalingStepPercent, setScalingStepPercent] = useState(20)
+  const [segments, setSegments] = useState<CampaignPlaybookSegment[]>([
+    {
+      ...buildEmptySegment('New segment'),
+      targetAudienceNotes: 'Describe who should see this VSL.',
+      offerAngle: 'Describe the promise or hook for this segment.',
+    },
+  ])
+  const [savedPlaybook, setSavedPlaybook] = useState<CampaignPlaybook | null>(null)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+
+  const draft = useMemo(
+    () =>
+      buildPlaybookDraft({
+        name,
+        startingBudgetUsd,
+        maxDailyBudgetUsd,
+        salesCapacityLeadsPerDay,
+        scalingStepPercent,
+        primarySuccessMetric,
+        segments,
+      }),
+    [maxDailyBudgetUsd, name, primarySuccessMetric, salesCapacityLeadsPerDay, scalingStepPercent, segments, startingBudgetUsd],
+  )
+  const readiness = useMemo(() => summarizePlaybookReadiness(draft), [draft])
+
+  const updateSegment = (index: number, patch: Partial<CampaignPlaybookSegment>) => {
+    setSegments((current) => current.map((segment, segmentIndex) => (segmentIndex === index ? { ...segment, ...patch } : segment)))
+  }
+
+  const addSegment = () => {
+    setSegments((current) => [...current, buildEmptySegment(`Segment ${current.length + 1}`)])
+  }
+
+  const removeSegment = (index: number) => {
+    setSegments((current) => current.filter((_, segmentIndex) => segmentIndex !== index))
+  }
+
+  const savePlaybook = async () => {
+    if (isSaving) {
+      return
+    }
+    setIsSaving(true)
+    setSaveMessage('Saving campaign playbook...')
+    try {
+      const response = await fetch('/api/playbooks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playbook: draft }),
+      })
+      const result = (await response.json()) as { playbook?: CampaignPlaybook; error?: string }
+      if (!response.ok || !result.playbook) {
+        setSaveMessage(result.error ?? `Save failed with ${response.status}`)
+        return
+      }
+      setSavedPlaybook(result.playbook)
+      setSaveMessage('Playbook saved. It can be used later for approval-based launch planning.')
+    } catch {
+      setSaveMessage('Could not reach the playbook API.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <section className="dashboard-grid">
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Campaign Builder" title="Configurable launch playbook" icon={ClipboardCheck} />
+        <div className="builder-grid">
+          <label>
+            <span>Playbook name</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label>
+            <span>Primary success metric</span>
+            <select value={primarySuccessMetric} onChange={(event) => setPrimarySuccessMetric(event.target.value)}>
+              <option value="bot_start">Telegram START</option>
+              <option value="form_button_click">Form button click</option>
+              <option value="qualified_lead">Qualified lead</option>
+              <option value="full_payment">Full payment</option>
+            </select>
+          </label>
+          <label>
+            <span>Starting budget / segment</span>
+            <input type="number" min={1} value={startingBudgetUsd} onChange={(event) => setStartingBudgetUsd(Number(event.target.value))} />
+          </label>
+          <label>
+            <span>Max daily budget</span>
+            <input type="number" min={1} value={maxDailyBudgetUsd} onChange={(event) => setMaxDailyBudgetUsd(Number(event.target.value))} />
+          </label>
+          <label>
+            <span>Sales capacity leads/day</span>
+            <input type="number" min={1} value={salesCapacityLeadsPerDay} onChange={(event) => setSalesCapacityLeadsPerDay(Number(event.target.value))} />
+          </label>
+          <label>
+            <span>Scale step percent</span>
+            <input type="number" min={1} value={scalingStepPercent} onChange={(event) => setScalingStepPercent(Number(event.target.value))} />
+          </label>
+        </div>
+      </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Segments" title="VSL and audience test groups" icon={Target} />
+        <div className="builder-summary">
+          <MiniMetric label="Segments" value={readiness.segmentCount.toString()} />
+          <MiniMetric label="Ready with links" value={readiness.readySegments.toString()} />
+          <MiniMetric label="Missing landing pages" value={readiness.missingLandingPages.toString()} />
+          <MiniMetric label="Starting budget total" value={formatCurrency(readiness.totalStartingBudgetUsd)} />
+        </div>
+        <div className="segment-builder-list">
+          {segments.map((segment, index) => (
+            <div className="segment-builder-card" key={`${segment.id}-${index}`}>
+              <div className="segment-builder-head">
+                <strong>Segment {index + 1}</strong>
+                <button type="button" onClick={() => removeSegment(index)} disabled={segments.length === 1}>
+                  Remove
+                </button>
+              </div>
+              <div className="builder-grid">
+                <label>
+                  <span>Name</span>
+                  <input value={segment.name} onChange={(event) => updateSegment(index, { name: event.target.value })} />
+                </label>
+                <label>
+                  <span>VSL ID</span>
+                  <input value={segment.vslId ?? ''} onChange={(event) => updateSegment(index, { vslId: event.target.value })} placeholder="Optional for now" />
+                </label>
+                <label>
+                  <span>Landing page URL</span>
+                  <input value={segment.landingPageUrl ?? ''} onChange={(event) => updateSegment(index, { landingPageUrl: event.target.value })} placeholder="Add later" />
+                </label>
+                <label>
+                  <span>Telegram bot URL</span>
+                  <input value={segment.telegramBotUrl ?? ''} onChange={(event) => updateSegment(index, { telegramBotUrl: event.target.value })} placeholder="Add later" />
+                </label>
+                <label>
+                  <span>Locations</span>
+                  <input value={(segment.locations ?? []).join(', ')} onChange={(event) => updateSegment(index, { locations: parseCsvList(event.target.value) })} />
+                </label>
+                <label>
+                  <span>Placements</span>
+                  <input value={(segment.placements ?? []).join(', ')} onChange={(event) => updateSegment(index, { placements: parseCsvList(event.target.value) })} />
+                </label>
+                <label>
+                  <span>Interests</span>
+                  <input value={(segment.interests ?? []).join(', ')} onChange={(event) => updateSegment(index, { interests: parseCsvList(event.target.value) })} />
+                </label>
+                <label>
+                  <span>Segment budget</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={segment.startingBudgetUsd ?? startingBudgetUsd}
+                    onChange={(event) => updateSegment(index, { startingBudgetUsd: Number(event.target.value) })}
+                  />
+                </label>
+                <label>
+                  <span>Creative count target</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={segment.creativeCountTarget ?? 8}
+                    onChange={(event) => updateSegment(index, { creativeCountTarget: Number(event.target.value) })}
+                  />
+                </label>
+                <label>
+                  <span>Age range</span>
+                  <input value={segment.ageRange ?? 'Broad'} onChange={(event) => updateSegment(index, { ageRange: event.target.value })} />
+                </label>
+                <label className="builder-field-wide">
+                  <span>Audience hypothesis</span>
+                  <textarea value={segment.targetAudienceNotes ?? ''} onChange={(event) => updateSegment(index, { targetAudienceNotes: event.target.value })} />
+                </label>
+                <label className="builder-field-wide">
+                  <span>Offer angle</span>
+                  <textarea value={segment.offerAngle ?? ''} onChange={(event) => updateSegment(index, { offerAngle: event.target.value })} />
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="builder-actions">
+          <button className="sync-button" type="button" onClick={addSegment}>
+            <ListChecks size={16} />
+            Add segment
+          </button>
+          <button className="sync-button" type="button" onClick={savePlaybook} disabled={isSaving}>
+            <CheckCircle2 size={16} />
+            {isSaving ? 'Saving...' : 'Save playbook'}
+          </button>
+          {saveMessage && <small className="sync-message">{saveMessage}</small>}
+        </div>
+      </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Draft Preview" title="Approval-safe launch structure" icon={ShieldAlert} />
+        <div className="metric-list">
+          <div><strong>Execution mode</strong><span>{draft.rules.requiresApprovalForExecution ? 'Approval required' : 'Autonomous'}</span></div>
+          <div><strong>Scale rule</strong><span>{draft.rules.scalingStepPercent}% every {draft.rules.scalingFrequencyDays} day</span></div>
+          <div><strong>Approval channels</strong><span>{draft.approvalChannels.join(', ')}</span></div>
+          <div><strong>Saved playbook</strong><span>{savedPlaybook ? savedPlaybook.name : 'Not saved this session'}</span></div>
+        </div>
+      </article>
+    </section>
   )
 }
 
