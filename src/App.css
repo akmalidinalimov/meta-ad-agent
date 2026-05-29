@@ -1179,7 +1179,8 @@
 
 .task-list,
 .agent-status-grid,
-.campaign-map-grid {
+.campaign-map-grid,
+.telegram-command-grid {
   display: grid;
   gap: 10px;
 }
@@ -1187,7 +1188,8 @@
 .task-item,
 .agent-status-card,
 .campaign-map-row,
-.mapping-note {
+.mapping-note,
+.telegram-command-grid > div {
   display: grid;
   gap: 8px;
   padding: 12px;
@@ -1204,17 +1206,30 @@
 .task-item strong,
 .agent-status-card strong,
 .campaign-map-row strong,
-.mapping-note strong {
+.mapping-note strong,
+.telegram-command-grid strong {
   color: #172033;
 }
 
 .task-item p,
 .agent-status-card p,
-.mapping-note p {
+.mapping-note p,
+.telegram-command-grid p {
   margin: 0;
   color: #475569;
   font-size: 13px;
   line-height: 1.4;
+}
+
+.telegram-command-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.telegram-command-grid code {
+  overflow-wrap: anywhere;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .task-item small,
@@ -1733,6 +1748,7 @@
   .action-item,
   .task-item,
   .campaign-map-row,
+  .telegram-command-grid,
   .metric-list > div {
     grid-template-columns: 1fr;
     flex-direction: column;

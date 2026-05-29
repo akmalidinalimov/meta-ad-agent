@@ -1047,6 +1047,27 @@ function CommandCenterView({ data }: { data: DashboardData }) {
           ))}
         </div>
       </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Telegram Control" title="Bot command wiring" icon={Bot} />
+        <div className="telegram-command-grid">
+          <div>
+            <strong>Command webhook</strong>
+            <code>POST /api/telegram/command</code>
+            <p>Send Telegram message updates here to create orchestrator tasks from bot commands.</p>
+          </div>
+          <div>
+            <strong>Shared secret</strong>
+            <code>x-telegram-agent-secret</code>
+            <p>Set `TELEGRAM_COMMAND_SECRET` in the backend and send the same value in this header.</p>
+          </div>
+          <div>
+            <strong>Approval button data</strong>
+            <code>approve:approval_id</code>
+            <p>Approval buttons can approve a request, but publishing or spend still needs the execution endpoint and guardrails.</p>
+          </div>
+        </div>
+      </article>
     </section>
   )
 }

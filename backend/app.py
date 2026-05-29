@@ -37,6 +37,7 @@ from .playbook_store import load_playbooks, save_playbook
 from .settings_audit import build_settings_audit
 from .snapshot_store import build_snapshot_payload, list_snapshots, save_snapshot
 from .strategy_generator import generate_launch_strategy
+from .telegram_commands import normalize_telegram_command
 
 SYNC_END_DATE = date.today()
 
@@ -624,6 +625,46 @@ def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
 
     updated = update_agent_task(task["id"], patch)
     return {"ok": True, "task": updated}
+
+
+@app.post("/api/telegram/command")
+def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    expected_secret = os.getenv("TELEGRAM_COMMAND_SECRET", "").strip()
+    provided_secret = str(payload.get("secret") or request.headers.get("x-telegram-agent-secret") or "").strip()
+    if expected_secret and provided_secret != expected_secret:
+        raise HTTPException(status_code=401, detail="Invalid Telegram command secret.")
+
+    command = normalize_telegram_command(payload)
+    if command.get("action") == "approve" and command.get("approvalId"):
+        approved_by = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
+        try:
+            approval = approve_request(command["approvalId"], approved_by=approved_by)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {
+            "ok": True,
+            "telegram": command,
+            "approval": approval,
+            "message": "Approval recorded. Execution still requires the configured execution endpoint.",
+        }
+
+    text = command.get("text") or ""
+    if not text:
+        return {
+            "ok": False,
+            "telegram": command,
+            "message": "Send a command message, or use callback data like approve:approval_id.",
+        }
+
+    source_task = AgentTaskRequest(source="telegram", command=text)
+    result = create_orchestrated_agent_task(source_task)
+    return {
+        **result,
+        "telegram": command,
+        "message": "Telegram command sent to the orchestrator.",
+    }
 
 
 async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:

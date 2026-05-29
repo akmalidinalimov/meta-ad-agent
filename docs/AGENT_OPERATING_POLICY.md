@@ -16,6 +16,7 @@ The default operating mode is read-only. The agent may inspect data, summarize h
 - Routes questions to specialist agents.
 - Creates approval requests.
 - Blocks execution when guardrails are not satisfied.
+- Accepts command tasks from dashboard, Telegram, and Codex chat through the same task queue.
 
 ### Audit Agent
 
@@ -131,6 +132,24 @@ Every proposed and executed action must store:
 - Execution response.
 - Screenshots for browser fallback.
 - Final status.
+
+## Command Inputs
+
+All command sources must use the same orchestration path:
+
+- Dashboard commands create `AgentTask` rows through `/api/tasks`.
+- Telegram bot commands create `AgentTask` rows through `/api/telegram/command`.
+- Codex chat can create the same task shape when the user asks for campaign setup or execution planning.
+
+Telegram command webhooks must use `TELEGRAM_COMMAND_SECRET` and send it in `x-telegram-agent-secret` or the JSON `secret` field.
+
+Telegram approval buttons may send callback data in this format:
+
+```text
+approve:approval_id
+```
+
+This records human approval only. It does not publish, turn on spend, or bypass execution guardrails.
 
 ## Current Level
 
