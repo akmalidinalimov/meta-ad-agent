@@ -13,7 +13,14 @@ from pydantic import BaseModel
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
 from .agent_orchestrator import agent_registry, orchestrate_agent_chat
 from .agent_task_store import create_agent_task, list_agent_tasks, update_agent_task
-from .approval_store import approve_request, create_approval_request, list_approval_requests, update_approval_request
+from .approval_store import (
+    approve_request,
+    create_approval_request,
+    list_approval_requests,
+    reject_request,
+    request_changes,
+    update_approval_request,
+)
 from .chatplace_events import normalize_chatplace_event
 from .funnel_events import build_funnel_summary, save_funnel_event
 from .knowledge_base import load_knowledge_base, save_knowledge_base
@@ -95,6 +102,16 @@ class CampaignExecutionPlanRequest(BaseModel):
 
 class ApprovalDecisionRequest(BaseModel):
     approvedBy: str = "akmal"
+
+
+class ApprovalRejectRequest(BaseModel):
+    rejectedBy: str = "akmal"
+    reason: str = ""
+
+
+class ApprovalChangesRequest(BaseModel):
+    requestedBy: str = "akmal"
+    note: str = ""
 
 
 class ApprovalExecutionRequest(BaseModel):
@@ -534,6 +551,28 @@ def approve_approval_request(approval_id: str, request: ApprovalDecisionRequest)
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@app.post("/api/approvals/{approval_id}/reject")
+def reject_approval_request(approval_id: str, request: ApprovalRejectRequest) -> dict[str, Any]:
+    try:
+        return {
+            "ok": True,
+            "approval": reject_request(approval_id, rejected_by=request.rejectedBy, reason=request.reason),
+        }
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/approvals/{approval_id}/changes")
+def request_approval_changes(approval_id: str, request: ApprovalChangesRequest) -> dict[str, Any]:
+    try:
+        return {
+            "ok": True,
+            "approval": request_changes(approval_id, requested_by=request.requestedBy, note=request.note),
+        }
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @app.post("/api/approvals/{approval_id}/execute")
 async def execute_approval_request(approval_id: str, request: ApprovalExecutionRequest) -> dict[str, Any]:
     approval = next((item for item in list_approval_requests() if item.get("id") == approval_id), None)
@@ -656,6 +695,34 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
             "telegram": command,
             "approval": approval,
             "message": "Approval recorded. Execution still requires the configured execution endpoint.",
+        }
+    if command.get("action") == "reject" and command.get("approvalId"):
+        rejected_by = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
+        try:
+            approval = reject_request(command["approvalId"], rejected_by=rejected_by, reason="Rejected from Telegram.")
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return {
+            "ok": True,
+            "telegram": command,
+            "approval": approval,
+            "message": "Approval request rejected from Telegram.",
+        }
+    if command.get("action") in {"changes", "needs_changes"} and command.get("approvalId"):
+        requested_by = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
+        try:
+            approval = request_changes(
+                command["approvalId"],
+                requested_by=requested_by,
+                note="Needs changes requested from Telegram.",
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return {
+            "ok": True,
+            "telegram": command,
+            "approval": approval,
+            "message": "Approval request marked as needs changes from Telegram.",
         }
 
     text = command.get("text") or ""

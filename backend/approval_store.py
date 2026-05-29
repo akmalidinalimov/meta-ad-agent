@@ -56,6 +56,48 @@ def approve_request(
     raise KeyError(f"Approval request not found: {approval_id}")
 
 
+def reject_request(
+    approval_id: str,
+    *,
+    rejected_by: str,
+    reason: str = "",
+    storage_dir: Path = STORAGE_DIR,
+) -> dict[str, Any]:
+    rows = list_approval_requests(storage_dir=storage_dir)
+    now = datetime.now(timezone.utc).isoformat()
+    for row in rows:
+        if row.get("id") == approval_id:
+            row["status"] = "rejected"
+            row["rejectedBy"] = rejected_by
+            row["rejectionReason"] = reason
+            row["rejectedAt"] = now
+            row["updatedAt"] = now
+            write_approval_requests(rows, storage_dir=storage_dir)
+            return row
+    raise KeyError(f"Approval request not found: {approval_id}")
+
+
+def request_changes(
+    approval_id: str,
+    *,
+    requested_by: str,
+    note: str = "",
+    storage_dir: Path = STORAGE_DIR,
+) -> dict[str, Any]:
+    rows = list_approval_requests(storage_dir=storage_dir)
+    now = datetime.now(timezone.utc).isoformat()
+    for row in rows:
+        if row.get("id") == approval_id:
+            row["status"] = "needs_changes"
+            row["changesRequestedBy"] = requested_by
+            row["changeRequestNote"] = note
+            row["changesRequestedAt"] = now
+            row["updatedAt"] = now
+            write_approval_requests(rows, storage_dir=storage_dir)
+            return row
+    raise KeyError(f"Approval request not found: {approval_id}")
+
+
 def update_approval_request(
     approval_id: str,
     patch: dict[str, Any],

@@ -2288,6 +2288,46 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
     }
   }
 
+  const reject = async (approvalId: string) => {
+    setMessage('Rejecting request...')
+    try {
+      const response = await fetch(`/api/approvals/${approvalId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rejectedBy: 'dashboard', reason: 'Rejected in dashboard.' }),
+      })
+      if (!response.ok) {
+        const result = (await response.json()) as { detail?: string }
+        setMessage(result.detail ?? `Reject failed with ${response.status}`)
+        return
+      }
+      setMessage('Rejected. No execution can run from this approval.')
+      setApprovals(await fetchApprovals())
+    } catch {
+      setMessage('Could not reject the request.')
+    }
+  }
+
+  const requestChanges = async (approvalId: string) => {
+    setMessage('Marking request as needs changes...')
+    try {
+      const response = await fetch(`/api/approvals/${approvalId}/changes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestedBy: 'dashboard', note: 'Needs changes in dashboard.' }),
+      })
+      if (!response.ok) {
+        const result = (await response.json()) as { detail?: string }
+        setMessage(result.detail ?? `Needs changes failed with ${response.status}`)
+        return
+      }
+      setMessage('Marked as needs changes. Revise the plan before approving.')
+      setApprovals(await fetchApprovals())
+    } catch {
+      setMessage('Could not mark the request as needs changes.')
+    }
+  }
+
   const dryRun = async (approvalId: string) => {
     setMessage('Running dry-run preview...')
     try {
@@ -2324,12 +2364,22 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
                 <small>
                   {(approval.after.adsets ?? []).length} paused ad set(s), budget {formatCurrency((approval.after.adsets ?? []).reduce((total, adset) => total + adset.daily_budget / 100, 0))}/day
                 </small>
+                {approval.rejectionReason && <small>Rejected reason: {approval.rejectionReason}</small>}
+                {approval.changeRequestNote && <small>Change request: {approval.changeRequestNote}</small>}
               </div>
               <div className="approval-button-stack">
                 {approval.status === 'needs_review' && (
-                  <button className="sync-button secondary" type="button" onClick={() => void approve(approval.id)}>
-                    Approve
-                  </button>
+                  <>
+                    <button className="sync-button secondary" type="button" onClick={() => void approve(approval.id)}>
+                      Approve
+                    </button>
+                    <button className="sync-button secondary danger-button" type="button" onClick={() => void reject(approval.id)}>
+                      Reject
+                    </button>
+                    <button className="sync-button secondary" type="button" onClick={() => void requestChanges(approval.id)}>
+                      Needs changes
+                    </button>
+                  </>
                 )}
                 {approval.status === 'approved' && (
                   <button className="sync-button" type="button" onClick={() => void dryRun(approval.id)}>

@@ -434,6 +434,12 @@ export interface ApprovalRequest {
   updatedAt?: string
   approvedBy?: string
   approvedAt?: string
+  rejectedBy?: string
+  rejectedAt?: string
+  rejectionReason?: string
+  changesRequestedBy?: string
+  changesRequestedAt?: string
+  changeRequestNote?: string
   lastExecutionResult?: {
     ok?: boolean
     dryRun?: boolean

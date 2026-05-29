@@ -1,4 +1,4 @@
-from backend.approval_store import approve_request, create_approval_request, list_approval_requests
+from backend.approval_store import approve_request, create_approval_request, list_approval_requests, request_changes, reject_request
 from backend.meta_execution import build_campaign_creation_approval
 from backend.test_strategy_generator import sample_playbook
 
@@ -27,3 +27,38 @@ def test_approve_request_records_user_and_timestamp(tmp_path):
     assert approved["status"] == "approved"
     assert approved["approvedBy"] == "akmal"
     assert approved["approvedAt"]
+
+
+def test_reject_request_records_reviewer_and_reason(tmp_path):
+    storage_dir = tmp_path / "storage"
+    saved = create_approval_request(
+        build_campaign_creation_approval(sample_playbook(), account_id="act_123"),
+        storage_dir=storage_dir,
+    )
+
+    rejected = reject_request(saved["id"], rejected_by="akmal", reason="Budget is too high.", storage_dir=storage_dir)
+
+    assert rejected["status"] == "rejected"
+    assert rejected["rejectedBy"] == "akmal"
+    assert rejected["rejectionReason"] == "Budget is too high."
+    assert rejected["rejectedAt"]
+
+
+def test_request_changes_records_review_note(tmp_path):
+    storage_dir = tmp_path / "storage"
+    saved = create_approval_request(
+        build_campaign_creation_approval(sample_playbook(), account_id="act_123"),
+        storage_dir=storage_dir,
+    )
+
+    needs_changes = request_changes(
+        saved["id"],
+        requested_by="akmal",
+        note="Use Tashkent as challenger only.",
+        storage_dir=storage_dir,
+    )
+
+    assert needs_changes["status"] == "needs_changes"
+    assert needs_changes["changesRequestedBy"] == "akmal"
+    assert needs_changes["changeRequestNote"] == "Use Tashkent as challenger only."
+    assert needs_changes["changesRequestedAt"]

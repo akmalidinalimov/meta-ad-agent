@@ -30,8 +30,12 @@ def build_approval_notification(approval: dict[str, Any]) -> dict[str, Any]:
             "inline_keyboard": [
                 [
                     {"text": "Approve", "callback_data": f"approve:{approval.get('id')}"},
+                    {"text": "Reject", "callback_data": f"reject:{approval.get('id')}"},
+                ],
+                [
+                    {"text": "Needs changes", "callback_data": f"changes:{approval.get('id')}"},
                     {"text": "Open dashboard", "callback_data": f"view:{approval.get('id')}"},
-                ]
+                ],
             ]
         },
     }

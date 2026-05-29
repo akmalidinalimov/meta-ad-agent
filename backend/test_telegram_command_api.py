@@ -3,7 +3,13 @@ from fastapi.testclient import TestClient
 import backend.app as app_module
 from backend.agent_task_store import create_agent_task, list_agent_tasks, update_agent_task
 from backend.app import app
-from backend.approval_store import approve_request, create_approval_request, list_approval_requests
+from backend.approval_store import (
+    approve_request,
+    create_approval_request,
+    list_approval_requests,
+    reject_request,
+    request_changes,
+)
 from backend.meta_execution import build_campaign_creation_approval
 
 
@@ -22,6 +28,26 @@ def bind_tmp_command_store(monkeypatch, tmp_path):
         app_module,
         "approve_request",
         lambda approval_id, *, approved_by: approve_request(approval_id, approved_by=approved_by, storage_dir=storage_dir),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "reject_request",
+        lambda approval_id, *, rejected_by, reason: reject_request(
+            approval_id,
+            rejected_by=rejected_by,
+            reason=reason,
+            storage_dir=storage_dir,
+        ),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "request_changes",
+        lambda approval_id, *, requested_by, note: request_changes(
+            approval_id,
+            requested_by=requested_by,
+            note=note,
+            storage_dir=storage_dir,
+        ),
     )
     return storage_dir
 
@@ -99,3 +125,73 @@ def test_telegram_callback_can_approve_existing_approval(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert response.json()["approval"]["status"] == "approved"
     assert approvals[0]["approvedBy"] == "telegram:akmal"
+
+
+def test_telegram_callback_can_reject_existing_approval(monkeypatch, tmp_path):
+    bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    saved = create_approval_request(
+        build_campaign_creation_approval(
+            {
+                "name": "Telegram reject test",
+                "segments": [{"id": "income", "name": "Income", "startingBudgetUsd": 50}],
+                "rules": {"maxDailyBudgetUsd": 100},
+            },
+            account_id="act_123",
+        ),
+        storage_dir=tmp_path / "storage",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "callback_query": {
+                "from": {"id": 2002, "username": "akmal"},
+                "message": {"chat": {"id": 1001}},
+                "data": f"reject:{saved['id']}",
+            }
+        },
+    )
+
+    approvals = client.get("/api/approvals").json()["approvals"]
+
+    assert response.status_code == 200
+    assert response.json()["approval"]["status"] == "rejected"
+    assert approvals[0]["rejectedBy"] == "telegram:akmal"
+
+
+def test_telegram_callback_can_mark_approval_needs_changes(monkeypatch, tmp_path):
+    bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    saved = create_approval_request(
+        build_campaign_creation_approval(
+            {
+                "name": "Telegram changes test",
+                "segments": [{"id": "income", "name": "Income", "startingBudgetUsd": 50}],
+                "rules": {"maxDailyBudgetUsd": 100},
+            },
+            account_id="act_123",
+        ),
+        storage_dir=tmp_path / "storage",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "callback_query": {
+                "from": {"id": 2002, "username": "akmal"},
+                "message": {"chat": {"id": 1001}},
+                "data": f"changes:{saved['id']}",
+            }
+        },
+    )
+
+    approvals = client.get("/api/approvals").json()["approvals"]
+
+    assert response.status_code == 200
+    assert response.json()["approval"]["status"] == "needs_changes"
+    assert approvals[0]["changesRequestedBy"] == "telegram:akmal"

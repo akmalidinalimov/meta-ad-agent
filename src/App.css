@@ -1601,6 +1601,12 @@
   background: #ffffff;
 }
 
+.sync-button.danger-button {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fff1f2;
+}
+
 .segmented-control {
   display: inline-flex;
   width: fit-content;

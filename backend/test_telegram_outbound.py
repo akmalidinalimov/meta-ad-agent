@@ -24,6 +24,10 @@ def test_build_approval_notification_contains_approve_button():
     assert "Outbound notification test - DRAFT" in notification["text"]
     assert notification["reply_markup"]["inline_keyboard"][0][0]["text"] == "Approve"
     assert notification["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"approve:{approval['id']}"
+    assert notification["reply_markup"]["inline_keyboard"][0][1]["text"] == "Reject"
+    assert notification["reply_markup"]["inline_keyboard"][0][1]["callback_data"] == f"reject:{approval['id']}"
+    assert notification["reply_markup"]["inline_keyboard"][1][0]["text"] == "Needs changes"
+    assert notification["reply_markup"]["inline_keyboard"][1][0]["callback_data"] == f"changes:{approval['id']}"
 
 
 def test_send_telegram_message_reports_missing_config(monkeypatch):
