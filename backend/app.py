@@ -6,11 +6,12 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
+from .chatplace_events import normalize_chatplace_event
 from .funnel_events import build_funnel_summary, save_funnel_event
 from .knowledge_base import load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
@@ -515,6 +516,25 @@ def knowledge_base() -> dict[str, Any]:
 def ingest_funnel_event(request: FunnelEventRequest) -> dict[str, Any]:
     event = save_funnel_event(request.event)
     return {"ok": True, "event": event, "summary": build_funnel_summary()}
+
+
+@app.post("/api/chatplace/events")
+async def ingest_chatplace_event(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    expected_secret = os.getenv("CHATPLACE_WEBHOOK_SECRET", "").strip()
+    provided_secret = str(payload.get("secret") or request.headers.get("x-chatplace-secret") or "").strip()
+    if expected_secret and provided_secret != expected_secret:
+        raise HTTPException(status_code=401, detail="Invalid ChatPlace webhook secret.")
+
+    event_payload = normalize_chatplace_event(payload)
+    event = save_funnel_event(event_payload)
+    return {
+        "ok": True,
+        "tracking_status": "saved",
+        "visitor_id": event.get("visitorId"),
+        "event_name": event.get("eventName"),
+        "telegram_user_id": event.get("telegramUserId"),
+        "summary": build_funnel_summary(),
+    }
 
 
 @app.get("/api/funnel/summary")

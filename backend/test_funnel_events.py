@@ -46,3 +46,23 @@ def test_save_funnel_event_appends_jsonl_and_summary_counts(tmp_path):
     assert summary["eventsBySegment"]["business"]["bot_start"] == 1
     assert summary["uniqueVisitors"] == 2
     assert summary["uniqueTelegramUsers"] == 2
+    assert summary["rates"]["telegramStartRate"] == 100
+
+
+def test_funnel_summary_calculates_downstream_rates(tmp_path):
+    storage_dir = tmp_path / "storage"
+    save_funnel_event({"event_name": "telegram_link_click", "visitor_id": "v1"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "telegram_link_click", "visitor_id": "v2"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "bot_start", "visitor_id": "v1", "telegram_user_id": "tg1"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "vsl_key_message_sent", "visitor_id": "v1", "telegram_user_id": "tg1"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "form_button_click", "visitor_id": "v1", "telegram_user_id": "tg1"}, storage_dir=storage_dir)
+
+    summary = build_funnel_summary(storage_dir=storage_dir)
+
+    assert summary["rates"] == {
+        "telegramStartRate": 50,
+        "keyMessageReachRate": 100,
+        "formClickRate": 100,
+        "qualifiedLeadRate": 0,
+        "fullPaymentRate": 0,
+    }

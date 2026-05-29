@@ -17,6 +17,10 @@ FIELD_MAP = {
     "visitorId": "visitorId",
     "telegram_user_id": "telegramUserId",
     "telegramUserId": "telegramUserId",
+    "telegram_username": "telegramUsername",
+    "telegramUsername": "telegramUsername",
+    "telegram_full_name": "telegramFullName",
+    "telegramFullName": "telegramFullName",
     "segment": "segment",
     "vsl_id": "vslId",
     "vslId": "vslId",
@@ -103,12 +107,16 @@ def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
     by_segment: dict[str, Counter[str]] = defaultdict(Counter)
     visitors = set()
     telegram_users = set()
+    visitors_by_event: dict[str, set[str]] = defaultdict(set)
 
     for event in events:
+        event_name = event.get("eventName", "unknown")
         segment = str(event.get("segment") or "unknown")
-        by_segment[segment][event.get("eventName", "unknown")] += 1
+        by_segment[segment][event_name] += 1
         if event.get("visitorId"):
-            visitors.add(str(event["visitorId"]))
+            visitor_id = str(event["visitorId"])
+            visitors.add(visitor_id)
+            visitors_by_event[event_name].add(visitor_id)
         if event.get("telegramUserId"):
             telegram_users.add(str(event["telegramUserId"]))
 
@@ -119,4 +127,19 @@ def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
         "uniqueVisitors": len(visitors),
         "uniqueTelegramUsers": len(telegram_users),
         "latestEventAt": events[-1].get("receivedAt") if events else None,
+        "rates": {
+            "telegramStartRate": visitor_rate(visitors_by_event, "bot_start", "telegram_link_click"),
+            "keyMessageReachRate": visitor_rate(visitors_by_event, "vsl_key_message_sent", "bot_start"),
+            "formClickRate": visitor_rate(visitors_by_event, "form_button_click", "vsl_key_message_sent"),
+            "qualifiedLeadRate": visitor_rate(visitors_by_event, "qualified_lead", "form_button_click"),
+            "fullPaymentRate": visitor_rate(visitors_by_event, "full_payment", "qualified_lead"),
+        },
     }
+
+
+def rate(value: int | float, previous: int | float) -> float:
+    return 0 if not previous else round((value / previous) * 100, 2)
+
+
+def visitor_rate(visitors_by_event: dict[str, set[str]], event_name: str, previous_event_name: str) -> float:
+    return min(100, rate(len(visitors_by_event[event_name]), len(visitors_by_event[previous_event_name])))

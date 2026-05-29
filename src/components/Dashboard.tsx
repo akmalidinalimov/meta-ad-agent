@@ -1257,6 +1257,10 @@ function TrackingView({ data }: { data: DashboardData }) {
           <MiniMetric label="Unique visitors" value={(funnelEvents?.uniqueVisitors ?? 0).toLocaleString()} />
           <MiniMetric label="Telegram users" value={(funnelEvents?.uniqueTelegramUsers ?? 0).toLocaleString()} />
           <MiniMetric label="Latest event" value={funnelEvents?.latestEventAt ? formatDateTime(funnelEvents.latestEventAt) : 'Waiting'} />
+          <MiniMetric label="Telegram START rate" value={formatRate(funnelEvents?.rates?.telegramStartRate)} />
+          <MiniMetric label="Key message reach" value={formatRate(funnelEvents?.rates?.keyMessageReachRate)} />
+          <MiniMetric label="Form click rate" value={formatRate(funnelEvents?.rates?.formClickRate)} />
+          <MiniMetric label="Qualified lead rate" value={formatRate(funnelEvents?.rates?.qualifiedLeadRate)} />
         </div>
       </article>
       {data.trackingHealth.map((item) => (
@@ -1638,6 +1642,10 @@ function formatCurrency(value: number) {
 
 function formatPercent(value: number, base: number) {
   return base === 0 ? '0%' : `${((value / base) * 100).toFixed(1)}%`
+}
+
+function formatRate(value?: number) {
+  return typeof value === 'number' ? `${value.toFixed(value % 1 === 0 ? 0 : 1)}%` : '0%'
 }
 
 function getDashboardAnchorDate(data: DashboardData): string {

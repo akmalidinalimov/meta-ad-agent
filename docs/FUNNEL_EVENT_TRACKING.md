@@ -143,23 +143,110 @@ When the user clicks the button to Telegram, send:
 
 ## Telegram / ChatPlace Payload Examples
 
-When the user clicks START:
+ChatPlace supports External API requests inside automations. In each Telegram bot automation, add an `Action` block and choose `External request`. Use:
+
+```text
+POST https://YOUR_AGENT_BACKEND/api/chatplace/events
+Content-Type: application/json
+```
+
+If you set `CHATPLACE_WEBHOOK_SECRET` in the backend environment, add either:
+
+```http
+x-chatplace-secret: YOUR_SHARED_SECRET
+```
+
+or include `"secret": "YOUR_SHARED_SECRET"` in the JSON body.
+
+Create/reuse these ChatPlace variables:
+
+- `visitor_id`
+- `segment`
+- `vsl_id`
+- `landing_page_id`
+- `telegram_bot_id`
+- `campaign_id`
+- `adset_id`
+- `ad_id`
+- `creative_id`
+- `fbclid`
+
+Use ChatPlace profile variables where available:
+
+- `{{ username }}`
+- `{{ fullName }}`
+- `{{ chatLink }}`
+
+Important: ChatPlace documentation confirms variables can store client data and be passed to external systems, and External request actions can send JSON/form data to any API. The only uncertain part is whether your ChatPlace Telegram start trigger exposes the deep-link payload directly as a variable. To make setup resilient, this backend accepts any of these fields and extracts the visitor ID:
+
+- `visitor_id`
+- `start_payload`
+- `message_text` like `/start v_xxxxx`
+- a Telegram link like `https://t.me/bot?start=v_xxxxx`
+
+When the user clicks START, add an External request near the beginning of the automation:
 
 ```json
 {
-  "event": {
-    "event_name": "bot_start",
-    "visitor_id": "{{visitor_id}}",
-    "telegram_user_id": "{{telegram_user_id}}",
-    "segment": "income",
-    "vsl_id": "income_vsl_01",
-    "telegram_bot_id": "income_bot",
-    "campaign_id": "{{campaign_id}}",
-    "adset_id": "{{adset_id}}",
-    "ad_id": "{{ad_id}}",
-    "creative_id": "{{creative_id}}",
-    "fbclid": "{{fbclid}}"
-  }
+  "event_name": "bot_start",
+  "visitor_id": "{{ visitor_id }}",
+  "start_payload": "{{ visitor_id }}",
+  "telegram_user_id": "{{ chatLink }}",
+  "telegram_username": "{{ username }}",
+  "telegram_full_name": "{{ fullName }}",
+  "segment": "income",
+  "vsl_id": "income_vsl_01",
+  "landing_page_id": "income_lp_01",
+  "telegram_bot_id": "income_bot",
+  "campaign_id": "{{ campaign_id }}",
+  "adset_id": "{{ adset_id }}",
+  "ad_id": "{{ ad_id }}",
+  "creative_id": "{{ creative_id }}",
+  "fbclid": "{{ fbclid }}"
+}
+```
+
+The backend response includes fields ChatPlace can map back into variables:
+
+```json
+{
+  "ok": true,
+  "tracking_status": "saved",
+  "visitor_id": "v_xxxxx",
+  "event_name": "bot_start",
+  "telegram_user_id": "..."
+}
+```
+
+If ChatPlace exposes the raw `/start` message instead of a clean variable, use:
+
+```json
+{
+  "event_name": "bot_start",
+  "message_text": "{{ message }}",
+  "telegram_username": "{{ username }}",
+  "telegram_full_name": "{{ fullName }}",
+  "segment": "income",
+  "vsl_id": "income_vsl_01",
+  "landing_page_id": "income_lp_01",
+  "telegram_bot_id": "income_bot"
+}
+```
+
+If ChatPlace cannot expose the deep-link payload at all, keep the `bot_start` request anyway and send `telegram_user_id`/`username`; the dashboard will count Telegram starts, but they will be unattributed until ChatPlace variable mapping is fixed.
+
+When the VSL sequence starts:
+
+```json
+{
+  "event_name": "vsl_sequence_started",
+  "visitor_id": "{{ visitor_id }}",
+  "telegram_user_id": "{{ chatLink }}",
+  "telegram_username": "{{ username }}",
+  "telegram_full_name": "{{ fullName }}",
+  "segment": "income",
+  "vsl_id": "income_vsl_01",
+  "telegram_bot_id": "income_bot"
 }
 ```
 
@@ -167,14 +254,14 @@ When the 20-minute key message is sent:
 
 ```json
 {
-  "event": {
-    "event_name": "vsl_key_message_sent",
-    "visitor_id": "{{visitor_id}}",
-    "telegram_user_id": "{{telegram_user_id}}",
-    "segment": "income",
-    "vsl_id": "income_vsl_01",
-    "telegram_bot_id": "income_bot"
-  }
+  "event_name": "vsl_key_message_sent",
+  "visitor_id": "{{ visitor_id }}",
+  "telegram_user_id": "{{ chatLink }}",
+  "telegram_username": "{{ username }}",
+  "telegram_full_name": "{{ fullName }}",
+  "segment": "income",
+  "vsl_id": "income_vsl_01",
+  "telegram_bot_id": "income_bot"
 }
 ```
 
@@ -182,17 +269,65 @@ When the user clicks the CRM form button:
 
 ```json
 {
+  "event_name": "form_button_click",
+  "visitor_id": "{{ visitor_id }}",
+  "telegram_user_id": "{{ chatLink }}",
+  "telegram_username": "{{ username }}",
+  "telegram_full_name": "{{ fullName }}",
+  "segment": "income",
+  "vsl_id": "income_vsl_01",
+  "telegram_bot_id": "income_bot",
+  "campaign_id": "{{ campaign_id }}",
+  "adset_id": "{{ adset_id }}",
+  "ad_id": "{{ ad_id }}",
+  "creative_id": "{{ creative_id }}"
+}
+```
+
+ChatPlace can map variables from API responses. If the first `bot_start` request returns `visitor_id`, map it back into the ChatPlace variable `visitor_id` so later automation steps use the same value.
+
+The older generic funnel endpoint also works if you prefer wrapping the event under `"event"`:
+
+```json
+{
   "event": {
-    "event_name": "form_button_click",
-    "visitor_id": "{{visitor_id}}",
-    "telegram_user_id": "{{telegram_user_id}}",
-    "segment": "income",
-    "vsl_id": "income_vsl_01",
-    "telegram_bot_id": "income_bot",
-    "campaign_id": "{{campaign_id}}",
-    "adset_id": "{{adset_id}}",
-    "ad_id": "{{ad_id}}",
-    "creative_id": "{{creative_id}}"
+    "event_name": "bot_start",
+    "visitor_id": "{{ visitor_id }}",
+    "telegram_user_id": "{{ chatLink }}",
+    "telegram_username": "{{ username }}",
+    "telegram_full_name": "{{ fullName }}"
+  }
+}
+```
+
+## ChatPlace Testing Checklist
+
+Before running traffic:
+
+- Open the landing page with test UTM parameters.
+- Click the Telegram button and confirm `/api/funnel/summary` shows one `telegram_link_click`.
+- In ChatPlace, click `Test request` on the first External request.
+- Confirm `/api/funnel/summary` shows one `bot_start`.
+- Confirm `telegramStartRate` appears in `rates`.
+- Continue to the 20-minute block and form button block with test users.
+- If `bot_start` appears but attribution is missing, inspect the saved event and adjust which ChatPlace variable is sent as `visitor_id` or `message_text`.
+
+Example summary response:
+
+```json
+{
+  "totalEvents": 3,
+  "eventsByName": {
+    "telegram_link_click": 1,
+    "bot_start": 1,
+    "vsl_key_message_sent": 1
+  },
+  "rates": {
+    "telegramStartRate": 100,
+    "keyMessageReachRate": 100,
+    "formClickRate": 0,
+    "qualifiedLeadRate": 0,
+    "fullPaymentRate": 0
   }
 }
 ```
