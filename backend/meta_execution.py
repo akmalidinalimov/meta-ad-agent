@@ -137,6 +137,52 @@ async def execute_campaign_creation_approval(
     }
 
 
+async def execute_meta_action_approval(approval: dict[str, Any], *, writer: Any) -> dict[str, Any]:
+    if approval.get("status") != "approved":
+        return {"ok": False, "blockedReason": "Approval must be approved before execution."}
+
+    target = approval.get("target") or {}
+    level = target.get("level")
+    object_id = target.get("id")
+    action_type = approval.get("actionType")
+    after = approval.get("after") or {}
+
+    if not level or not object_id:
+        return {"ok": False, "blockedReason": "Target object level and ID are required."}
+
+    payload = payload_for_meta_action(action_type, after)
+    if not payload:
+        return {"ok": False, "blockedReason": "No executable payload was generated."}
+
+    if level == "campaign":
+        response = await writer.update_campaign(object_id, payload)
+    elif level == "adset":
+        response = await writer.update_ad_set(object_id, payload)
+    elif level == "ad":
+        response = await writer.update_ad(object_id, payload)
+    else:
+        return {"ok": False, "blockedReason": f"Unsupported target level: {level}"}
+
+    return {
+        "ok": True,
+        "approvalId": approval.get("id"),
+        "executionMethod": approval.get("executionMethod", "api"),
+        "metaResponse": response,
+    }
+
+
+def payload_for_meta_action(action_type: str | None, after: dict[str, Any]) -> dict[str, Any]:
+    if action_type == "rename_meta_object" and after.get("name"):
+        return {"name": after["name"]}
+    if action_type == "pause_meta_object":
+        return {"status": "PAUSED"}
+    if action_type == "enable_meta_object":
+        return {"status": "ACTIVE"}
+    if action_type == "change_meta_budget" and after.get("daily_budget_usd") is not None:
+        return {"daily_budget": int(round(float(after["daily_budget_usd"]) * 100))}
+    return {}
+
+
 def guardrail_checks(playbook: dict[str, Any], adsets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rules = playbook.get("rules", {})
     max_daily = float(rules.get("maxDailyBudgetUsd") or 0)

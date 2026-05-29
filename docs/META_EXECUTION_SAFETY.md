@@ -23,7 +23,8 @@ Current implementation status:
 - The dashboard can prepare approval requests for paused campaign structures.
 - Generated campaigns and ad sets are always `PAUSED`.
 - Dry-run execution is implemented and does not send any request to Meta.
-- Live Meta write execution exists only for paused campaign/ad set creation and is disabled unless `META_LIVE_WRITES_ENABLED=true`.
+- Live Meta write execution exists for paused campaign/ad set creation and these simple approved actions: rename, pause, enable, and ad set budget change.
+- Live writes are disabled unless `META_LIVE_WRITES_ENABLED=true`.
 - A non-dry-run call must also include final live confirmation; approval alone is not enough.
 
 ## Browser Fallback
@@ -93,15 +94,20 @@ Need live change?
 
 ## Initial Allowed Actions After Approval
 
-For Version 1.0, allowed actions should start narrow:
+For Version 0.4, allowed actions start narrow:
 
 - create paused draft campaigns,
 - create paused draft ad sets,
-- prepare creative upload drafts,
 - change budgets within playbook limits,
-- pause clearly underperforming ads/ad sets,
-- enable approved drafts,
-- adjust placements for approved ad sets.
+- rename campaigns, ad sets, or ads,
+- pause approved campaigns, ads, or ad sets,
+- enable approved campaigns, ads, or ad sets.
+
+Still planned after Version 0.4:
+
+- prepare creative upload drafts,
+- adjust placements for approved ad sets,
+- adjust targeting for approved ad sets.
 
 ## Initial Blocked Actions
 

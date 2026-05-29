@@ -164,6 +164,18 @@ async def create_ad_set(config: MetaConfig, payload: dict[str, Any]) -> dict[str
     return await post_meta_object(config, f"/{config.ad_account_id}/adsets", payload)
 
 
+async def update_campaign(config: MetaConfig, campaign_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return await post_meta_object(config, f"/{campaign_id}", payload)
+
+
+async def update_ad_set(config: MetaConfig, adset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return await post_meta_object(config, f"/{adset_id}", payload)
+
+
+async def update_ad(config: MetaConfig, ad_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return await post_meta_object(config, f"/{ad_id}", payload)
+
+
 async def get_insights(
     config: MetaConfig,
     *,

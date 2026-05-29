@@ -25,7 +25,12 @@ from .chatplace_events import normalize_chatplace_event
 from .funnel_events import build_funnel_summary, save_funnel_event
 from .knowledge_base import load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
-from .meta_execution import build_campaign_creation_approval, execute_campaign_creation_approval
+from .meta_execution import (
+    build_campaign_creation_approval,
+    execute_campaign_creation_approval,
+    execute_meta_action_approval,
+    payload_for_meta_action,
+)
 from .meta_client import (
     MetaApiError,
     get_ad_account_summary,
@@ -39,6 +44,9 @@ from .meta_client import (
     get_token_permissions,
     get_video_source,
     mask_token,
+    update_ad as meta_update_ad,
+    update_ad_set as meta_update_ad_set,
+    update_campaign as meta_update_campaign,
 )
 from .playbook_store import load_playbooks, save_playbook
 from .settings_audit import build_settings_audit
@@ -590,16 +598,19 @@ async def execute_approval_request(approval_id: str, request: ApprovalExecutionR
         raise HTTPException(status_code=404, detail=f"Approval request not found: {approval_id}")
 
     config = get_meta_config()
-    result = await execute_campaign_creation_approval(
-        approval,
-        dry_run=request.dryRun,
-        confirm_live=request.confirmLive,
-        live_writes_enabled=os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true",
-        create_campaign=lambda payload: meta_create_campaign(config, payload),
-        create_ad_set=lambda payload: meta_create_ad_set(config, payload),
-    )
+    if approval.get("actionType") == "create_paused_campaign_structure":
+        result = await execute_campaign_creation_approval(
+            approval,
+            dry_run=request.dryRun,
+            confirm_live=request.confirmLive,
+            live_writes_enabled=os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true",
+            create_campaign=lambda payload: meta_create_campaign(config, payload),
+            create_ad_set=lambda payload: meta_create_ad_set(config, payload),
+        )
+    else:
+        result = await execute_meta_action_approval_request(approval, request, config)
     if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Execution failed."))
+        raise HTTPException(status_code=400, detail=result.get("error") or result.get("blockedReason") or "Execution failed.")
 
     status = "dry_run_completed" if request.dryRun else "executed"
     updated = update_approval_request(
@@ -617,6 +628,52 @@ async def execute_approval_request(approval_id: str, request: ApprovalExecutionR
         {"executionResult": result},
     )
     return {"ok": True, "approval": updated, "result": result, "task": task}
+
+
+async def execute_meta_action_approval_request(
+    approval: dict[str, Any],
+    request: ApprovalExecutionRequest,
+    config: Any,
+) -> dict[str, Any]:
+    if approval.get("status") != "approved":
+        return {"ok": False, "error": "Specific approval is required before execution."}
+    if approval.get("guardrailResult") == "fail":
+        return {"ok": False, "error": "Guardrail failed; execution is blocked."}
+
+    payload = payload_for_meta_action(approval.get("actionType"), approval.get("after") or {})
+    if not payload:
+        return {"ok": False, "error": "No executable payload was generated."}
+
+    if request.dryRun:
+        return {
+            "ok": True,
+            "dryRun": True,
+            "wouldUpdate": {
+                "target": approval.get("target") or {},
+                "payload": payload,
+            },
+            "note": "Dry run only. No request was sent to Meta.",
+        }
+    if not request.confirmLive:
+        return {"ok": False, "dryRun": False, "error": "Final live confirmation is required before Meta writes."}
+    if os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() != "true":
+        return {"ok": False, "dryRun": False, "error": "Live Meta writes are disabled by configuration."}
+
+    return await execute_meta_action_approval(approval, writer=build_meta_action_writer(config))
+
+
+def build_meta_action_writer(config: Any) -> Any:
+    class MetaActionWriter:
+        async def update_campaign(self, object_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return await meta_update_campaign(config, object_id, payload)
+
+        async def update_ad_set(self, object_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return await meta_update_ad_set(config, object_id, payload)
+
+        async def update_ad(self, object_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return await meta_update_ad(config, object_id, payload)
+
+    return MetaActionWriter()
 
 
 @app.get("/api/agents")
