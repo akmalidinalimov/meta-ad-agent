@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
 from .agent_orchestrator import agent_registry, orchestrate_agent_chat
-from .agent_task_store import create_agent_task, list_agent_tasks, update_agent_task
+from .agent_task_store import create_agent_task, list_agent_tasks, update_agent_task, update_agent_task_by_approval
 from .approval_store import (
     approve_request,
     create_approval_request,
@@ -544,7 +544,9 @@ def prepare_campaign_execution(request: CampaignExecutionPlanRequest) -> dict[st
 @app.post("/api/approvals/{approval_id}/approve")
 def approve_approval_request(approval_id: str, request: ApprovalDecisionRequest) -> dict[str, Any]:
     try:
-        return {"ok": True, "approval": approve_request(approval_id, approved_by=request.approvedBy)}
+        approval = approve_request(approval_id, approved_by=request.approvedBy)
+        task = sync_task_with_approval(approval_id, "approved", approval)
+        return {"ok": True, "approval": approval, "task": task}
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
@@ -554,9 +556,12 @@ def approve_approval_request(approval_id: str, request: ApprovalDecisionRequest)
 @app.post("/api/approvals/{approval_id}/reject")
 def reject_approval_request(approval_id: str, request: ApprovalRejectRequest) -> dict[str, Any]:
     try:
+        approval = reject_request(approval_id, rejected_by=request.rejectedBy, reason=request.reason)
+        task = sync_task_with_approval(approval_id, "rejected", approval)
         return {
             "ok": True,
-            "approval": reject_request(approval_id, rejected_by=request.rejectedBy, reason=request.reason),
+            "approval": approval,
+            "task": task,
         }
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -565,9 +570,12 @@ def reject_approval_request(approval_id: str, request: ApprovalRejectRequest) ->
 @app.post("/api/approvals/{approval_id}/changes")
 def request_approval_changes(approval_id: str, request: ApprovalChangesRequest) -> dict[str, Any]:
     try:
+        approval = request_changes(approval_id, requested_by=request.requestedBy, note=request.note)
+        task = sync_task_with_approval(approval_id, "needs_changes", approval)
         return {
             "ok": True,
-            "approval": request_changes(approval_id, requested_by=request.requestedBy, note=request.note),
+            "approval": approval,
+            "task": task,
         }
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -599,7 +607,14 @@ async def execute_approval_request(approval_id: str, request: ApprovalExecutionR
             "lastExecutionResult": result,
         },
     )
-    return {"ok": True, "approval": updated, "result": result}
+    task_status = "dry_run_completed" if request.dryRun else "executed"
+    task = sync_task_with_approval(
+        approval_id,
+        task_status,
+        updated,
+        {"executionResult": result},
+    )
+    return {"ok": True, "approval": updated, "result": result, "task": task}
 
 
 @app.get("/api/agents")
@@ -686,6 +701,7 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         approved_by = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
         try:
             approval = approve_request(command["approvalId"], approved_by=approved_by)
+            sync_task_with_approval(command["approvalId"], "approved", approval)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except ValueError as error:
@@ -703,6 +719,7 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         rejected_by = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
         try:
             approval = reject_request(command["approvalId"], rejected_by=rejected_by, reason="Rejected from Telegram.")
+            sync_task_with_approval(command["approvalId"], "rejected", approval)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         message = "Approval request rejected from Telegram."
@@ -722,6 +739,7 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
                 requested_by=requested_by,
                 note="Needs changes requested from Telegram.",
             )
+            sync_task_with_approval(command["approvalId"], "needs_changes", approval)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         message = "Approval request marked as needs changes from Telegram."
@@ -776,6 +794,32 @@ def clamp_telegram_text(message: str) -> str:
     if len(message) <= 3900:
         return message
     return f"{message[:3890]}\n\n[truncated]"
+
+
+def sync_task_with_approval(
+    approval_id: str,
+    status: str,
+    approval: dict[str, Any],
+    extra_patch: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    patch = {
+        "status": status,
+        "approvalStatus": approval.get("status"),
+        "approvalDecision": {
+            "status": approval.get("status"),
+            "approvedBy": approval.get("approvedBy"),
+            "approvedAt": approval.get("approvedAt"),
+            "rejectedBy": approval.get("rejectedBy"),
+            "rejectedAt": approval.get("rejectedAt"),
+            "rejectionReason": approval.get("rejectionReason"),
+            "changesRequestedBy": approval.get("changesRequestedBy"),
+            "changesRequestedAt": approval.get("changesRequestedAt"),
+            "changeRequestNote": approval.get("changeRequestNote"),
+        },
+    }
+    if extra_patch:
+        patch.update(extra_patch)
+    return update_agent_task_by_approval(approval_id, patch)
 
 
 async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:

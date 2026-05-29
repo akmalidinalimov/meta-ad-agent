@@ -476,6 +476,18 @@ export interface AgentTask {
     generatedStrategy?: LaunchStrategy
   } | null
   approvalId?: string | null
+  approvalStatus?: string
+  approvalDecision?: {
+    status?: string
+    approvedBy?: string
+    approvedAt?: string
+    rejectedBy?: string
+    rejectedAt?: string
+    rejectionReason?: string
+    changesRequestedBy?: string
+    changesRequestedAt?: string
+    changeRequestNote?: string
+  }
   executionResult?: unknown
   createdAt: string
   updatedAt: string

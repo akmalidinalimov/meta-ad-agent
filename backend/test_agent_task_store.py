@@ -1,6 +1,7 @@
 from backend.agent_task_store import (
     create_agent_task,
     list_agent_tasks,
+    update_agent_task_by_approval,
     update_agent_task,
 )
 
@@ -53,3 +54,28 @@ def test_update_agent_task_preserves_history_and_status(tmp_path):
     assert updated["approvalId"] == "approval_123"
     assert updated["updatedAt"] != task["updatedAt"]
     assert rows[0]["history"][-1]["status"] == "needs_approval"
+
+
+def test_update_agent_task_by_approval_updates_linked_task(tmp_path):
+    task = create_agent_task(
+        {
+            "source": "dashboard",
+            "command": "Prepare approval",
+            "status": "needs_approval",
+            "approvalId": "approval_123",
+        },
+        storage_dir=tmp_path,
+    )
+
+    updated = update_agent_task_by_approval(
+        "approval_123",
+        {"status": "approved", "approvalStatus": "approved"},
+        storage_dir=tmp_path,
+    )
+
+    rows = list_agent_tasks(storage_dir=tmp_path)
+
+    assert updated["id"] == task["id"]
+    assert updated["status"] == "approved"
+    assert updated["approvalStatus"] == "approved"
+    assert rows[0]["history"][-1]["status"] == "approved"

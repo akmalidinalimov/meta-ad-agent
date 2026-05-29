@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 import backend.app as app_module
 from backend.app import app
+from backend.agent_task_store import create_agent_task, list_agent_tasks, update_agent_task_by_approval
 from backend.approval_store import (
     approve_request,
     create_approval_request,
@@ -62,6 +63,12 @@ def bind_tmp_approval_store(monkeypatch, tmp_path):
             storage_dir=storage_dir,
         ),
     )
+    monkeypatch.setattr(
+        app_module,
+        "update_agent_task_by_approval",
+        lambda approval_id, patch: update_agent_task_by_approval(approval_id, patch, storage_dir=storage_dir),
+    )
+    return storage_dir
 
 
 def test_prepare_campaign_execution_creates_reviewable_approval(monkeypatch, tmp_path):
@@ -181,7 +188,7 @@ def test_execute_campaign_approval_blocks_live_when_env_is_disabled(monkeypatch,
 
 
 def test_approval_reject_and_changes_endpoints_update_status(monkeypatch, tmp_path):
-    bind_tmp_approval_store(monkeypatch, tmp_path)
+    storage_dir = bind_tmp_approval_store(monkeypatch, tmp_path)
     client = TestClient(app)
     prepared = client.post(
         "/api/execution/prepare-campaign",
@@ -195,6 +202,15 @@ def test_approval_reject_and_changes_endpoints_update_status(monkeypatch, tmp_pa
         },
     ).json()
     approval_id = prepared["approval"]["id"]
+    create_agent_task(
+        {
+            "source": "dashboard",
+            "command": "Prepare approval",
+            "status": "needs_approval",
+            "approvalId": approval_id,
+        },
+        storage_dir=storage_dir,
+    )
 
     changes = client.post(
         f"/api/approvals/{approval_id}/changes",
@@ -202,6 +218,7 @@ def test_approval_reject_and_changes_endpoints_update_status(monkeypatch, tmp_pa
     )
     assert changes.status_code == 200
     assert changes.json()["approval"]["status"] == "needs_changes"
+    assert list_agent_tasks(storage_dir=storage_dir)[0]["status"] == "needs_changes"
 
     rejected = client.post(
         f"/api/approvals/{approval_id}/reject",
@@ -209,3 +226,4 @@ def test_approval_reject_and_changes_endpoints_update_status(monkeypatch, tmp_pa
     )
     assert rejected.status_code == 200
     assert rejected.json()["approval"]["status"] == "rejected"
+    assert list_agent_tasks(storage_dir=storage_dir)[0]["status"] == "rejected"

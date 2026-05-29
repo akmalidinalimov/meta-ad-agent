@@ -1027,6 +1027,9 @@ function CommandCenterView({ data }: { data: DashboardData }) {
                 <p>{task.plan?.answer ? shortText(task.plan.answer, 180) : 'The orchestrator has captured this task.'}</p>
                 <small>{task.source} / {task.activeAgent ?? 'orchestrator'} / {formatDateTime(task.updatedAt)}</small>
                 {task.approvalId && <small>Approval: {task.approvalId}</small>}
+                {task.approvalStatus && <small>Approval status: {labelRawSetting(task.approvalStatus)}</small>}
+                {task.approvalDecision?.rejectionReason && <small>Rejected: {task.approvalDecision.rejectionReason}</small>}
+                {task.approvalDecision?.changeRequestNote && <small>Needs changes: {task.approvalDecision.changeRequestNote}</small>}
               </div>
               <span>{labelRawSetting(task.status)}</span>
             </div>

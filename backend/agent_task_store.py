@@ -59,6 +59,19 @@ def update_agent_task(task_id: str, patch: dict[str, Any], *, storage_dir: Path 
     raise KeyError(f"Agent task not found: {task_id}")
 
 
+def update_agent_task_by_approval(
+    approval_id: str,
+    patch: dict[str, Any],
+    *,
+    storage_dir: Path = STORAGE_DIR,
+) -> dict[str, Any] | None:
+    rows = list_agent_tasks(storage_dir=storage_dir)
+    for row in rows:
+        if row.get("approvalId") == approval_id:
+            return update_agent_task(str(row["id"]), patch, storage_dir=storage_dir)
+    return None
+
+
 def write_agent_tasks(rows: list[dict[str, Any]], *, storage_dir: Path = STORAGE_DIR) -> None:
     storage_dir.mkdir(parents=True, exist_ok=True)
     (storage_dir / "agent_tasks.json").write_text(
