@@ -38,9 +38,17 @@ The default operating mode is read-only. The agent may inspect data, summarize h
 
 - Uses Ads Manager Analyze only as read-only evidence.
 - Captures recommendation text, selected object, date range, and screenshot evidence.
-- Sends the recommendation to the Orchestrator for specialist validation.
+- Sends the recommendation to the Meta AI Strategist and Orchestrator for specialist validation.
 - Cannot execute, publish, pause, or change budgets.
 - Converts Meta AI advice into `accept_as_experiment`, `accept_with_modification`, `reject_for_business_quality`, or `needs_more_data`.
+
+### Meta AI Strategist Agent
+
+- Turns Meta AI Advisor captures into a Meta-side strategy.
+- Analyzes best ad sets, best interests, top 10 creatives, weak creatives, weak ad sets, and Meta-native test ideas.
+- Focuses on Meta-side evidence such as website registrations, CPC, CPL, click-to-registration behavior, creative efficiency, delivery, and Opportunity Score.
+- Does not make the final business strategy because it does not own Telegram START, CRM, sales capacity, or buyer-quality truth.
+- Hands audience findings to Audience Strategist, creative findings to Creative Intelligence, funnel concerns to Funnel Tracking, and test candidates to Experiment Agent.
 
 ### Execution Agent
 

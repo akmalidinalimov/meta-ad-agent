@@ -19,11 +19,14 @@ def test_agent_registry_contains_required_specialists_with_safe_permissions():
         "monitoring",
         "experiment",
         "meta_ai_advisor",
+        "meta_ai_strategist",
         "execution",
         "browser_operator",
     }.issubset(registry)
     assert registry["meta_ai_advisor"]["canExecuteLiveChanges"] is False
+    assert registry["meta_ai_strategist"]["canExecuteLiveChanges"] is False
     assert registry["meta_ai_advisor"]["requiresApproval"] is False
+    assert registry["meta_ai_strategist"]["requiresApproval"] is False
     assert registry["execution"]["canExecuteLiveChanges"] is False
     assert registry["browser_operator"]["canExecuteLiveChanges"] is False
     assert registry["execution"]["requiresApproval"] is True
@@ -36,6 +39,7 @@ def test_route_question_selects_specialist_without_live_execution():
     assert route_question("Set up a new campaign with $100 per segment")["agentId"] == "orchestrator"
     assert route_question("Go to browser and change the budget")["agentId"] == "execution"
     assert route_question("Ask Meta AI to analyze this ad set and compare it with our funnel data")["agentId"] == "meta_ai_advisor"
+    assert route_question("Create a Meta AI strategy from the Analyze answers")["agentId"] == "meta_ai_strategist"
 
 
 def test_orchestrator_generates_campaign_plan_from_latest_playbook():
@@ -110,3 +114,17 @@ def test_meta_ai_advisor_explains_browser_capture_workflow():
     assert "orchestrator" in response["answer"].lower()
     assert "telegram" in response["answer"].lower()
     assert "Meta AI" in response["answer"]
+
+
+def test_meta_ai_strategist_explains_meta_side_strategy_scope():
+    response = orchestrate_agent_chat(
+        "Use the Meta AI captures to create a Meta-side strategy for ad sets, audiences, and creatives",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "meta_ai_strategist"
+    assert "meta-side strategy" in response["answer"].lower()
+    assert "orchestrator" in response["answer"].lower()
+    assert "not the final business strategy" in response["answer"].lower()

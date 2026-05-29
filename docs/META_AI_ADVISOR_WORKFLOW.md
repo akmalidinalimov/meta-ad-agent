@@ -6,7 +6,7 @@ Date: 2026-05-29
 
 Meta AI inside Ads Manager can see platform-side delivery signals that are useful for diagnosis. It should be treated as a read-only advisor, not as the campaign decision-maker.
 
-The Meta AI Advisor Agent captures Meta AI output and gives it to the Orchestrator. The Orchestrator then asks the relevant specialist agents to validate or challenge the recommendation against our business data.
+The Meta AI Advisor Agent captures Meta AI output and gives it to the Meta AI Strategist. The Meta AI Strategist turns those captures into a Meta-side strategy. The Orchestrator then asks the relevant specialist agents to validate or challenge the strategy against our business data.
 
 ## When To Use Meta AI
 
@@ -35,8 +35,49 @@ Do not use Meta AI as the only reason to scale, pause, or publish.
    - visible metrics mentioned by Meta AI,
    - screenshot path,
    - capture timestamp.
-6. Meta AI Advisor summarizes the recommendation.
-7. Orchestrator routes the recommendation to specialist agents.
+6. Meta AI Advisor summarizes the recommendation and grades evidence quality.
+7. Meta AI Strategist creates a Meta-side strategy.
+8. Orchestrator routes the strategy to specialist agents.
+
+## Meta AI Strategist Scope
+
+The Meta AI Strategist answers:
+
+- Which ad sets produced the cheapest website registrations?
+- Which audiences and interests clicked and registered most efficiently?
+- Which ad sets produced high clicks but weak website registrations?
+- Which top 10 creative videos brought the strongest audience response?
+- Why did Meta think those creatives worked?
+- Which creatives or ad sets look weak from Meta-side evidence?
+- What Meta-native tests should be considered next?
+
+It should produce already analyzed Meta-side findings, but it is still not the final business strategist.
+
+## Meta AI Strategist Output
+
+```json
+{
+  "meta_side_strategy": {
+    "best_adsets_by_registration_cost": [],
+    "best_interests_by_click_to_registration": [],
+    "top_10_creatives": [],
+    "creative_patterns": [],
+    "weak_adsets": [],
+    "meta_ai_recommendations": [],
+    "recommended_tests": [],
+    "confidence": "medium"
+  },
+  "limitations": [
+    "Meta AI does not know CRM purchase quality unless we provide it.",
+    "Telegram START and landing button clicks must be checked separately."
+  ],
+  "handoff_to_orchestrator": {
+    "audience_hypotheses": [],
+    "creative_hypotheses": [],
+    "experiment_candidates": []
+  }
+}
+```
 
 ## Specialist Handoff
 

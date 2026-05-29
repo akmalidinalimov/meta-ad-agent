@@ -88,6 +88,15 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
         "canExecuteLiveChanges": False,
         "requiresApproval": False,
     },
+    "meta_ai_strategist": {
+        "name": "Meta AI Strategist Agent",
+        "purpose": "Turn captured Meta AI evidence and Meta API metrics into a Meta-side strategy for audiences, ad sets, creatives, and tests.",
+        "inputs": ["Meta AI Advisor captures", "Meta API insights", "selected campaign/ad set/ad context", "historical Meta performance"],
+        "outputs": ["Meta-side strategy", "best ad sets", "best interests", "top creatives", "Meta-native experiment candidates", "limitations"],
+        "tools": ["meta_ai_captures", "meta_api_metrics", "specialist_handoff"],
+        "canExecuteLiveChanges": False,
+        "requiresApproval": False,
+    },
     "execution": {
         "name": "Meta Execution Agent",
         "purpose": "After explicit approval, execute a specific Meta Ads change by API first, browser fallback second.",
@@ -117,6 +126,10 @@ def route_question(question: str) -> dict[str, Any]:
     lower = question.lower()
     if any(word in lower for word in ["sub-agent", "subagent", "agent role", "orchestrator", "specialist"]):
         return route("orchestrator", "Agent architecture/status question.")
+    if ("meta ai" in lower or "ads manager ai" in lower) and any(
+        word in lower for word in ["strategy", "strategist", "fully analyzed", "analyzed", "captures", "capture", "answers"]
+    ):
+        return route("meta_ai_strategist", "Captured Meta AI evidence should be converted into Meta-side strategy.")
     if any(word in lower for word in ["meta ai", "ads manager ai", "analyze button", "opportunity score", "opportunity-score"]):
         return route("meta_ai_advisor", "Meta AI Analyze request should be captured read-only and validated against business data.")
     if any(word in lower for word in ["setup", "set up", "create campaign", "launch campaign", "new campaign", "campaign plan", "vsl"]):
@@ -184,6 +197,18 @@ def orchestrate_agent_chat(
                 "Capture Meta AI analysis for the selected campaign.",
                 "Compare Meta AI recommendations with Telegram START quality.",
                 "Turn accepted Meta AI advice into an experiment plan.",
+            ],
+        )
+
+    if routed["agentId"] == "meta_ai_strategist":
+        return response(
+            routed,
+            answer=describe_meta_ai_strategy_workflow(),
+            sources=["docs/META_AI_ADVISOR_WORKFLOW.md", "agent_orchestrator", "storage/meta_knowledge_base.json"],
+            suggested=[
+                "Generate Meta-side strategy from the latest Meta AI capture.",
+                "Send Meta-side creative findings to Creative Intelligence.",
+                "Convert Meta AI strategy into approval-safe experiments.",
             ],
         )
 
@@ -258,6 +283,7 @@ def describe_agent_system() -> str:
         "monitoring",
         "experiment",
         "meta_ai_advisor",
+        "meta_ai_strategist",
         "execution",
         "browser_operator",
     ]:
@@ -277,6 +303,16 @@ def describe_meta_ai_workflow() -> str:
         "Creative Intelligence for hook/video advice, Audience Strategist for targeting advice, Placement Optimizer for placement advice, and Funnel Tracking for Telegram/landing-page quality checks. "
         "We trust Meta AI more for auction, delivery, creative efficiency, learning, and Opportunity Score signals. We trust our agents more for business-side quality: Telegram START quality, VSL intent, CRM/sales capacity, purchasing power, and course-buyer fit. "
         "No Meta AI recommendation can execute directly; it must become an experiment or approval request first."
+    )
+
+
+def describe_meta_ai_strategy_workflow() -> str:
+    return (
+        "The Meta AI Strategist turns Advisor captures into a Meta-side strategy. "
+        "It analyzes which ad sets produced cheaper website registrations, which interests drove click-to-registration behavior, and which top 10 creative videos created the strongest Meta-side response. "
+        "Its output is already analyzed for Meta delivery: best ad sets, best interests, top creatives, weak creatives, why Meta thinks they worked, what to test next, and confidence limits. "
+        "It is not the final business strategy. The Orchestrator must still merge it with Telegram START, landing-page button clicks, CRM/sales quality, buyer purchasing power, and course positioning. "
+        "The Strategist should hand off audience findings to the Audience Strategist, creative findings to Creative Intelligence, funnel concerns to Funnel Tracking, and test candidates to the Experiment Agent."
     )
 
 

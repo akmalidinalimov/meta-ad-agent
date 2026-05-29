@@ -50,6 +50,7 @@ The chat endpoint now checks the orchestrator first for:
 - Campaign setup / campaign plan requests
 - Execution / browser fallback requests
 - Meta AI Analyze panel capture and validation requests
+- Meta AI capture-to-strategy requests
 
 If the orchestrator can handle the request, it returns:
 
