@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meta Agent Landing Tracker Example</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 40px;
+        background: #f5f7fb;
+        color: #101828;
+      }
+
+      main {
+        max-width: 680px;
+      }
+
+      a {
+        display: inline-block;
+        margin-top: 24px;
+        padding: 14px 18px;
+        border-radius: 8px;
+        background: #157a6e;
+        color: white;
+        font-weight: 700;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Income VSL landing page</h1>
+      <p>This example shows how a real landing page can pass the visitor ID into Telegram.</p>
+      <a href="https://t.me/example_bot" data-meta-agent-telegram>Watch the free video</a>
+    </main>
+
+    <script>
+      window.MetaAdAgentTracker = {
+        endpoint: 'http://127.0.0.1:8000/api/funnel/events',
+        segment: 'income',
+        vslId: 'income_vsl_01',
+        landingPageId: 'income_lp_01',
+        telegramBotId: 'income_bot',
+        telegramSelector: '[data-meta-agent-telegram]',
+      }
+    </script>
+    <script src="/landing-tracker.js"></script>
+  </body>
+</html>

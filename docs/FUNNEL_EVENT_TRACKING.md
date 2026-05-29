@@ -64,7 +64,41 @@ Send as many of these as possible:
 
 ## Landing Page Payload Example
 
-Use this when a user lands on the page:
+The preferred setup is to install the shared tracker script on every landing page. This script creates a stable `visitor_id`, sends `landing_view`, rewrites Telegram links with `?start=<visitor_id>`, and sends `telegram_link_click`.
+
+```html
+<script>
+  window.MetaAdAgentTracker = {
+    endpoint: "https://YOUR_AGENT_BACKEND/api/funnel/events",
+    segment: "income",
+    vslId: "income_vsl_01",
+    landingPageId: "income_lp_01",
+    telegramBotId: "income_bot",
+    telegramSelector: "[data-meta-agent-telegram]"
+  };
+</script>
+<script src="https://YOUR_LANDING_DOMAIN/landing-tracker.js"></script>
+
+<a href="https://t.me/YOUR_BOT" data-meta-agent-telegram>
+  Watch the free video
+</a>
+```
+
+For local testing, open:
+
+```text
+http://127.0.0.1:5173/landing-tracker-example.html
+```
+
+For production landing pages, add every landing-page origin to the backend environment:
+
+```env
+FUNNEL_ALLOWED_ORIGINS=https://income.example.com,https://business.example.com,https://creators.example.com
+```
+
+The tracker intentionally sends only the `visitor_id` in Telegram's `start` parameter. Telegram start payloads are short, so full attribution stays in the backend events instead of being packed into the Telegram link.
+
+Use this manual payload shape if a page builder cannot load the tracker script:
 
 ```json
 {

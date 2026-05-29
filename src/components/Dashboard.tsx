@@ -1102,11 +1102,12 @@ function ExperimentsView({ data }: { data: DashboardData }) {
 
 function SettingsAuditView() {
   const [audit, setAudit] = useState<MetaSettingsAudit | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(() =>
+    typeof fetch !== 'function' ? 'Settings audit API cannot be loaded in this browser sandbox.' : null,
+  )
 
   useEffect(() => {
     if (typeof fetch !== 'function') {
-      setError('Settings audit API cannot be loaded in this browser sandbox.')
       return
     }
 
