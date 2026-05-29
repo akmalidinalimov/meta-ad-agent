@@ -101,6 +101,36 @@ def test_execution_agent_blocks_browser_fallback_until_specific_approval():
     assert "api first" in response["answer"].lower()
 
 
+def test_execution_agent_creates_approval_ready_plan_from_natural_language_action():
+    response = orchestrate_agent_chat(
+        "Rename campaign 120123 to Business Automation VSL - Tashkent",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "execution"
+    assert response["generatedMetaActionPlan"]["intent"] == "rename"
+    assert response["generatedMetaActionPlan"]["target"]["id"] == "120123"
+    assert response["generatedApprovalRequest"]["actionType"] == "rename_meta_object"
+    assert response["generatedApprovalRequest"]["status"] == "needs_review"
+    assert "approval" in response["answer"].lower()
+
+
+def test_execution_agent_asks_clarifying_question_for_ambiguous_action():
+    response = orchestrate_agent_chat(
+        "Pause the weak ad set",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "execution"
+    assert response["generatedMetaActionPlan"]["needsClarification"] is True
+    assert "which target object id" in response["answer"].lower()
+    assert "generatedApprovalRequest" not in response
+
+
 def test_meta_ai_advisor_explains_browser_capture_workflow():
     response = orchestrate_agent_chat(
         "Use Meta AI Analyze for this campaign and tell me whether to trust it",

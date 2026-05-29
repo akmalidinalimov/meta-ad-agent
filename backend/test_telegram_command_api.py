@@ -89,6 +89,34 @@ def test_telegram_command_creates_agent_task(monkeypatch, tmp_path):
     assert "approval-ready campaign plan" in sent[0][0]
 
 
+def test_telegram_natural_language_meta_action_creates_approval(monkeypatch, tmp_path):
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "message": {
+                "chat": {"id": 1001},
+                "from": {"id": 2002, "username": "akmal"},
+                "text": "Rename campaign 120123 to Business Automation VSL - Tashkent",
+            }
+        },
+    )
+
+    payload = response.json()
+    approvals = client.get("/api/approvals").json()["approvals"]
+
+    assert response.status_code == 200
+    assert payload["task"]["status"] == "needs_approval"
+    assert payload["task"]["activeAgent"] == "execution"
+    assert approvals[0]["actionType"] == "rename_meta_object"
+    assert approvals[0]["target"]["id"] == "120123"
+    assert "approval-gated Meta action" in sent[-1][0]
+
+
 def test_telegram_status_command_replies_without_creating_task(monkeypatch, tmp_path):
     _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
     monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")

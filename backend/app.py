@@ -81,6 +81,8 @@ class ChatResponse(BaseModel):
     routeReason: str | None = None
     generatedPlaybook: dict[str, Any] | None = None
     generatedStrategy: dict[str, Any] | None = None
+    generatedMetaActionPlan: dict[str, Any] | None = None
+    generatedApprovalRequest: dict[str, Any] | None = None
 
 
 class MetaSyncRequest(BaseModel):
@@ -684,6 +686,19 @@ def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
             plan["telegramNotification"] = send_approval_notification(saved_approval)
             patch["approvalId"] = saved_approval["id"]
             patch["status"] = "needs_approval"
+
+    generated_meta_action_approval = plan.get("generatedApprovalRequest") if isinstance(plan, dict) else None
+    if generated_meta_action_approval and generated_meta_action_approval.get("status") == "needs_review":
+        saved_approval = create_approval_request(
+            {
+                **generated_meta_action_approval,
+                "reason": f"Task {task['id']}: {generated_meta_action_approval.get('reason', 'natural-language Meta action request')}",
+            }
+        )
+        plan["generatedApprovalRequest"] = saved_approval
+        plan["telegramNotification"] = send_approval_notification(saved_approval)
+        patch["approvalId"] = saved_approval["id"]
+        patch["status"] = "needs_approval"
 
     updated = update_agent_task(task["id"], patch)
     return {"ok": True, "task": updated}

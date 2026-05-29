@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .chat_campaign_planner import build_playbook_from_chat, can_build_playbook_from_chat
+from .meta_action_planner import build_action_approval, plan_meta_action
 from .strategy_generator import generate_launch_strategy
 
 
@@ -159,6 +160,37 @@ def orchestrate_agent_chat(
 ) -> dict[str, Any] | None:
     lower = question.lower()
     routed = route_question(question)
+    meta_action_plan = plan_meta_action(question)
+    if should_prepare_meta_action(question, routed, meta_action_plan):
+        routed = route("execution", "Natural-language Meta Ads change request requires approval before execution.")
+        if meta_action_plan["needsClarification"]:
+            result = response(
+                routed,
+                answer=meta_action_plan["clarifyingQuestion"] or "I need one more detail before preparing this Meta action.",
+                sources=["meta_action_planner", "docs/AGENT_OPERATING_POLICY.md", "docs/META_EXECUTION_SAFETY.md"],
+                suggested=[
+                    "Include the exact campaign, ad set, or ad ID.",
+                    "Include the new value I should prepare.",
+                    "Ask for analysis before preparing the change.",
+                ],
+            )
+            result["generatedMetaActionPlan"] = meta_action_plan
+            return result
+
+        approval = build_action_approval(meta_action_plan)
+        result = response(
+            routed,
+            answer=format_meta_action_answer(meta_action_plan, approval),
+            sources=["meta_action_planner", "docs/AGENT_OPERATING_POLICY.md", "docs/META_EXECUTION_SAFETY.md"],
+            suggested=[
+                "Approve this action.",
+                "Reject this action.",
+                "Ask the agent to revise the requested value.",
+            ],
+        )
+        result["generatedMetaActionPlan"] = meta_action_plan
+        result["generatedApprovalRequest"] = approval
+        return result
 
     if any(word in lower for word in ["sub-agent", "subagent", "agent role", "orchestrator", "specialist"]):
         return response(
@@ -341,6 +373,42 @@ def format_strategy_answer(strategy: dict[str, Any], source_label: str = "the sa
             "I will not execute Meta changes from this plan until you approve a specific action.",
         ]
     )
+
+
+def format_meta_action_answer(plan: dict[str, Any], approval: dict[str, Any]) -> str:
+    target = plan.get("target", {})
+    after = plan.get("after", {})
+    return "\n".join(
+        [
+            "I prepared this as an approval-gated Meta action.",
+            "",
+            f"Action: {approval.get('actionType', 'meta_action_request')}",
+            f"Target: {target.get('level', 'object')} {target.get('id', 'unknown')}",
+            f"New value: {after}",
+            f"Risk: {approval.get('risk', 'medium')}",
+            "",
+            "I will not execute it until you approve the exact action. API execution is preferred; browser fallback is only for approved actions that cannot be completed through the API.",
+        ]
+    )
+
+
+def should_prepare_meta_action(question: str, routed: dict[str, Any], plan: dict[str, Any]) -> bool:
+    if plan["intent"] == "unknown":
+        return False
+    lower = question.lower()
+    if "meta ai" in lower or "ads manager ai" in lower:
+        return False
+    if routed["agentId"] == "orchestrator" and any(
+        phrase in lower for phrase in ["create a campaign", "create campaign", "set up", "setup", "launch campaign", "campaign plan"]
+    ):
+        return False
+    if plan["intent"] in {"rename", "pause", "enable"}:
+        return True
+    if plan["intent"] == "change_budget":
+        return bool(plan.get("after")) and ("budget" in lower or "$" in lower)
+    if routed["agentId"] == "execution" and any(phrase in lower for phrase in ["change placement", "change targeting", "update placement", "update targeting"]):
+        return True
+    return False
 
 
 def response(

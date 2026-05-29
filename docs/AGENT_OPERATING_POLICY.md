@@ -153,6 +153,33 @@ Shortcut commands do not create tasks unless they explicitly ask for work. They 
 
 Telegram command webhooks must use `TELEGRAM_COMMAND_SECRET` and send it in `x-telegram-agent-secret` or the JSON `secret` field.
 
+## Natural-Language Meta Actions
+
+The user should be able to speak naturally in Telegram, dashboard chat, or Codex chat. Rigid slash commands are optional operational shortcuts, not the primary control model.
+
+The Orchestrator may convert natural-language requests into approval-ready Meta actions when the request has a clear mutation intent, such as:
+
+- Rename a campaign, ad set, or ad.
+- Pause or enable a campaign, ad set, or ad.
+- Change a budget.
+- Change placements or targeting when a specific object and exact proposed value are provided.
+
+The planner must require:
+
+- Exact target object ID.
+- Target level: campaign, ad set, or ad.
+- Proposed after value.
+- Risk level and expected impact.
+- Guardrail checks.
+
+If the request is ambiguous, the Orchestrator must ask a clarifying question instead of creating an approval request. Examples:
+
+- "Pause the weak ad set" must ask for the exact target object ID.
+- "Change the budget" must ask for the target object and new budget.
+- "Improve targeting" must ask for the object and exact targeting change.
+
+When all required values are present, the Orchestrator creates an approval request and sends it to the dashboard/Telegram approval queue. This still does not execute anything. Execution happens only after the approval is accepted and the execution endpoint is called under the normal API-first, browser-fallback policy.
+
 Telegram control must also be allowlisted. Use:
 
 ```text
