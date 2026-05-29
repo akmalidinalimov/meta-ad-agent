@@ -697,6 +697,8 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         raise HTTPException(status_code=401, detail="Invalid Telegram command secret.")
 
     command = normalize_telegram_command(payload)
+    if not telegram_command_allowed(command):
+        raise HTTPException(status_code=403, detail="Telegram chat or user is not allowed to control this agent.")
     if command.get("action") == "approve" and command.get("approvalId"):
         approved_by = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
         try:
@@ -816,6 +818,26 @@ def handle_telegram_shortcut(command: dict[str, Any], text: str) -> dict[str, An
         "answer": answer,
         "reply": reply,
     }
+
+
+def telegram_command_allowed(command: dict[str, Any]) -> bool:
+    allowed_chat_ids = allowed_telegram_values("TELEGRAM_ALLOWED_CHAT_IDS")
+    allowed_user_ids = allowed_telegram_values("TELEGRAM_ALLOWED_USER_IDS")
+    admin_chat_id = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+    if admin_chat_id:
+        allowed_chat_ids.add(admin_chat_id)
+
+    if not allowed_chat_ids and not allowed_user_ids:
+        return True
+
+    chat_id = str(command.get("chatId") or "").strip()
+    user_id = str(command.get("userId") or "").strip()
+    return bool((chat_id and chat_id in allowed_chat_ids) or (user_id and user_id in allowed_user_ids))
+
+
+def allowed_telegram_values(env_name: str) -> set[str]:
+    raw = os.getenv(env_name, "")
+    return {value.strip() for value in raw.split(",") if value.strip()}
 
 
 def telegram_help_text() -> str:

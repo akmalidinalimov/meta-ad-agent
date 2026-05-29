@@ -16,6 +16,7 @@ from backend.meta_execution import build_campaign_creation_approval
 def bind_tmp_command_store(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
     sent = []
+    monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "1001")
     monkeypatch.setattr(app_module, "create_agent_task", lambda task: create_agent_task(task, storage_dir=storage_dir))
     monkeypatch.setattr(app_module, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
     monkeypatch.setattr(
@@ -182,6 +183,49 @@ def test_telegram_command_rejects_invalid_secret(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 401
+
+
+def test_telegram_command_rejects_unallowed_chat(monkeypatch, tmp_path):
+    bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "1001")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "message": {
+                "chat": {"id": 9999},
+                "from": {"id": 9999, "username": "stranger"},
+                "text": "/status",
+            }
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_telegram_command_allows_configured_user_id(monkeypatch, tmp_path):
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "2002,3003")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "message": {
+                "chat": {"id": 9999},
+                "from": {"id": 2002, "username": "akmal"},
+                "text": "/status",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert sent[0][1]["chat_id"] == "9999"
 
 
 def test_telegram_callback_can_approve_existing_approval(monkeypatch, tmp_path):

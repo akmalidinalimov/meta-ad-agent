@@ -153,6 +153,15 @@ Shortcut commands do not create tasks unless they explicitly ask for work. They 
 
 Telegram command webhooks must use `TELEGRAM_COMMAND_SECRET` and send it in `x-telegram-agent-secret` or the JSON `secret` field.
 
+Telegram control must also be allowlisted. Use:
+
+```text
+TELEGRAM_ALLOWED_CHAT_IDS=6542876935
+TELEGRAM_ALLOWED_USER_IDS=6542876935
+```
+
+If these values are configured, commands and approval callbacks from any other chat/user are rejected before the orchestrator or execution layer is reached. `TELEGRAM_ADMIN_CHAT_ID` is also treated as an allowed chat.
+
 Telegram approval buttons may send callback data in this format:
 
 ```text
