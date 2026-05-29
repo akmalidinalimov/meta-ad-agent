@@ -88,6 +88,88 @@ def test_telegram_command_creates_agent_task(monkeypatch, tmp_path):
     assert "approval-ready campaign plan" in sent[0][0]
 
 
+def test_telegram_status_command_replies_without_creating_task(monkeypatch, tmp_path):
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "message": {
+                "chat": {"id": 1001},
+                "from": {"id": 2002, "username": "akmal"},
+                "text": "/status",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["shortcut"] == "status"
+    assert client.get("/api/tasks").json()["tasks"] == []
+    assert "Agent status" in sent[0][0]
+
+
+def test_telegram_tasks_and_approvals_commands_show_queue(monkeypatch, tmp_path):
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    create_agent_task(
+        {"source": "dashboard", "command": "Prepare launch", "status": "needs_approval", "approvalId": "approval_123"},
+        storage_dir=tmp_path / "storage",
+    )
+    create_approval_request(
+        build_campaign_creation_approval(
+            {
+                "name": "Queue approval",
+                "segments": [{"id": "income", "name": "Income", "startingBudgetUsd": 50}],
+                "rules": {"maxDailyBudgetUsd": 100},
+            },
+            account_id="act_123",
+        ),
+        storage_dir=tmp_path / "storage",
+    )
+    client = TestClient(app)
+
+    tasks_response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={"message": {"chat": {"id": 1001}, "from": {"username": "akmal"}, "text": "/tasks"}},
+    )
+    approvals_response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={"message": {"chat": {"id": 1001}, "from": {"username": "akmal"}, "text": "/approvals"}},
+    )
+
+    assert tasks_response.json()["shortcut"] == "tasks"
+    assert approvals_response.json()["shortcut"] == "approvals"
+    assert "Prepare launch" in sent[0][0]
+    assert "Queue approval" in sent[1][0]
+
+
+def test_telegram_agents_and_help_commands_reply(monkeypatch, tmp_path):
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    client = TestClient(app)
+
+    agents_response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={"message": {"chat": {"id": 1001}, "from": {"username": "akmal"}, "text": "/agents"}},
+    )
+    help_response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={"message": {"chat": {"id": 1001}, "from": {"username": "akmal"}, "text": "/help"}},
+    )
+
+    assert agents_response.json()["shortcut"] == "agents"
+    assert help_response.json()["shortcut"] == "help"
+    assert "Orchestrator Agent" in sent[0][0]
+    assert "/approvals" in sent[1][0]
+
+
 def test_telegram_command_rejects_invalid_secret(monkeypatch, tmp_path):
     bind_tmp_command_store(monkeypatch, tmp_path)
     monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")

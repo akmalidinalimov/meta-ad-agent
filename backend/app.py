@@ -763,6 +763,10 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
             "reply": telegram_reply,
         }
 
+    shortcut = handle_telegram_shortcut(command, text)
+    if shortcut:
+        return shortcut
+
     source_task = AgentTaskRequest(source="telegram", command=text)
     result = create_orchestrated_agent_task(source_task)
     task = result.get("task", {})
@@ -788,6 +792,91 @@ def send_telegram_reply(command: dict[str, Any], message: str) -> dict[str, Any]
     if not chat_id:
         return None
     return send_telegram_message_sync(message, chat_id=chat_id)
+
+
+def handle_telegram_shortcut(command: dict[str, Any], text: str) -> dict[str, Any] | None:
+    shortcut = text.strip().split(maxsplit=1)[0].lower().lstrip("/")
+    handlers = {
+        "start": telegram_help_text,
+        "help": telegram_help_text,
+        "status": telegram_status_text,
+        "tasks": telegram_tasks_text,
+        "approvals": telegram_approvals_text,
+        "agents": telegram_agents_text,
+    }
+    handler = handlers.get(shortcut)
+    if not handler:
+        return None
+    answer = handler()
+    reply = send_telegram_reply(command, answer)
+    return {
+        "ok": True,
+        "shortcut": shortcut,
+        "telegram": command,
+        "answer": answer,
+        "reply": reply,
+    }
+
+
+def telegram_help_text() -> str:
+    return "\n".join(
+        [
+            "Meta Agent commands",
+            "/status - connection and queue status",
+            "/tasks - latest orchestrator tasks",
+            "/approvals - pending approval requests",
+            "/agents - available specialist agents",
+            "/help - show this menu",
+            "",
+            "You can also write a normal instruction, for example: create a paused campaign plan for 3 VSLs.",
+        ]
+    )
+
+
+def telegram_status_text() -> str:
+    tasks = list_agent_tasks()
+    approvals = list_approval_requests()
+    connected = "configured" if get_meta_config().ad_account_id else "not configured"
+    pending_tasks = len([task for task in tasks if task.get("status") in {"planning", "needs_approval", "needs_changes"}])
+    pending_approvals = len([approval for approval in approvals if approval.get("status") == "needs_review"])
+    return "\n".join(
+        [
+            "Agent status",
+            f"Meta account: {connected}",
+            f"Tasks: {len(tasks)} total, {pending_tasks} pending",
+            f"Approvals: {len(approvals)} total, {pending_approvals} waiting for review",
+            "Live publish/spend: approval-gated",
+        ]
+    )
+
+
+def telegram_tasks_text() -> str:
+    tasks = list_agent_tasks()[:5]
+    if not tasks:
+        return "No agent tasks yet."
+    lines = ["Latest tasks"]
+    for task in tasks:
+        lines.append(f"- {task.get('requestedAction', 'Untitled task')}: {task.get('status')}")
+    return "\n".join(lines)
+
+
+def telegram_approvals_text() -> str:
+    approvals = list_approval_requests()[:5]
+    if not approvals:
+        return "No approval requests yet."
+    lines = ["Latest approvals"]
+    for approval in approvals:
+        campaign_name = approval.get("after", {}).get("campaign", {}).get("name") or approval.get("actionType")
+        lines.append(f"- {campaign_name}: {approval.get('status')} ({approval.get('id')})")
+    return "\n".join(lines)
+
+
+def telegram_agents_text() -> str:
+    lines = ["Available agents"]
+    for agent in agent_registry().values():
+        mode = "approval required" if agent.get("requiresApproval") else "analysis ready"
+        lines.append(f"- {agent.get('name')}: {mode}")
+    return "\n".join(lines)
 
 
 def clamp_telegram_text(message: str) -> str:

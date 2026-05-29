@@ -143,6 +143,14 @@ All command sources must use the same orchestration path:
 
 Telegram is treated as a manager chat surface, not a separate automation brain. Every Telegram text command is routed to the orchestrator and saved as an `AgentTask`. The bot replies in the same Telegram chat with the orchestrator answer, including questions, strategy summaries, or approval status.
 
+Shortcut commands do not create tasks unless they explicitly ask for work. They return operational state:
+
+- `/start` and `/help`: command menu.
+- `/status`: Meta/queue/approval status.
+- `/tasks`: latest orchestrator tasks.
+- `/approvals`: latest approval requests.
+- `/agents`: available specialist agents and safety mode.
+
 Telegram command webhooks must use `TELEGRAM_COMMAND_SECRET` and send it in `x-telegram-agent-secret` or the JSON `secret` field.
 
 Telegram approval buttons may send callback data in this format:
