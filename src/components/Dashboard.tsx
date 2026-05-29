@@ -885,6 +885,7 @@ function CommandCenterView({ data }: { data: DashboardData }) {
   const [segmentIds, setSegmentIds] = useState('income, business, creators')
   const [prepareApproval, setPrepareApproval] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSendingTelegramTest, setIsSendingTelegramTest] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
   const loadCommandCenter = async () => {
@@ -944,6 +945,28 @@ function CommandCenterView({ data }: { data: DashboardData }) {
   const recentCampaigns = data.campaigns.slice(0, 8)
   const approvalAgents = agents.filter((agent) => agent.requiresApproval).length
   const pendingTasks = tasks.filter((task) => task.status === 'planning' || task.status === 'needs_approval').length
+
+  const sendTelegramTest = async () => {
+    if (isSendingTelegramTest) {
+      return
+    }
+
+    setIsSendingTelegramTest(true)
+    setMessage('Sending Telegram test message...')
+    try {
+      const response = await fetch('/api/telegram/test-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Meta Agent Telegram test: outbound messages are connected.' }),
+      })
+      const result = (await response.json()) as { telegram?: { ok?: boolean; error?: string } }
+      setMessage(result.telegram?.ok ? 'Telegram test message sent.' : result.telegram?.error ?? `Telegram test failed with ${response.status}`)
+    } catch {
+      setMessage('Could not reach the Telegram test endpoint.')
+    } finally {
+      setIsSendingTelegramTest(false)
+    }
+  }
 
   return (
     <section className="dashboard-grid">
@@ -1066,6 +1089,12 @@ function CommandCenterView({ data }: { data: DashboardData }) {
             <code>approve:approval_id</code>
             <p>Approval buttons can approve a request, but publishing or spend still needs the execution endpoint and guardrails.</p>
           </div>
+        </div>
+        <div className="command-actions">
+          <button className="sync-button secondary" type="button" onClick={sendTelegramTest} disabled={isSendingTelegramTest}>
+            <Send size={16} />
+            {isSendingTelegramTest ? 'Sending...' : 'Send test message'}
+          </button>
         </div>
       </article>
     </section>

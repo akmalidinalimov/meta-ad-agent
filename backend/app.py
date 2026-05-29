@@ -38,6 +38,7 @@ from .settings_audit import build_settings_audit
 from .snapshot_store import build_snapshot_payload, list_snapshots, save_snapshot
 from .strategy_generator import generate_launch_strategy
 from .telegram_commands import normalize_telegram_command
+from .telegram_outbound import send_approval_notification, send_telegram_message_sync
 
 SYNC_END_DATE = date.today()
 
@@ -103,6 +104,10 @@ class ApprovalExecutionRequest(BaseModel):
 
 class FunnelEventRequest(BaseModel):
     event: dict[str, Any]
+
+
+class TelegramTestMessageRequest(BaseModel):
+    message: str = "Agent approval test"
 
 
 class AgentTaskRequest(BaseModel):
@@ -514,7 +519,9 @@ def prepare_campaign_execution(request: CampaignExecutionPlanRequest) -> dict[st
         account_id=account_id,
         reason=request.reason or "Prepare a paused Meta campaign structure for review.",
     )
-    return {"ok": True, "approval": create_approval_request(approval)}
+    saved_approval = create_approval_request(approval)
+    telegram = send_approval_notification(saved_approval)
+    return {"ok": True, "approval": saved_approval, "telegram": telegram}
 
 
 @app.post("/api/approvals/{approval_id}/approve")
@@ -620,6 +627,7 @@ def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
                 reason=f"Task {task['id']}: prepare paused Meta campaign structure from command.",
             )
             saved_approval = create_approval_request(approval)
+            plan["telegramNotification"] = send_approval_notification(saved_approval)
             patch["approvalId"] = saved_approval["id"]
             patch["status"] = "needs_approval"
 
@@ -665,6 +673,12 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         "telegram": command,
         "message": "Telegram command sent to the orchestrator.",
     }
+
+
+@app.post("/api/telegram/test-message")
+def telegram_test_message(request: TelegramTestMessageRequest) -> dict[str, Any]:
+    message = request.message.strip() or "Agent approval test"
+    return {"ok": True, "telegram": send_telegram_message_sync(message)}
 
 
 async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:
