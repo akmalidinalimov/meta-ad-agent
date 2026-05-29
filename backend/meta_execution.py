@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
+
+MetaCreateFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 def build_campaign_creation_approval(
@@ -61,10 +63,14 @@ def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any]) -> di
     }
 
 
-def execute_campaign_creation_approval(
+async def execute_campaign_creation_approval(
     approval_request: dict[str, Any],
     *,
     dry_run: bool = True,
+    confirm_live: bool = False,
+    live_writes_enabled: bool = False,
+    create_campaign: MetaCreateFn | None = None,
+    create_ad_set: MetaCreateFn | None = None,
 ) -> dict[str, Any]:
     if approval_request.get("status") != "approved":
         return {"ok": False, "error": "Specific approval is required before execution."}
@@ -78,10 +84,56 @@ def execute_campaign_creation_approval(
             "wouldCreate": approval_request.get("after", {}),
             "note": "Dry run only. No request was sent to Meta.",
         }
+    if not confirm_live:
+        return {"ok": False, "dryRun": False, "error": "Final live confirmation is required before Meta writes."}
+    if not live_writes_enabled:
+        return {"ok": False, "dryRun": False, "error": "Live Meta writes are disabled by configuration."}
+    if not create_campaign or not create_ad_set:
+        return {"ok": False, "dryRun": False, "error": "Meta create functions are not configured."}
+
+    after = approval_request.get("after", {})
+    campaign_payload = after.get("campaign") or {}
+    adset_payloads = after.get("adsets") or []
+    created = []
+    campaign_result = await create_campaign(campaign_payload)
+    campaign_id = campaign_result.get("id")
+    if not campaign_id:
+        return {
+            "ok": False,
+            "dryRun": False,
+            "created": created,
+            "error": "Meta campaign creation did not return a campaign ID.",
+            "rawResult": campaign_result,
+        }
+
+    created.append({
+        "level": "campaign",
+        "id": campaign_id,
+        "name": campaign_payload.get("name"),
+    })
+    for adset_payload in adset_payloads:
+        next_payload = {**adset_payload, "campaign_id": campaign_id}
+        adset_result = await create_ad_set(next_payload)
+        adset_id = adset_result.get("id")
+        if not adset_id:
+            return {
+                "ok": False,
+                "dryRun": False,
+                "created": created,
+                "error": "Meta ad set creation did not return an ad set ID.",
+                "rawResult": adset_result,
+            }
+        created.append({
+            "level": "adset",
+            "id": adset_id,
+            "name": next_payload.get("name"),
+        })
+
     return {
-        "ok": False,
+        "ok": True,
         "dryRun": False,
-        "error": "Live Meta writes are not enabled in this build. Use dry run until the final execution confirmation endpoint is implemented.",
+        "created": created,
+        "note": "Live Meta write completed. Created objects are paused by default.",
     }
 
 

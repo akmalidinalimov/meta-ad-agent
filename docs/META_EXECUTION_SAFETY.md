@@ -23,7 +23,8 @@ Current implementation status:
 - The dashboard can prepare approval requests for paused campaign structures.
 - Generated campaigns and ad sets are always `PAUSED`.
 - Dry-run execution is implemented and does not send any request to Meta.
-- Live Meta write execution is intentionally disabled until the final confirmation endpoint and execution logs are reviewed.
+- Live Meta write execution exists only for paused campaign/ad set creation and is disabled unless `META_LIVE_WRITES_ENABLED=true`.
+- A non-dry-run call must also include final live confirmation; approval alone is not enough.
 
 ## Browser Fallback
 
@@ -59,6 +60,7 @@ Need live change?
 -> Check playbook guardrails.
 -> Ask approval.
 -> Dry-run the exact payload.
+-> Require final live confirmation.
 -> If approved, try Meta API.
 -> If API succeeds, log result.
 -> If API fails, propose browser fallback.
@@ -93,8 +95,8 @@ Need live change?
 
 For Version 1.0, allowed actions should start narrow:
 
-- create draft campaigns,
-- create draft ad sets,
+- create paused draft campaigns,
+- create paused draft ad sets,
 - prepare creative upload drafts,
 - change budgets within playbook limits,
 - pause clearly underperforming ads/ad sets,

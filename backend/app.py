@@ -23,6 +23,8 @@ from .meta_client import (
     get_ad_account_summary,
     get_ad_sets,
     get_ads,
+    create_ad_set as meta_create_ad_set,
+    create_campaign as meta_create_campaign,
     get_campaigns,
     get_insights,
     get_meta_config,
@@ -94,6 +96,7 @@ class ApprovalDecisionRequest(BaseModel):
 
 class ApprovalExecutionRequest(BaseModel):
     dryRun: bool = True
+    confirmLive: bool = False
 
 
 class FunnelEventRequest(BaseModel):
@@ -515,12 +518,20 @@ def approve_approval_request(approval_id: str, request: ApprovalDecisionRequest)
 
 
 @app.post("/api/approvals/{approval_id}/execute")
-def execute_approval_request(approval_id: str, request: ApprovalExecutionRequest) -> dict[str, Any]:
+async def execute_approval_request(approval_id: str, request: ApprovalExecutionRequest) -> dict[str, Any]:
     approval = next((item for item in list_approval_requests() if item.get("id") == approval_id), None)
     if not approval:
         raise HTTPException(status_code=404, detail=f"Approval request not found: {approval_id}")
 
-    result = execute_campaign_creation_approval(approval, dry_run=request.dryRun)
+    config = get_meta_config()
+    result = await execute_campaign_creation_approval(
+        approval,
+        dry_run=request.dryRun,
+        confirm_live=request.confirmLive,
+        live_writes_enabled=os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true",
+        create_campaign=lambda payload: meta_create_campaign(config, payload),
+        create_ad_set=lambda payload: meta_create_ad_set(config, payload),
+    )
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "Execution failed."))
 
@@ -537,10 +548,12 @@ def execute_approval_request(approval_id: str, request: ApprovalExecutionRequest
 
 @app.get("/api/agents")
 def agents() -> dict[str, Any]:
+    live_writes_enabled = os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true"
     return {
         "agents": list(agent_registry().values()),
-        "executionEnabled": False,
+        "executionEnabled": live_writes_enabled,
         "approvalRequiredForLiveChanges": True,
+        "liveWriteScope": "paused_campaign_and_adset_creation_only" if live_writes_enabled else "disabled",
     }
 
 

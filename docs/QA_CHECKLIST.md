@@ -28,4 +28,5 @@ Run this before pushing dashboard changes.
 - Strategy view can prepare an execution approval request from a saved playbook.
 - Approval queue shows stored execution approvals with guardrail status and paused campaign/ad set preview.
 - Approving an execution request enables dry-run only; dry-run confirms no request was sent to Meta.
-- Live Meta write execution remains disabled until a separately approved release.
+- Live Meta write execution is blocked unless `META_LIVE_WRITES_ENABLED=true` and the request includes final live confirmation.
+- Live Meta writes are limited to paused campaign/ad set creation until a later reviewed release expands the action list.

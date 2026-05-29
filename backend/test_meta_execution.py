@@ -1,3 +1,5 @@
+import asyncio
+
 from backend.meta_execution import (
     build_campaign_creation_approval,
     execute_campaign_creation_approval,
@@ -41,7 +43,7 @@ def test_execute_campaign_creation_dry_run_never_calls_meta():
     request = build_campaign_creation_approval(sample_playbook(), account_id="act_123")
     request["status"] = "approved"
 
-    result = execute_campaign_creation_approval(request, dry_run=True)
+    result = asyncio.run(execute_campaign_creation_approval(request, dry_run=True))
 
     assert result["ok"] is True
     assert result["dryRun"] is True
@@ -52,7 +54,72 @@ def test_execute_campaign_creation_dry_run_never_calls_meta():
 def test_execute_campaign_creation_blocks_without_approval():
     request = build_campaign_creation_approval(sample_playbook(), account_id="act_123")
 
-    result = execute_campaign_creation_approval(request, dry_run=True)
+    result = asyncio.run(execute_campaign_creation_approval(request, dry_run=True))
 
     assert result["ok"] is False
     assert "approval" in result["error"].lower()
+
+
+def test_execute_campaign_creation_blocks_live_writes_when_disabled():
+    request = build_campaign_creation_approval(sample_playbook(), account_id="act_123")
+    request["status"] = "approved"
+
+    result = asyncio.run(
+        execute_campaign_creation_approval(
+            request,
+            dry_run=False,
+            confirm_live=True,
+            live_writes_enabled=False,
+        )
+    )
+
+    assert result["ok"] is False
+    assert "disabled" in result["error"].lower()
+
+
+def test_execute_campaign_creation_requires_final_live_confirmation():
+    request = build_campaign_creation_approval(sample_playbook(), account_id="act_123")
+    request["status"] = "approved"
+
+    result = asyncio.run(
+        execute_campaign_creation_approval(
+            request,
+            dry_run=False,
+            live_writes_enabled=True,
+        )
+    )
+
+    assert result["ok"] is False
+    assert "confirm" in result["error"].lower()
+
+
+def test_execute_campaign_creation_calls_meta_creators_with_paused_payloads():
+    request = build_campaign_creation_approval(sample_playbook(), account_id="act_123")
+    request["status"] = "approved"
+    calls = []
+
+    async def create_campaign(payload):
+        calls.append(("campaign", payload))
+        return {"id": "cmp_123", "status": payload["status"]}
+
+    async def create_ad_set(payload):
+        calls.append(("adset", payload))
+        return {"id": f"as_{len(calls)}", "status": payload["status"]}
+
+    result = asyncio.run(
+        execute_campaign_creation_approval(
+            request,
+            dry_run=False,
+            confirm_live=True,
+            live_writes_enabled=True,
+            create_campaign=create_campaign,
+            create_ad_set=create_ad_set,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["dryRun"] is False
+    assert result["created"][0] == {"level": "campaign", "id": "cmp_123", "name": "June AI course launch - DRAFT"}
+    assert len([call for call in calls if call[0] == "adset"]) == 2
+    assert all(call[1]["status"] == "PAUSED" for call in calls)
+    assert all(call[1].get("campaign_id") == "cmp_123" for call in calls if call[0] == "adset")

@@ -156,6 +156,14 @@ async def get_video_source(config: MetaConfig, video_id: str) -> dict[str, Any]:
     return response.json()
 
 
+async def create_campaign(config: MetaConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    return await post_meta_object(config, f"/{config.ad_account_id}/campaigns", payload)
+
+
+async def create_ad_set(config: MetaConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    return await post_meta_object(config, f"/{config.ad_account_id}/adsets", payload)
+
+
 async def get_insights(
     config: MetaConfig,
     *,
@@ -209,6 +217,43 @@ async def paged_get(config: MetaConfig, path: str, params: dict[str, Any]) -> li
         raise MetaApiError(f"Could not reach Meta API: {error}") from error
 
     return rows
+
+
+async def post_meta_object(config: MetaConfig, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not config.is_configured:
+        raise MetaApiError("Meta access token and ad account ID are required.")
+
+    url = f"https://graph.facebook.com/{config.api_version}{path}"
+    request_payload = normalize_write_payload(payload)
+    request_payload["access_token"] = config.access_token
+    add_app_id(config, request_payload)
+
+    try:
+        async with httpx.AsyncClient(timeout=60, verify=get_ssl_context()) as client:
+            response = await client.post(url, data=request_payload)
+    except httpx.HTTPError as error:
+        raise MetaApiError(f"Could not reach Meta API: {error}") from error
+
+    if response.status_code >= 400:
+        raise MetaApiError(extract_meta_error(response))
+
+    return response.json()
+
+
+def normalize_write_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, (dict, list)):
+            normalized[key] = json_dumps(value)
+        elif value is not None:
+            normalized[key] = value
+    return normalized
+
+
+def json_dumps(value: Any) -> str:
+    import json
+
+    return json.dumps(value, separators=(",", ":"))
 
 
 def extract_meta_error(response: httpx.Response) -> str:

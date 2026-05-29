@@ -118,3 +118,41 @@ def test_execute_campaign_approval_dry_run_requires_approval(monkeypatch, tmp_pa
     assert payload["result"]["ok"] is True
     assert payload["result"]["dryRun"] is True
     assert payload["result"]["created"] == []
+
+
+def test_execute_campaign_approval_blocks_live_when_env_is_disabled(monkeypatch, tmp_path):
+    bind_tmp_approval_store(monkeypatch, tmp_path)
+    monkeypatch.delenv("META_LIVE_WRITES_ENABLED", raising=False)
+    client = TestClient(app)
+    prepared = client.post(
+        "/api/execution/prepare-campaign",
+        json={
+            "playbook": {
+                "id": "pb_api_live_block",
+                "name": "Live blocked launch",
+                "segments": [
+                    {
+                        "id": "income",
+                        "name": "Income seekers",
+                        "startingBudgetUsd": 100,
+                        "locations": ["Uzbekistan"],
+                        "placements": ["instagram_reels"],
+                        "interests": ["Marketing services and organizations"],
+                    }
+                ],
+                "rules": {"maxDailyBudgetUsd": 300},
+            }
+        },
+    ).json()
+    approval_id = prepared["approval"]["id"]
+
+    approved = client.post(f"/api/approvals/{approval_id}/approve", json={"approvedBy": "test"})
+    assert approved.status_code == 200
+
+    blocked = client.post(
+        f"/api/approvals/{approval_id}/execute",
+        json={"dryRun": False, "confirmLive": True},
+    )
+
+    assert blocked.status_code == 400
+    assert "disabled" in blocked.json()["detail"].lower()
