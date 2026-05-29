@@ -1142,6 +1142,130 @@
   margin: 16px 0 0;
 }
 
+.strategy-command-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.strategy-command-row label {
+  display: grid;
+  min-width: min(340px, 100%);
+  gap: 6px;
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.strategy-command-row select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #cfd9e7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #102033;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 800;
+  padding: 9px 10px;
+  text-transform: none;
+}
+
+.strategy-summary {
+  margin: 0 0 14px;
+  color: #334155;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.strategy-budget-list,
+.strategy-angle-list,
+.strategy-knowledge-grid,
+.knowledge-list {
+  display: grid;
+  gap: 10px;
+}
+
+.strategy-budget-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(160px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.strategy-budget-row:last-child {
+  border-bottom: 0;
+}
+
+.strategy-budget-row strong,
+.strategy-budget-row span {
+  display: block;
+}
+
+.strategy-budget-row span,
+.strategy-budget-row em {
+  color: #64748b;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.strategy-segment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.strategy-angle-list {
+  margin-top: 12px;
+}
+
+.strategy-angle-list span,
+.knowledge-list span {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.strategy-table .settings-row {
+  grid-template-columns: 0.6fr 0.9fr 1fr 1.8fr;
+}
+
+.strategy-knowledge-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.knowledge-list strong {
+  color: #172033;
+}
+
+.empty-panel {
+  min-height: 220px;
+  place-items: center;
+  text-align: center;
+}
+
+.empty-panel svg {
+  color: #0f766e;
+}
+
+.empty-panel p {
+  max-width: 520px;
+  margin: 0;
+  color: #64748b;
+  font-weight: 750;
+}
+
 .mini-metric {
   display: grid;
   gap: 4px;
@@ -1355,7 +1479,9 @@
   }
 
   .builder-grid,
-  .builder-summary {
+  .builder-summary,
+  .strategy-segment-grid,
+  .strategy-knowledge-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1397,7 +1523,13 @@
   .settings-summary-grid,
   .builder-grid,
   .builder-summary,
-  .glossary-grid {
+  .glossary-grid,
+  .strategy-segment-grid,
+  .strategy-knowledge-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-budget-row {
     grid-template-columns: 1fr;
   }
 

@@ -322,6 +322,75 @@ export interface CampaignPlaybook {
   updatedAt?: string
 }
 
+export interface LaunchStrategySegment {
+  id: string
+  name: string
+  budgetUsd: number
+  audienceHypothesis: string
+  offerAngle: string
+  ageRange: string
+  gender: string
+  geoStrategy: {
+    locations: string[]
+    recommendation: string
+    watchlist: string[]
+  }
+  recommendedPlacements: string[]
+  interestStrategy: string[]
+  creativeAngles: string[]
+  funnelReadiness: {
+    status: 'ready' | 'needs_links'
+    missing: string[]
+    trackingPlan: string
+  }
+  scaleRule: string
+  stopRule: string
+}
+
+export interface LaunchStrategy {
+  id: string
+  playbookId: string
+  playbookName: string
+  generatedAt: string
+  summary: string
+  execution: {
+    mode: string
+    requiresApproval: boolean
+    approvalChannels: string[]
+  }
+  budget: {
+    totalDailyBudgetUsd: number
+    maxDailyBudgetUsd: number
+    scalingStepPercent: number
+    scalingFrequencyDays: number
+    salesCapacityLeadsPerDay: number
+    estimatedDailyLeadLoad: number
+    split: Array<{
+      segmentId: string
+      segmentName: string
+      dailyBudgetUsd: number
+      sharePercent: number
+    }>
+  }
+  segments: LaunchStrategySegment[]
+  testMatrix: Array<{
+    day: string
+    test: string
+    decisionMetric: string
+    action: string
+  }>
+  approvalActions: ApprovalAction[]
+  risks: string[]
+  knowledgeUsed: {
+    bestPlacements: string[]
+    bestInterests: string[]
+    bestRegions: string[]
+    lessons: string[]
+    recommendations: Array<{ area?: string; title?: string; reason?: string }>
+  }
+  assumptions: string[]
+}
+
 export interface MetaSettingsAudit {
   summary: {
     campaigns: number

@@ -71,6 +71,7 @@ import type {
   DailyAdMetric,
   FunnelEventSummary,
   IconName,
+  LaunchStrategy,
   MetaSnapshot,
   MetaSettingsAudit,
   Placement,
@@ -100,6 +101,7 @@ const navItems = [
   { id: 'placements', label: 'Placements', icon: RadioTower },
   { id: 'experiments', label: 'Experiments', icon: FlaskConical },
   { id: 'campaignBuilder', label: 'Campaign Builder', icon: ClipboardCheck },
+  { id: 'strategy', label: 'Strategy', icon: Target },
   { id: 'settingsAudit', label: 'Settings Audit', icon: ClipboardCheck },
   { id: 'tracking', label: 'Tracking Health', icon: ShieldAlert },
   { id: 'alerts', label: 'Alerts', icon: AlertTriangle },
@@ -282,6 +284,7 @@ export function Dashboard({ data }: DashboardProps) {
           {activeView === 'placements' && <PlacementsView placements={placements} />}
           {activeView === 'experiments' && <ExperimentsView data={data} />}
           {activeView === 'campaignBuilder' && <CampaignBuilderView />}
+          {activeView === 'strategy' && <StrategyView />}
           {activeView === 'settingsAudit' && <SettingsAuditView />}
           {activeView === 'tracking' && <TrackingView data={data} />}
           {activeView === 'alerts' && <AlertsView data={data} />}
@@ -1455,6 +1458,221 @@ function CampaignBuilderView() {
         </div>
       </article>
     </section>
+  )
+}
+
+function StrategyView() {
+  const [playbooks, setPlaybooks] = useState<CampaignPlaybook[]>([])
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState('')
+  const [strategy, setStrategy] = useState<LaunchStrategy | null>(null)
+  const [knowledgeAvailable, setKnowledgeAvailable] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      return
+    }
+
+    void fetch('/api/playbooks')
+      .then((response) => response.ok ? response.json() : { playbooks: [] })
+      .then((result: { playbooks?: CampaignPlaybook[] }) => {
+        const nextPlaybooks = result.playbooks ?? []
+        setPlaybooks(nextPlaybooks)
+        setSelectedPlaybookId((current) => current || nextPlaybooks[0]?.id || '')
+      })
+      .catch(() => {
+        setPlaybooks([])
+        setMessage('Could not load saved playbooks.')
+      })
+  }, [])
+
+  const selectedPlaybook = playbooks.find((playbook) => playbook.id === selectedPlaybookId) ?? playbooks[0]
+  const selectedPlaybookHasSegments = Boolean(selectedPlaybook?.segments?.length)
+
+  const generateStrategy = async () => {
+    if (isGenerating) {
+      return
+    }
+    if (!selectedPlaybookHasSegments) {
+      setMessage('Add at least one segment in Campaign Builder before generating a launch strategy.')
+      return
+    }
+
+    setIsGenerating(true)
+    setMessage('Generating approval-ready strategy...')
+    try {
+      const response = await fetch('/api/strategy/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playbook: selectedPlaybook ?? null }),
+      })
+      const result = (await response.json()) as { ok?: boolean; strategy?: LaunchStrategy; knowledgeAvailable?: boolean; error?: string }
+      if (!response.ok || !result.ok || !result.strategy) {
+        setMessage(result.error ?? `Strategy generation failed with ${response.status}`)
+        return
+      }
+      setStrategy(result.strategy)
+      setKnowledgeAvailable(Boolean(result.knowledgeAvailable))
+      setMessage(result.knowledgeAvailable ? 'Strategy generated from saved Meta knowledge.' : 'Strategy generated from playbook defaults; sync Meta for stronger evidence.')
+    } catch {
+      setMessage('Could not reach the strategy endpoint.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  return (
+    <section className="dashboard-grid">
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Agent Strategy" title="Approval-ready launch plan" icon={Target} />
+        <div className="strategy-command-row">
+          <label>
+            <span>Playbook</span>
+            <select value={selectedPlaybook?.id ?? ''} onChange={(event) => setSelectedPlaybookId(event.target.value)}>
+              {playbooks.map((playbook) => (
+                <option value={playbook.id} key={playbook.id}>
+                  {playbook.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="sync-button" type="button" onClick={generateStrategy} disabled={isGenerating || !selectedPlaybookHasSegments}>
+            <TrendingUp size={16} />
+            {isGenerating ? 'Generating...' : 'Generate strategy'}
+          </button>
+          {message && <small className="sync-message">{message}</small>}
+        </div>
+      </article>
+
+      {strategy ? (
+        <>
+          <article className="panel panel-wide">
+            <PanelHeading eyebrow="Launch Summary" title={strategy.playbookName} icon={Gauge} />
+            <p className="strategy-summary">{strategy.summary}</p>
+            <div className="builder-summary">
+              <MiniMetric label="Daily budget" value={formatCurrency(strategy.budget.totalDailyBudgetUsd)} />
+              <MiniMetric label="Max daily budget" value={formatCurrency(strategy.budget.maxDailyBudgetUsd)} />
+              <MiniMetric label="Lead load estimate" value={strategy.budget.estimatedDailyLeadLoad.toLocaleString()} />
+              <MiniMetric label="Approval mode" value={strategy.execution.requiresApproval ? 'Required' : 'Optional'} />
+            </div>
+          </article>
+
+          <article className="panel panel-wide">
+            <PanelHeading eyebrow="Budget Split" title="Segment allocation" icon={CircleDollarSign} />
+            <div className="strategy-budget-list">
+              {strategy.budget.split.map((item) => (
+                <div className="strategy-budget-row" key={item.segmentId}>
+                  <div>
+                    <strong>{item.segmentName}</strong>
+                    <span>{formatCurrency(item.dailyBudgetUsd)} / day</span>
+                  </div>
+                  <div className="funnel-track">
+                    <div className="funnel-fill" style={{ width: `${Math.max(4, item.sharePercent)}%` }} />
+                  </div>
+                  <em>{item.sharePercent.toFixed(1)}%</em>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <section className="strategy-segment-grid">
+            {strategy.segments.map((segment) => (
+              <article className="panel" key={segment.id}>
+                <PanelHeading eyebrow="Segment Strategy" title={segment.name} icon={Users} />
+                <div className="metric-list">
+                  <div><strong>Budget</strong><span>{formatCurrency(segment.budgetUsd)} / day</span></div>
+                  <div><strong>Audience</strong><span>{segment.audienceHypothesis}</span></div>
+                  <div><strong>Age / gender</strong><span>{segment.ageRange} / {segment.gender}</span></div>
+                  <div><strong>Geo</strong><span>{segment.geoStrategy.recommendation}</span></div>
+                  <div><strong>Placements</strong><span>{segment.recommendedPlacements.map(labelRawSetting).join(', ')}</span></div>
+                  <div><strong>Interests</strong><span>{segment.interestStrategy.slice(0, 4).join(', ')}</span></div>
+                  <div><strong>Funnel</strong><span>{segment.funnelReadiness.status === 'ready' ? 'Ready' : `Missing ${segment.funnelReadiness.missing.join(', ')}`}</span></div>
+                </div>
+                <div className="strategy-angle-list">
+                  {segment.creativeAngles.map((angle) => <span key={angle}>{angle}</span>)}
+                </div>
+              </article>
+            ))}
+          </section>
+
+          <article className="panel panel-wide">
+            <PanelHeading eyebrow="Testing Plan" title="First review window" icon={FlaskConical} />
+            <div className="settings-table strategy-table">
+              <div className="settings-row settings-head">
+                <span>Window</span>
+                <span>Test</span>
+                <span>Decision metric</span>
+                <span>Action</span>
+              </div>
+              {strategy.testMatrix.map((item) => (
+                <div className="settings-row" key={`${item.day}-${item.test}`}>
+                  <span>{item.day}</span>
+                  <span>{item.test}</span>
+                  <span>{labelEventName(item.decisionMetric)}</span>
+                  <span>{item.action}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel">
+            <PanelHeading eyebrow="Risks" title="What can break the launch" icon={AlertTriangle} />
+            <div className="insight-list">
+              {(strategy.risks.length ? strategy.risks : ['No major launch risks detected from the current playbook.']).map((risk) => (
+                <div className="insight-item warning" key={risk}>
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>Watchpoint</strong>
+                    <p>{risk}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel">
+            <PanelHeading eyebrow="Approval Queue" title="Human-controlled actions" icon={ShieldAlert} />
+            <div className="action-list">
+              {strategy.approvalActions.map((action) => (
+                <div className={`action-item ${action.risk}`} key={action.id}>
+                  <strong>{action.title}</strong>
+                  <p>{action.impact}</p>
+                  <span>{labelRawSetting(action.status)} · {action.owner}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel panel-wide">
+            <PanelHeading eyebrow="Knowledge Used" title={knowledgeAvailable ? 'Saved Meta evidence' : 'Playbook defaults'} icon={BookOpen} />
+            <div className="strategy-knowledge-grid">
+              <KnowledgeList title="Placements" items={strategy.knowledgeUsed.bestPlacements} />
+              <KnowledgeList title="Interests" items={strategy.knowledgeUsed.bestInterests} />
+              <KnowledgeList title="Regions" items={strategy.knowledgeUsed.bestRegions} />
+              <KnowledgeList title="Lessons" items={strategy.knowledgeUsed.lessons} />
+            </div>
+          </article>
+        </>
+      ) : (
+        <article className="panel panel-wide empty-panel">
+          <Bot size={28} />
+          <strong>No strategy generated yet</strong>
+          <p>{selectedPlaybookHasSegments ? 'Choose a saved playbook and generate the first approval-ready campaign strategy.' : 'Add configurable segments in Campaign Builder, save the playbook, then generate the launch strategy.'}</p>
+        </article>
+      )}
+    </section>
+  )
+}
+
+function KnowledgeList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="knowledge-list">
+      <strong>{title}</strong>
+      {(items.length ? items : ['Waiting for more saved evidence.']).map((item) => (
+        <span key={item}>{item}</span>
+      ))}
+    </div>
   )
 }
 

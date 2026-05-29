@@ -30,6 +30,7 @@ from .meta_client import (
 from .playbook_store import load_playbooks, save_playbook
 from .settings_audit import build_settings_audit
 from .snapshot_store import build_snapshot_payload, list_snapshots, save_snapshot
+from .strategy_generator import generate_launch_strategy
 
 SYNC_END_DATE = date.today()
 
@@ -69,6 +70,10 @@ class MetaSyncRequest(BaseModel):
 
 class CampaignPlaybookRequest(BaseModel):
     playbook: dict[str, Any]
+
+
+class StrategyRequest(BaseModel):
+    playbook: dict[str, Any] | None = None
 
 
 class FunnelEventRequest(BaseModel):
@@ -446,6 +451,17 @@ def campaign_playbooks() -> dict[str, Any]:
 @app.post("/api/playbooks")
 def upsert_campaign_playbook(request: CampaignPlaybookRequest) -> dict[str, Any]:
     return {"playbook": save_playbook(request.playbook)}
+
+
+@app.post("/api/strategy/generate")
+def generate_strategy(request: StrategyRequest) -> dict[str, Any]:
+    playbook = request.playbook or load_playbooks()[0]
+    knowledge = load_knowledge_base()
+    return {
+        "ok": True,
+        "strategy": generate_launch_strategy(playbook, knowledge),
+        "knowledgeAvailable": bool(knowledge),
+    }
 
 
 async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:
