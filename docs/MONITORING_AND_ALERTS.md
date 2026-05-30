@@ -19,6 +19,9 @@ The first rule set intentionally stays narrow:
 
 - High severity: cost per lead rises by more than 35% while Telegram START rate falls by more than 25%.
 - Medium severity: cost per click rises by more than 75%.
+- Medium severity: Meta leads exist but Telegram START tracking is still zero, which means the agent cannot judge downstream lead quality.
+
+The runner ignores completed historical campaigns when active/paused campaign metadata is available. This keeps monitoring focused on campaigns that can still affect current decisions.
 
 These rules are not final strategy decisions. They are attention signals. The agent should explain why a metric may be moving and suggest two or three controlled next actions.
 

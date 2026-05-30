@@ -7,6 +7,10 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def build_approval_notification(approval: dict[str, Any]) -> dict[str, Any]:
     campaign = approval.get("after", {}).get("campaign", {})

@@ -43,11 +43,18 @@ def run_monitoring_check(
 
 def build_monitoring_snapshots(dashboard_data: dict[str, Any]) -> list[dict[str, Any]]:
     campaign_names = {str(campaign.get("id")): campaign.get("name") for campaign in dashboard_data.get("campaigns", [])}
+    eligible_campaign_ids = {
+        str(campaign.get("id"))
+        for campaign in dashboard_data.get("campaigns", [])
+        if str(campaign.get("status", "active")).lower() in {"active", "paused"}
+    }
     grouped: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for row in dashboard_data.get("metrics", []):
         campaign_id = str(row.get("campaignId") or row.get("campaign_id") or "")
         date = str(row.get("date") or row.get("date_start") or "")
         if not campaign_id or not date:
+            continue
+        if eligible_campaign_ids and campaign_id not in eligible_campaign_ids:
             continue
         grouped.setdefault(campaign_id, {}).setdefault(date, []).append(row)
 

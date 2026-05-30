@@ -56,6 +56,26 @@ def evaluate_monitoring_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any
             )
         )
 
+    if current.get("leads", 0) and previous.get("leads", 0) and not current.get("telegramStarts", 0) and not previous.get("telegramStarts", 0):
+        alerts.append(
+            build_alert(
+                snapshot,
+                severity="medium",
+                title=f"Telegram START tracking is missing for {campaign_name}",
+                metric_deltas={
+                    "currentLeads": current.get("leads", 0),
+                    "previousLeads": previous.get("leads", 0),
+                    "currentTelegramStarts": current.get("telegramStarts", 0),
+                    "previousTelegramStarts": previous.get("telegramStarts", 0),
+                },
+                recommended_actions=[
+                    "Verify Telegram bot START webhook or ChatPlace event mapping.",
+                    "Confirm landing Telegram links preserve visitor IDs.",
+                    "Do not scale from Meta leads alone until START quality is visible.",
+                ],
+            )
+        )
+
     return alerts
 
 

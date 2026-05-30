@@ -41,3 +41,17 @@ def test_no_alert_when_quality_is_stable():
     alerts = evaluate_monitoring_snapshot(snapshot)
 
     assert alerts == []
+
+
+def test_alerts_when_leads_exist_but_telegram_start_tracking_is_missing():
+    snapshot = {
+        "campaignId": "cmp_3",
+        "campaignName": "Creator VSL",
+        "current": {"spend": 100, "leads": 60, "telegramStarts": 0, "clicks": 300},
+        "previous": {"spend": 100, "leads": 55, "telegramStarts": 0, "clicks": 280},
+    }
+
+    alerts = evaluate_monitoring_snapshot(snapshot)
+
+    assert alerts[0]["severity"] == "medium"
+    assert "Telegram START tracking is missing" in alerts[0]["title"]

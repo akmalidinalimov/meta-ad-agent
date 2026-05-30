@@ -21,7 +21,9 @@ from .approval_store import (
     request_changes,
     update_approval_request,
 )
+from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config
 from .chatplace_events import normalize_chatplace_event
+from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
 from .funnel_events import build_funnel_summary, save_funnel_event
 from .knowledge_base import load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
@@ -686,6 +688,38 @@ def agents() -> dict[str, Any]:
         "approvalRequiredForLiveChanges": True,
         "liveWriteScope": "paused_campaign_and_adset_creation_only" if live_writes_enabled else "disabled",
     }
+
+
+@app.get("/api/crm/bitrix/status")
+def bitrix_status() -> dict[str, Any]:
+    config = get_bitrix_config()
+    return {
+        "configured": config.is_configured,
+        "message": "Bitrix24 webhook URL configured." if config.is_configured else "Add BITRIX24_WEBHOOK_URL or BITRIX24_PORTAL_URL, BITRIX24_USER_ID, and BITRIX24_WEBHOOK_KEY.",
+    }
+
+
+@app.post("/api/crm/bitrix/import")
+async def bitrix_import() -> dict[str, Any]:
+    config = get_bitrix_config()
+    if not config.is_configured:
+        raise HTTPException(status_code=400, detail="Bitrix24 webhook URL is not configured.")
+    leads = await fetch_bitrix_leads(transport=build_bitrix_transport(config))
+    saved = save_crm_leads(leads, storage_dir=CRM_STORAGE_DIR)
+    return {
+        "ok": True,
+        "imported": len(saved),
+        "leads": saved,
+    }
+
+
+@app.get("/api/crm/leads")
+def crm_leads() -> dict[str, Any]:
+    return {"leads": list_crm_leads(storage_dir=CRM_STORAGE_DIR)}
+
+
+def build_bitrix_transport(config: Any) -> Any:
+    return HttpBitrixTransport(config)
 
 
 @app.get("/api/tasks")

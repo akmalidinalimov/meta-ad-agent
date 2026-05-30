@@ -67,3 +67,23 @@ def test_monitoring_alerts_endpoint_returns_empty_list_before_run(monkeypatch, t
 
     assert response.status_code == 200
     assert response.json()["alerts"] == []
+
+
+def test_monitoring_ignores_completed_old_campaigns(tmp_path):
+    dashboard = {
+        "campaigns": [
+            {"id": "old_cmp", "name": "Old completed", "status": "completed"},
+            {"id": "active_cmp", "name": "Active", "status": "active"},
+        ],
+        "metrics": [
+            {"date": "2026-01-01", "campaignId": "old_cmp", "spendUsd": 10, "clicks": 100, "leads": 20, "telegramSubscribers": 10},
+            {"date": "2026-01-02", "campaignId": "old_cmp", "spendUsd": 50, "clicks": 10, "leads": 1, "telegramSubscribers": 0},
+            {"date": "2026-05-29", "campaignId": "active_cmp", "spendUsd": 100, "clicks": 200, "leads": 40, "telegramSubscribers": 20},
+            {"date": "2026-05-30", "campaignId": "active_cmp", "spendUsd": 100, "clicks": 205, "leads": 39, "telegramSubscribers": 20},
+        ],
+    }
+
+    result = run_monitoring_check(dashboard, storage_dir=tmp_path / "storage")
+
+    assert result["snapshotsChecked"] == 1
+    assert result["alerts"] == []
