@@ -18,6 +18,8 @@ storage/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+test-results/
+playwright-report/
 
 # Editor directories and files
 .vscode/*
