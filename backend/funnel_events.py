@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .crm_store import list_crm_leads
+
 ROOT = Path(__file__).resolve().parents[1]
 STORAGE_DIR = ROOT / "storage"
 FUNNEL_EVENTS_PATH = STORAGE_DIR / "funnel_events.jsonl"
@@ -111,6 +113,7 @@ def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
     telegram_users = set()
     visitors_by_event: dict[str, set[str]] = defaultdict(set)
     event_steps: list[dict[str, Any]] = []
+    crm = build_crm_summary(storage_dir=storage_dir)
 
     for event in events:
         event_name = event.get("eventName", "unknown")
@@ -147,7 +150,28 @@ def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
             "formClickRate": visitor_rate(visitors_by_event, "form_button_click", "vsl_key_message_sent"),
             "qualifiedLeadRate": visitor_rate(visitors_by_event, "qualified_lead", "form_button_click"),
             "fullPaymentRate": visitor_rate(visitors_by_event, "full_payment", "qualified_lead"),
+            "crmAttributedLeadRate": rate(crm["attributedLeads"], len(visitors_by_event["form_button_click"])),
         },
+        "crm": crm,
+    }
+
+
+def build_crm_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
+    leads = list_crm_leads(storage_dir=storage_dir)
+    events = load_funnel_events(storage_dir=storage_dir)
+    known_visitors = {str(event.get("visitorId")) for event in events if event.get("visitorId")}
+    known_telegram_users = {str(event.get("telegramUserId")) for event in events if event.get("telegramUserId")}
+    stages = Counter(str(lead.get("stage") or "unknown") for lead in leads)
+    attributed = [
+        lead
+        for lead in leads
+        if (lead.get("visitorId") and str(lead["visitorId"]) in known_visitors)
+        or (lead.get("telegramUserId") and str(lead["telegramUserId"]) in known_telegram_users)
+    ]
+    return {
+        "totalLeads": len(leads),
+        "attributedLeads": len(attributed),
+        "stages": dict(stages),
     }
 
 

@@ -1983,6 +1983,36 @@ function TrackingView({ data }: { data: DashboardData }) {
           <MiniMetric label="Key message reach" value={formatRate(funnelEvents?.rates?.keyMessageReachRate)} />
           <MiniMetric label="Form click rate" value={formatRate(funnelEvents?.rates?.formClickRate)} />
           <MiniMetric label="Qualified lead rate" value={formatRate(funnelEvents?.rates?.qualifiedLeadRate)} />
+          <MiniMetric label="CRM attributed lead rate" value={formatRate(funnelEvents?.rates?.crmAttributedLeadRate)} />
+        </div>
+      </article>
+      <article className="panel">
+        <PanelHeading eyebrow="CRM Join" title="Bitrix lead attribution" icon={Users} />
+        <div className="settings-summary-grid">
+          <MiniMetric label="CRM leads" value={(funnelEvents?.crm?.totalLeads ?? 0).toLocaleString()} />
+          <MiniMetric label="Joined leads" value={(funnelEvents?.crm?.attributedLeads ?? 0).toLocaleString()} />
+          <MiniMetric label="Tracked stages" value={Object.keys(funnelEvents?.crm?.stages ?? {}).length.toLocaleString()} />
+        </div>
+        <div className="insight-list compact">
+          {Object.entries(funnelEvents?.crm?.stages ?? {}).length > 0 ? (
+            Object.entries(funnelEvents?.crm?.stages ?? {}).map(([stage, count]) => (
+              <div className="insight-item neutral" key={stage}>
+                <Users size={18} />
+                <div>
+                  <strong>{stage}</strong>
+                  <p>{count.toLocaleString()} leads in this CRM stage.</p>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="insight-item warning">
+              <AlertTriangle size={18} />
+              <div>
+                <strong>Waiting for CRM imports</strong>
+                <p>Import Bitrix leads with visitor or Telegram IDs to connect sales stages to ad traffic.</p>
+              </div>
+            </div>
+          )}
         </div>
       </article>
       <article className="panel panel-wide">

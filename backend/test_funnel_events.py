@@ -95,4 +95,29 @@ def test_funnel_summary_calculates_downstream_rates(tmp_path):
         "formClickRate": 100,
         "qualifiedLeadRate": 0,
         "fullPaymentRate": 0,
+        "crmAttributedLeadRate": 0.0,
     }
+
+
+def test_funnel_summary_joins_crm_leads_by_visitor_and_stage(tmp_path):
+    from backend.crm_store import save_crm_leads
+
+    storage_dir = tmp_path / "storage"
+    save_funnel_event({"event_name": "telegram_link_click", "visitor_id": "v1"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "bot_start", "visitor_id": "v1", "telegram_user_id": "tg1"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "form_button_click", "visitor_id": "v1", "telegram_user_id": "tg1"}, storage_dir=storage_dir)
+    save_crm_leads(
+        [
+            {"crm": "bitrix24", "crmLeadId": "101", "visitorId": "v1", "telegramUserId": "tg1", "stage": "NEW"},
+            {"crm": "bitrix24", "crmLeadId": "102", "visitorId": "v2", "telegramUserId": "tg2", "stage": "FULL_PAID"},
+        ],
+        storage_dir=storage_dir,
+    )
+
+    summary = build_funnel_summary(storage_dir=storage_dir)
+
+    assert summary["crm"]["totalLeads"] == 2
+    assert summary["crm"]["attributedLeads"] == 1
+    assert summary["crm"]["stages"]["NEW"] == 1
+    assert summary["crm"]["stages"]["FULL_PAID"] == 1
+    assert summary["rates"]["crmAttributedLeadRate"] == 100

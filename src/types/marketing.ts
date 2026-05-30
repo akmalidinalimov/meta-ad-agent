@@ -580,5 +580,11 @@ export interface FunnelEventSummary {
     formClickRate: number
     qualifiedLeadRate: number
     fullPaymentRate: number
+    crmAttributedLeadRate?: number
+  }
+  crm?: {
+    totalLeads: number
+    attributedLeads: number
+    stages: Record<string, number>
   }
 }
