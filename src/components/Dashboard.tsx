@@ -2027,9 +2027,40 @@ function TrackingView({ data }: { data: DashboardData }) {
 function AlertsView({ data }: { data: DashboardData }) {
   return (
     <section className="bottom-grid">
+      <MonitoringAlertsPanel data={data} />
       <TopProblemsPanel data={data} />
       <InsightsPanel data={data} />
     </section>
+  )
+}
+
+function MonitoringAlertsPanel({ data }: { data: DashboardData }) {
+  const alerts = data.monitoringAlerts ?? []
+  return (
+    <article className="panel">
+      <PanelHeading eyebrow="Monitoring Alerts" title="Latest campaign health warnings" icon={AlertTriangle} />
+      <div className="insight-list">
+        {alerts.length === 0 ? (
+          <div className="insight-item good">
+            <CheckCircle2 size={18} />
+            <div>
+              <strong>No monitoring alerts</strong>
+              <p>Run the monitoring check to detect rising costs, falling Telegram START quality, or creative fatigue.</p>
+            </div>
+          </div>
+        ) : (
+          alerts.slice(0, 5).map((alert) => (
+            <div className={`insight-item ${alert.severity === 'high' ? 'danger' : alert.severity === 'medium' ? 'warning' : 'neutral'}`} key={alert.id}>
+              <AlertTriangle size={18} />
+              <div>
+                <strong>{alert.title}</strong>
+                <p>{alert.recommendedActions.slice(0, 2).join(' ')}</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </article>
   )
 }
 

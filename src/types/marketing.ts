@@ -203,6 +203,18 @@ export interface AgentInsight {
   tone: Tone
 }
 
+export interface MonitoringAlert {
+  id: string
+  campaignId?: string
+  campaignName?: string
+  severity: 'low' | 'medium' | 'high'
+  title: string
+  metricDeltas?: Record<string, number | string>
+  recommendedActions: string[]
+  createdAt: string
+  status: 'open' | 'acknowledged' | 'resolved'
+}
+
 export interface ExperimentRecommendation {
   title: string
   metric: string
@@ -258,6 +270,7 @@ export interface DashboardData {
   insights: AgentInsight[]
   experiments: ExperimentRecommendation[]
   trackingHealth: TrackingHealthItem[]
+  monitoringAlerts?: MonitoringAlert[]
   approvalActions: ApprovalAction[]
   glossary: MetricGlossaryItem[]
   dataSource?: {

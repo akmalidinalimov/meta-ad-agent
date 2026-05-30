@@ -31,6 +31,7 @@ from .meta_execution import (
     execute_meta_action_approval,
     payload_for_meta_action,
 )
+from .monitoring_runner import list_monitoring_alerts, run_monitoring_check
 from .meta_client import (
     MetaApiError,
     get_ad_account_summary,
@@ -692,6 +693,16 @@ def agent_tasks() -> dict[str, Any]:
     return {"tasks": list_agent_tasks()}
 
 
+@app.get("/api/monitoring/alerts")
+def monitoring_alerts() -> dict[str, Any]:
+    return {"alerts": list_monitoring_alerts()}
+
+
+@app.post("/api/monitoring/run")
+def run_monitoring() -> dict[str, Any]:
+    return run_monitoring_check(dashboard(), send_alert=send_telegram_message_sync)
+
+
 @app.post("/api/tasks")
 def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
     command = request.command.strip()
@@ -1121,6 +1132,7 @@ def dashboard() -> dict[str, Any]:
         "insights": insights,
         "experiments": experiments,
         "trackingHealth": tracking_health,
+        "monitoringAlerts": list_monitoring_alerts(),
         "approvalActions": approval_actions,
         "glossary": glossary,
         "dataSource": {
@@ -1336,6 +1348,7 @@ def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
         "insights": insights_real,
         "experiments": experiments_real,
         "trackingHealth": tracking_real,
+        "monitoringAlerts": list_monitoring_alerts(),
         "approvalActions": actions_real,
         "glossary": glossary,
         "dataSource": {
