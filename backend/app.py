@@ -635,7 +635,7 @@ async def execute_meta_action_approval_request(
     request: ApprovalExecutionRequest,
     config: Any,
 ) -> dict[str, Any]:
-    if approval.get("status") != "approved":
+    if approval.get("status") not in {"approved", "dry_run_completed"}:
         return {"ok": False, "error": "Specific approval is required before execution."}
     if approval.get("guardrailResult") == "fail":
         return {"ok": False, "error": "Guardrail failed; execution is blocked."}

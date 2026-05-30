@@ -72,7 +72,7 @@ async def execute_campaign_creation_approval(
     create_campaign: MetaCreateFn | None = None,
     create_ad_set: MetaCreateFn | None = None,
 ) -> dict[str, Any]:
-    if approval_request.get("status") != "approved":
+    if not is_execution_approved_status(approval_request.get("status")):
         return {"ok": False, "error": "Specific approval is required before execution."}
     if approval_request.get("guardrailResult") == "fail":
         return {"ok": False, "error": "Guardrail failed; execution is blocked."}
@@ -138,7 +138,7 @@ async def execute_campaign_creation_approval(
 
 
 async def execute_meta_action_approval(approval: dict[str, Any], *, writer: Any) -> dict[str, Any]:
-    if approval.get("status") != "approved":
+    if not is_execution_approved_status(approval.get("status")):
         return {"ok": False, "blockedReason": "Approval must be approved before execution."}
 
     target = approval.get("target") or {}
@@ -181,6 +181,10 @@ def payload_for_meta_action(action_type: str | None, after: dict[str, Any]) -> d
     if action_type == "change_meta_budget" and after.get("daily_budget_usd") is not None:
         return {"daily_budget": int(round(float(after["daily_budget_usd"]) * 100))}
     return {}
+
+
+def is_execution_approved_status(status: Any) -> bool:
+    return status in {"approved", "dry_run_completed"}
 
 
 def guardrail_checks(playbook: dict[str, Any], adsets: list[dict[str, Any]]) -> list[dict[str, Any]]:
