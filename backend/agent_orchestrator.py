@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .agent_quality import evaluate_agent_response
 from .chat_campaign_planner import build_playbook_from_chat, can_build_playbook_from_chat
 from .meta_action_planner import build_action_approval, plan_meta_action
 from .strategy_generator import generate_launch_strategy
@@ -418,7 +419,7 @@ def response(
     sources: list[str],
     suggested: list[str],
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "activeAgent": routed["agentId"],
         "routeReason": routed["reason"],
         "answer": answer,
@@ -426,6 +427,8 @@ def response(
         "suggestedQuestions": suggested,
         "agentHandoffs": build_agent_handoffs(routed["agentId"]),
     }
+    payload["quality"] = evaluate_agent_response(payload)
+    return payload
 
 
 def build_agent_handoffs(agent_id: str) -> list[dict[str, Any]]:

@@ -88,6 +88,26 @@ Current handoff behavior:
 
 Handoffs are not live execution. They are structured collaboration instructions. Any Meta change still requires the normal approval and execution policy.
 
+## Orchestrator Output Quality
+
+Every orchestrator-handled response now includes a lightweight `quality` object:
+
+```json
+{
+  "score": 100,
+  "status": "usable",
+  "issues": []
+}
+```
+
+Quality statuses:
+
+- `usable`: the response has an active agent, route reason, answer, sources, and suggested next steps.
+- `needs_refinement`: the response is usable as a draft but missing important evidence or next-step structure.
+- `blocked`: the response is missing the answer itself or another critical field.
+
+This is not an LLM judge. It is a deterministic structural gate that prevents thin agent output from silently becoming campaign strategy. Future work can add deeper answer-quality checks against real Meta, funnel, and CRM data.
+
 If the orchestrator does not need to intervene, chat falls back to the existing knowledge-base and LLM analysis path.
 
 ## Execution Safety

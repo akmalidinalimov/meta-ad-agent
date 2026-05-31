@@ -193,3 +193,5 @@ def test_agent_handoffs_are_structured_for_meta_ai_advisor():
         "expectedOutput",
         "confidence",
     }
+    assert response["quality"]["status"] == "usable"
+    assert response["quality"]["score"] >= 95
