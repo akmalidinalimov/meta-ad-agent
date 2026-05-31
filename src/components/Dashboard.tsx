@@ -37,11 +37,13 @@ import {
   LineChart,
   Pie,
   PieChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
+import { ChartFrame } from './dashboard/shared/ChartFrame'
+import { MediaThumb } from './dashboard/shared/MediaThumb'
+import { PanelHeading } from './dashboard/shared/PanelHeading'
 import {
   deriveCreativeScores,
   deriveFunnel,
@@ -647,18 +649,16 @@ function TrendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
   return (
     <article className="panel">
       <PanelHeading eyebrow="Trend" title="Spend, leads, buyers" icon={TrendingUp} />
-      <div className="chart-box">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 640, height: 268 }}>
-          <LineChart data={trend}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="day" tickLine={false} axisLine={false} />
-            <YAxis tickLine={false} axisLine={false} />
-            <Tooltip />
-            <Line type="monotone" dataKey="leads" stroke="#1f9d8a" strokeWidth={3} dot={false} />
-            <Line type="monotone" dataKey="buyers" stroke="#ef4444" strokeWidth={3} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      <ChartFrame>
+        <LineChart data={trend}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="day" tickLine={false} axisLine={false} />
+          <YAxis tickLine={false} axisLine={false} />
+          <Tooltip />
+          <Line type="monotone" dataKey="leads" stroke="#1f9d8a" strokeWidth={3} dot={false} />
+          <Line type="monotone" dataKey="buyers" stroke="#ef4444" strokeWidth={3} dot={false} />
+        </LineChart>
+      </ChartFrame>
     </article>
   )
 }
@@ -741,18 +741,16 @@ function PlacementPanel({ placements }: { placements: ReturnType<typeof derivePl
   return (
     <article className="panel">
       <PanelHeading eyebrow="Placement" title="Spend share by channel" icon={RadioTower} />
-      <div className="chart-box">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 640, height: 268 }}>
-          <PieChart>
-            <Pie data={placements} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88}>
-              {placements.map((entry, index) => (
-                <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
-              ))}
-            </Pie>
-            <Tooltip />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
+      <ChartFrame>
+        <PieChart>
+          <Pie data={placements} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88}>
+            {placements.map((entry, index) => (
+              <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
+            ))}
+          </Pie>
+          <Tooltip />
+        </PieChart>
+      </ChartFrame>
       <ChartLegend placements={placements} />
     </article>
   )
@@ -775,18 +773,16 @@ function AudiencePanel({ data }: { data: DashboardData }) {
   return (
     <article className="panel panel-wide">
       <PanelHeading eyebrow="Audience Quality" title="Purchasing power by segment" icon={Users} />
-      <div className="chart-box tall">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 720, height: 318 }}>
-          <BarChart data={data.audience}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="segment" tickLine={false} axisLine={false} />
-            <YAxis tickLine={false} axisLine={false} />
-            <Tooltip />
-            <Bar dataKey="subs" fill="#3b82f6" radius={[5, 5, 0, 0]} />
-            <Bar dataKey="buyers" fill="#1f9d8a" radius={[5, 5, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+      <ChartFrame tall>
+        <BarChart data={data.audience}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="segment" tickLine={false} axisLine={false} />
+          <YAxis tickLine={false} axisLine={false} />
+          <Tooltip />
+          <Bar dataKey="subs" fill="#3b82f6" radius={[5, 5, 0, 0]} />
+          <Bar dataKey="buyers" fill="#1f9d8a" radius={[5, 5, 0, 0]} />
+        </BarChart>
+      </ChartFrame>
     </article>
   )
 }
@@ -795,17 +791,15 @@ function SpendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
   return (
     <article className="panel">
       <PanelHeading eyebrow="Spend Curve" title="Budget pressure" icon={CircleDollarSign} />
-      <div className="chart-box">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 640, height: 268 }}>
-          <AreaChart data={trend}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="day" tickLine={false} axisLine={false} />
-            <YAxis tickLine={false} axisLine={false} />
-            <Tooltip />
-            <Area type="monotone" dataKey="spend" stroke="#7c3aed" fill="#ddd6fe" strokeWidth={3} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+      <ChartFrame>
+        <AreaChart data={trend}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="day" tickLine={false} axisLine={false} />
+          <YAxis tickLine={false} axisLine={false} />
+          <Tooltip />
+          <Area type="monotone" dataKey="spend" stroke="#7c3aed" fill="#ddd6fe" strokeWidth={3} />
+        </AreaChart>
+      </ChartFrame>
     </article>
   )
 }
@@ -1197,29 +1191,6 @@ function RankingTable({ rows }: { rows: RankingRow[] }) {
   )
 }
 
-function MediaThumb({
-  assetUrl,
-  videoUrl,
-  videoId,
-  format,
-}: {
-  assetUrl?: string
-  videoUrl?: string
-  videoId?: string
-  format: Creative['format']
-}) {
-  const hasPlayableVideo = Boolean(videoUrl)
-
-  return (
-    <span className={`creative-thumb ${assetUrl ? 'has-image' : ''}`} aria-label={`${format} creative preview`}>
-      {assetUrl ? <img src={assetUrl} alt="" loading="lazy" /> : <Film size={18} />}
-      {hasPlayableVideo && <i aria-label="Playable video">▶</i>}
-      {!hasPlayableVideo && videoId && <span title="Video ID exists, but source URL is unavailable">ID</span>}
-      {!assetUrl && <small>{format}</small>}
-    </span>
-  )
-}
-
 function CreativePreview({ creative }: { creative: Creative }) {
   const [videoAsset, setVideoAsset] = useState<{ creativeId: string; videoUrl?: string; posterUrl?: string } | null>(null)
   const fetchedAsset = videoAsset?.creativeId === creative.id ? videoAsset : null
@@ -1319,18 +1290,16 @@ function PlacementsView({ placements }: { placements: ReturnType<typeof derivePl
       <PlacementPanel placements={placements} />
       <article className="panel panel-wide">
         <PanelHeading eyebrow="Placement Efficiency" title="Spend share vs buyers" icon={BarChart3} />
-        <div className="chart-box tall">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 720, height: 318 }}>
-            <BarChart data={placements}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" tickLine={false} axisLine={false} />
-              <YAxis tickLine={false} axisLine={false} />
-              <Tooltip />
-              <Bar dataKey="value" fill="#3b82f6" radius={[5, 5, 0, 0]} />
-              <Bar dataKey="buyers" fill="#1f9d8a" radius={[5, 5, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <ChartFrame tall>
+          <BarChart data={placements}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="name" tickLine={false} axisLine={false} />
+            <YAxis tickLine={false} axisLine={false} />
+            <Tooltip />
+            <Bar dataKey="value" fill="#3b82f6" radius={[5, 5, 0, 0]} />
+            <Bar dataKey="buyers" fill="#1f9d8a" radius={[5, 5, 0, 0]} />
+          </BarChart>
+        </ChartFrame>
       </article>
     </section>
   )
@@ -2470,26 +2439,6 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
         ))}
       </div>
     </article>
-  )
-}
-
-function PanelHeading({
-  eyebrow,
-  title,
-  icon: Icon,
-}: {
-  eyebrow: string
-  title: string
-  icon: ComponentType<{ size?: number }>
-}) {
-  return (
-    <div className="panel-heading">
-      <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <h2>{title}</h2>
-      </div>
-      <Icon size={20} />
-    </div>
   )
 }
 
