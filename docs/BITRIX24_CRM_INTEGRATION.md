@@ -12,6 +12,7 @@ The backend now includes:
 
 - `GET /api/crm/bitrix/status`
 - `POST /api/crm/bitrix/import`
+- `GET /api/crm/bitrix/stages`
 - `GET /api/crm/leads`
 - normalized CRM lead storage in `storage/crm_leads.json`
 
@@ -24,6 +25,29 @@ Imported leads preserve:
 - Telegram user ID/username when available
 - UTM source, medium, campaign, content, term
 - raw Bitrix24 payload for future mapping
+
+Stage discovery uses the Bitrix24 REST method `crm.status.list` with the lead status entity `STATUS`. This lets the agent copy the CRM's real stage IDs and labels before any buyer-quality mapping is created.
+
+Example stage discovery response:
+
+```json
+{
+  "ok": true,
+  "entityId": "STATUS",
+  "stages": [
+    {
+      "statusId": "NEW",
+      "name": "Ne obrabotinniy"
+    },
+    {
+      "statusId": "CONVERTED",
+      "name": "Qualified lead"
+    }
+  ]
+}
+```
+
+Do not hardcode normalized sales stages yet. First fetch the real Bitrix stages, confirm them with the sales team, then map them later into buyer-quality categories.
 
 ## Required Credentials
 

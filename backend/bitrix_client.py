@@ -79,6 +79,18 @@ async def fetch_bitrix_leads(*, transport: BitrixTransport, limit: int = 100) ->
     return [normalize_bitrix_lead(row) for row in rows[:limit]]
 
 
+async def fetch_bitrix_statuses(*, transport: BitrixTransport, entity_id: str = "STATUS") -> list[dict[str, Any]]:
+    payload = await transport.call(
+        "crm.status.list",
+        {
+            "filter": {"ENTITY_ID": entity_id},
+            "order": {"SORT": "ASC"},
+        },
+    )
+    rows = payload.get("result", [])
+    return [normalize_bitrix_status(row) for row in rows]
+
+
 def normalize_bitrix_lead(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "crm": "bitrix24",
@@ -101,12 +113,29 @@ def normalize_bitrix_lead(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_bitrix_status(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row.get("ID") or ""),
+        "entityId": str(row.get("ENTITY_ID") or ""),
+        "statusId": str(row.get("STATUS_ID") or ""),
+        "name": str(row.get("NAME") or row.get("STATUS_ID") or ""),
+        "sort": int(as_number(row.get("SORT"))),
+    }
+
+
 def first_value(value: Any) -> str:
     if isinstance(value, list) and value:
         first = value[0]
         if isinstance(first, dict):
             return str(first.get("VALUE") or "")
     return ""
+
+
+def as_number(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def custom_value(row: dict[str, Any], *keys: str) -> str:

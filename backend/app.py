@@ -21,7 +21,7 @@ from .approval_store import (
     request_changes,
     update_approval_request,
 )
-from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config
+from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, fetch_bitrix_statuses, get_bitrix_config
 from .chatplace_events import normalize_chatplace_event
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
 from .funnel_events import build_funnel_summary, save_funnel_event
@@ -713,6 +713,22 @@ async def bitrix_import() -> dict[str, Any]:
         "ok": True,
         "imported": len(saved),
         "leads": saved,
+    }
+
+
+@app.get("/api/crm/bitrix/stages")
+async def bitrix_stages(entity_id: str = "STATUS") -> dict[str, Any]:
+    config = get_bitrix_config()
+    if not config.is_configured:
+        raise HTTPException(status_code=400, detail="Bitrix24 webhook URL is not configured.")
+    try:
+        stages = await fetch_bitrix_statuses(transport=build_bitrix_transport(config), entity_id=entity_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"Bitrix24 stage discovery failed: {exc}") from exc
+    return {
+        "ok": True,
+        "entityId": entity_id,
+        "stages": stages,
     }
 
 

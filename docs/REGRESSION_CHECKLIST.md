@@ -94,7 +94,8 @@ If a change is narrow, targeted tests may run during development, but the full c
 | Feature | Status | Verification | Notes |
 | --- | --- | --- | --- |
 | `GET /api/crm/bitrix/status` gives clear configured/missing status | NOT TESTED | Backend tests/manual | Webhook key alone is not enough. |
-| `POST /api/crm/bitrix/import` imports leads when full webhook config exists | BLOCKED | Real Bitrix test | Requires Bitrix portal URL + user ID or full webhook URL. |
+| `POST /api/crm/bitrix/import` imports leads when full webhook config exists | PASS | Real Bitrix test | Imported 50 leads with current webhook; old leads have no attribution fields because tracking was added later. |
+| `GET /api/crm/bitrix/stages` fetches real Bitrix lead statuses | PASS | Backend tests/real Bitrix test | Real API returned 17 lead statuses from `crm.status.list`; mapping is intentionally postponed. |
 | `GET /api/crm/leads` returns stored normalized CRM leads | NOT TESTED | Backend tests/manual | Uses local `storage/crm_leads.json`. |
 | Funnel summary joins CRM leads by `visitorId` / `telegramUserId` | NOT TESTED | Backend tests | Needed for buyer-quality analysis. |
 | Tracking Health shows Bitrix attribution panel | NOT TESTED | Browser | Includes CRM leads, joined leads, stages, CRM attributed rate. |
@@ -151,3 +152,4 @@ Update this section after each verified checkpoint.
 | --- | --- | --- | --- | --- |
 | 2026-05-31 | Phase 1 reliability baseline | `python -m pytest backend -q`; `npm test -- --run`; `npm run lint`; `npm run build`; `npm run test:e2e` | PASS | Backend 101 passed, frontend 20 passed, lint clean, build passed with known bundle-size warning, e2e 1 passed. |
 | 2026-05-31 | Landing-to-Telegram-to-CRM attribution links | `npm test -- --run src/lib/landingTracker.test.ts`; Playwright script against `/landing-tracker-example.html`; full backend/frontend/lint/build/e2e suite | PASS | Tracker now decorates Telegram `start` and CRM form query parameters with the same `visitor_id` and Meta attribution. Backend 102 passed, frontend 21 passed, lint/build/e2e passed. |
+| 2026-06-01 | Bitrix stage discovery | `python -m pytest backend/test_bitrix_client.py backend/test_bitrix_api.py -q`; real `GET /api/crm/bitrix/stages` through TestClient | PASS | Real Bitrix returned 17 lead status labels. Stage mapping is deferred until sales team confirms meanings. |
