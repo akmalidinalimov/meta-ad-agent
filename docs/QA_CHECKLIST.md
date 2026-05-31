@@ -2,6 +2,8 @@
 
 Run this before pushing dashboard changes.
 
+For a full project regression pass, also update `docs/REGRESSION_CHECKLIST.md`.
+
 ## Commands
 
 - `npm test`
