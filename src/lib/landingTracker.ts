@@ -92,6 +92,31 @@ export function decorateTelegramUrl(url: string, visitorId: string) {
   return parsed.toString()
 }
 
+export function decorateCrmFormUrl(url: string, visitorId: string, attribution: FunnelAttribution = {}) {
+  const parsed = new URL(url)
+  const fields = compact({
+    visitor_id: visitorId,
+    segment: attribution.segment,
+    vsl_id: attribution.vslId,
+    landing_page_id: attribution.landingPageId,
+    telegram_bot_id: attribution.telegramBotId,
+    campaign_id: attribution.campaignId,
+    adset_id: attribution.adSetId,
+    ad_id: attribution.adId,
+    creative_id: attribution.creativeId,
+    utm_source: attribution.utmSource,
+    utm_medium: attribution.utmMedium,
+    utm_campaign: attribution.utmCampaign,
+    utm_content: attribution.utmContent,
+    utm_term: attribution.utmTerm,
+    fbclid: attribution.fbclid,
+  })
+  Object.entries(fields).forEach(([key, value]) => {
+    parsed.searchParams.set(key, String(value))
+  })
+  return parsed.toString()
+}
+
 export function buildFunnelEvent(
   eventName: FunnelEventName,
   visitorId: string,

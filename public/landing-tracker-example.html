@@ -20,6 +20,7 @@
       a {
         display: inline-block;
         margin-top: 24px;
+        margin-right: 12px;
         padding: 14px 18px;
         border-radius: 8px;
         background: #157a6e;
@@ -32,8 +33,9 @@
   <body>
     <main>
       <h1>Income VSL landing page</h1>
-      <p>This example shows how a real landing page can pass the visitor ID into Telegram.</p>
+      <p>This example shows how a real landing page can pass the visitor ID into Telegram and the CRM form.</p>
       <a href="https://t.me/example_bot" data-meta-agent-telegram>Watch the free video</a>
+      <a href="https://inafform.bitrix24.site/crm_form_vospb/" data-meta-agent-crm-form>Open CRM form</a>
     </main>
 
     <script>
@@ -44,6 +46,7 @@
         landingPageId: 'income_lp_01',
         telegramBotId: 'income_bot',
         telegramSelector: '[data-meta-agent-telegram]',
+        crmFormSelector: '[data-meta-agent-crm-form]',
       }
     </script>
     <script src="/landing-tracker.js"></script>

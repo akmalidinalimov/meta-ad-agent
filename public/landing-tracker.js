@@ -3,6 +3,7 @@
 
   var STORAGE_KEY = 'meta_agent_visitor_id'
   var DEFAULT_SELECTOR = '[data-meta-agent-telegram]'
+  var DEFAULT_CRM_SELECTOR = '[data-meta-agent-crm-form]'
   var ATTR_KEYS = [
     ['campaign_id', 'campaign_id'],
     ['campaign.id', 'campaign_id'],
@@ -92,6 +93,20 @@
     } catch (_) {}
   }
 
+  function decorateCrmFormLink(anchor) {
+    var href = anchor.getAttribute('href')
+    if (!href) return
+    try {
+      var url = new URL(href, window.location.href)
+      var attribution = collectAttribution()
+      url.searchParams.set('visitor_id', visitorId)
+      Object.keys(attribution).forEach(function (key) {
+        url.searchParams.set(key, attribution[key])
+      })
+      anchor.setAttribute('href', url.toString())
+    } catch (_) {}
+  }
+
   function bindTelegramLinks() {
     var links = document.querySelectorAll(config.telegramSelector || DEFAULT_SELECTOR)
     links.forEach(function (anchor) {
@@ -102,16 +117,28 @@
     })
   }
 
+  function bindCrmFormLinks() {
+    var links = document.querySelectorAll(config.crmFormSelector || DEFAULT_CRM_SELECTOR)
+    links.forEach(function (anchor) {
+      decorateCrmFormLink(anchor)
+      anchor.addEventListener('click', function () {
+        sendEvent(config.crmFormClickEventName || 'form_button_click')
+      })
+    })
+  }
+
   var visitorId = getVisitorId()
   window.MetaAdAgentVisitorId = visitorId
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
       bindTelegramLinks()
+      bindCrmFormLinks()
       sendEvent(config.landingViewEventName || 'landing_view')
     })
   } else {
     bindTelegramLinks()
+    bindCrmFormLinks()
     sendEvent(config.landingViewEventName || 'landing_view')
   }
 })()

@@ -76,6 +76,7 @@ Send as many of these as possible:
 ## Landing Page Payload Example
 
 The preferred setup is to install the shared tracker script on every landing page. This script creates a stable `visitor_id`, sends `landing_view`, rewrites Telegram links with `?start=<visitor_id>`, and sends `telegram_link_click`.
+It can also decorate Bitrix/CRM form links with the same visitor and attribution fields, then send `form_button_click`.
 
 ```html
 <script>
@@ -85,13 +86,18 @@ The preferred setup is to install the shared tracker script on every landing pag
     vslId: "income_vsl_01",
     landingPageId: "income_lp_01",
     telegramBotId: "income_bot",
-    telegramSelector: "[data-meta-agent-telegram]"
+    telegramSelector: "[data-meta-agent-telegram]",
+    crmFormSelector: "[data-meta-agent-crm-form]"
   };
 </script>
 <script src="https://YOUR_LANDING_DOMAIN/landing-tracker.js"></script>
 
 <a href="https://t.me/YOUR_BOT" data-meta-agent-telegram>
   Watch the free video
+</a>
+
+<a href="https://YOUR_BITRIX_FORM_URL" data-meta-agent-crm-form>
+  Fill the form
 </a>
 ```
 
@@ -108,6 +114,25 @@ FUNNEL_ALLOWED_ORIGINS=https://income.example.com,https://business.example.com,h
 ```
 
 The tracker intentionally sends only the `visitor_id` in Telegram's `start` parameter. Telegram start payloads are short, so full attribution stays in the backend events instead of being packed into the Telegram link.
+
+The CRM form link is different: it can safely receive the full attribution query string. After decoration, the form link should contain fields such as:
+
+```text
+?visitor_id=v_xxxxx
+&segment=income
+&vsl_id=income_vsl_01
+&landing_page_id=income_lp_01
+&telegram_bot_id=income_bot
+&campaign_id={{campaign.id}}
+&adset_id={{adset.id}}
+&ad_id={{ad.id}}
+&creative_id={{creative.id}}
+&utm_source=ig
+&utm_campaign=...
+&fbclid=...
+```
+
+The Bitrix form must be configured to save these query parameters into hidden/custom CRM fields. Without that Bitrix-side field mapping, the link still carries attribution but imported CRM leads will not show it.
 
 Use this manual payload shape if a page builder cannot load the tracker script:
 

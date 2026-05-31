@@ -4,6 +4,7 @@ import {
   buildTelegramStartPayload,
   collectAttribution,
   createVisitorId,
+  decorateCrmFormUrl,
   decorateTelegramUrl,
   getOrCreateVisitorId,
   type VisitorStorage,
@@ -76,6 +77,47 @@ describe('landing tracker Telegram links', () => {
     expect(decorateTelegramUrl('https://t.me/shahlo_bot?startgroup=true', 'v_lf8b5ts0_4fzzzx')).toBe(
       'https://t.me/shahlo_bot?startgroup=true&start=v_lf8b5ts0_4fzzzx',
     )
+  })
+})
+
+describe('landing tracker CRM form links', () => {
+  it('adds visitor and attribution fields without losing existing form parameters', () => {
+    const decorated = decorateCrmFormUrl(
+      'https://inafform.bitrix24.site/crm_form_vospb/?existing=1',
+      'v_lf8b5ts0_4fzzzx',
+      {
+        segment: 'income',
+        vslId: 'income_vsl_01',
+        landingPageId: 'income_lp_01',
+        telegramBotId: 'income_bot',
+        campaignId: 'cmp_1',
+        adSetId: 'as_1',
+        adId: 'ad_1',
+        creativeId: 'cr_1',
+        utmSource: 'ig',
+        utmMedium: 'paid',
+        utmCampaign: 'camp-1',
+        utmContent: 'creative-a',
+        fbclid: 'fb123',
+      },
+    )
+
+    const url = new URL(decorated)
+    expect(url.searchParams.get('existing')).toBe('1')
+    expect(url.searchParams.get('visitor_id')).toBe('v_lf8b5ts0_4fzzzx')
+    expect(url.searchParams.get('segment')).toBe('income')
+    expect(url.searchParams.get('vsl_id')).toBe('income_vsl_01')
+    expect(url.searchParams.get('landing_page_id')).toBe('income_lp_01')
+    expect(url.searchParams.get('telegram_bot_id')).toBe('income_bot')
+    expect(url.searchParams.get('campaign_id')).toBe('cmp_1')
+    expect(url.searchParams.get('adset_id')).toBe('as_1')
+    expect(url.searchParams.get('ad_id')).toBe('ad_1')
+    expect(url.searchParams.get('creative_id')).toBe('cr_1')
+    expect(url.searchParams.get('utm_source')).toBe('ig')
+    expect(url.searchParams.get('utm_medium')).toBe('paid')
+    expect(url.searchParams.get('utm_campaign')).toBe('camp-1')
+    expect(url.searchParams.get('utm_content')).toBe('creative-a')
+    expect(url.searchParams.get('fbclid')).toBe('fb123')
   })
 })
 

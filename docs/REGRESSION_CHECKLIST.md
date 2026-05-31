@@ -150,3 +150,4 @@ Update this section after each verified checkpoint.
 | Date | Checkpoint | Commands / Checks | Result | Notes |
 | --- | --- | --- | --- | --- |
 | 2026-05-31 | Phase 1 reliability baseline | `python -m pytest backend -q`; `npm test -- --run`; `npm run lint`; `npm run build`; `npm run test:e2e` | PASS | Backend 101 passed, frontend 20 passed, lint clean, build passed with known bundle-size warning, e2e 1 passed. |
+| 2026-05-31 | Landing-to-Telegram-to-CRM attribution links | `npm test -- --run src/lib/landingTracker.test.ts`; Playwright script against `/landing-tracker-example.html`; full backend/frontend/lint/build/e2e suite | PASS | Tracker now decorates Telegram `start` and CRM form query parameters with the same `visitor_id` and Meta attribution. Backend 102 passed, frontend 21 passed, lint/build/e2e passed. |
