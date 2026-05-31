@@ -424,6 +424,66 @@ def response(
         "answer": answer,
         "sources": sources,
         "suggestedQuestions": suggested,
+        "agentHandoffs": build_agent_handoffs(routed["agentId"]),
+    }
+
+
+def build_agent_handoffs(agent_id: str) -> list[dict[str, Any]]:
+    handoff_map: dict[str, list[dict[str, Any]]] = {
+        "orchestrator": [
+            handoff("orchestrator", "audience", "Validate target segments, locations, interests, age, gender, and purchasing power.", ["campaign playbook", "Meta audience breakdowns", "CRM quality signals"], "Audience ranking and targeting risks", "high"),
+            handoff("orchestrator", "creative", "Validate creative angles, hooks, proof, and buyer intent for each segment.", ["campaign playbook", "creative scores", "historical creative lessons"], "Creative replicate/avoid matrix", "high"),
+            handoff("orchestrator", "placement", "Check whether Instagram-only or placement-specific tests are justified.", ["placement insights", "playbook placement rules"], "Placement recommendation and weak-placement watchlist", "medium"),
+            handoff("orchestrator", "funnel", "Confirm landing, Telegram, and CRM attribution readiness before launch.", ["landing tracker config", "Telegram bot mapping", "Bitrix form fields"], "Funnel readiness and missing tracking fields", "high"),
+            handoff("orchestrator", "experiment", "Turn the strategy into approval-safe tests with stop and scale rules.", ["strategy", "budget guardrails", "primary success metric"], "Experiment cards and guardrail rules", "high"),
+        ],
+        "meta_ai_advisor": [
+            handoff("meta_ai_advisor", "meta_ai_strategist", "Convert captured Ads Manager AI advice into Meta-side strategy.", ["Meta AI text", "selected object context", "screenshot evidence"], "Meta-side audience, creative, and test recommendations", "medium"),
+            handoff("meta_ai_advisor", "funnel", "Countercheck Meta-side advice against landing, Telegram, and CRM quality.", ["Meta AI recommendation", "funnel summary", "CRM lead attribution"], "Business-quality validation and caveats", "medium"),
+        ],
+        "meta_ai_strategist": [
+            handoff("meta_ai_strategist", "audience", "Validate Meta AI audience claims against purchasing power and downstream quality.", ["Meta AI strategy", "audience rankings", "CRM/funnel quality"], "Accepted/rejected audience hypotheses", "medium"),
+            handoff("meta_ai_strategist", "creative", "Validate top creative claims against buyer intent and course fit.", ["Meta AI creative findings", "creative scores", "video/hook notes"], "Creative replicate/avoid guidance", "medium"),
+            handoff("meta_ai_strategist", "funnel", "Check whether Meta-side winners produce Telegram START and CRM form quality.", ["Meta AI strategy", "funnel events", "CRM imported leads"], "Funnel-quality countercheck", "medium"),
+            handoff("meta_ai_strategist", "experiment", "Convert accepted Meta AI findings into controlled tests.", ["accepted Meta AI findings", "budget guardrails"], "Experiment cards requiring approval", "medium"),
+        ],
+        "execution": [
+            handoff("execution", "browser_operator", "Use only if an already-approved Meta action cannot be completed through the API.", ["approved action", "target object ID", "before/after settings"], "Browser fallback result or blocked-state report", "blocked_until_approval"),
+        ],
+        "monitoring": [
+            handoff("monitoring", "experiment", "Turn alerts into controlled tests instead of immediate live changes.", ["alert", "metric deltas", "guardrails"], "Two or three approval-safe next actions", "medium"),
+        ],
+        "funnel": [
+            handoff("funnel", "audit", "Feed funnel leaks and attribution health into historical performance lessons.", ["funnel summary", "CRM attribution", "campaign context"], "Funnel leak diagnosis and data-confidence notes", "medium"),
+        ],
+        "creative": [
+            handoff("creative", "experiment", "Convert creative winners and risks into testable creative variations.", ["creative ranking", "hook analysis", "buyer-intent notes"], "Creative experiment matrix", "medium"),
+        ],
+        "audience": [
+            handoff("audience", "experiment", "Convert audience hypotheses into controlled targeting tests.", ["audience ranking", "purchasing-power notes", "geo/interest candidates"], "Audience experiment matrix", "medium"),
+        ],
+        "placement": [
+            handoff("placement", "experiment", "Convert placement findings into safe placement tests.", ["placement ranking", "platform quality notes"], "Placement experiment matrix", "medium"),
+        ],
+    }
+    return handoff_map.get(agent_id, [])
+
+
+def handoff(
+    from_agent: str,
+    to_agent: str,
+    reason: str,
+    inputs_needed: list[str],
+    expected_output: str,
+    confidence: str,
+) -> dict[str, Any]:
+    return {
+        "fromAgent": from_agent,
+        "toAgent": to_agent,
+        "reason": reason,
+        "inputsNeeded": inputs_needed,
+        "expectedOutput": expected_output,
+        "confidence": confidence,
     }
 
 

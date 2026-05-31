@@ -59,6 +59,34 @@ If the orchestrator can handle the request, it returns:
 - `answer`
 - `sources`
 - `suggestedQuestions`
+- `agentHandoffs`
+
+## Agent Handoff Packets
+
+The orchestrator now returns structured handoff packets so that dashboard chat, Telegram chat, and Codex/Claude chat can understand which specialist should receive the next part of the work.
+
+Each handoff includes:
+
+```json
+{
+  "fromAgent": "orchestrator",
+  "toAgent": "audience",
+  "reason": "Validate target segments, locations, interests, age, gender, and purchasing power.",
+  "inputsNeeded": ["campaign playbook", "Meta audience breakdowns", "CRM quality signals"],
+  "expectedOutput": "Audience ranking and targeting risks",
+  "confidence": "high"
+}
+```
+
+Current handoff behavior:
+
+- Campaign planning routes from Orchestrator to Audience, Creative, Placement, Funnel, and Experiment agents.
+- Meta AI Advisor routes captured Ads Manager AI evidence to Meta AI Strategist and Funnel Tracking.
+- Meta AI Strategist routes Meta-side findings to Audience, Creative, Funnel, and Experiment agents.
+- Execution routes browser work to Browser Operator only when an exact approved action exists and API execution cannot complete it.
+- Monitoring routes alert follow-up to Experiment Agent for controlled tests.
+
+Handoffs are not live execution. They are structured collaboration instructions. Any Meta change still requires the normal approval and execution policy.
 
 If the orchestrator does not need to intervene, chat falls back to the existing knowledge-base and LLM analysis path.
 

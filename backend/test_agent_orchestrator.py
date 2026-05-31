@@ -57,6 +57,13 @@ def test_orchestrator_generates_campaign_plan_from_latest_playbook():
     assert "Business automation" in response["answer"]
     assert "I will not execute" in response["answer"]
     assert "strategy_generator" in response["sources"]
+    assert {handoff["toAgent"] for handoff in response["agentHandoffs"]} >= {
+        "audience",
+        "creative",
+        "placement",
+        "funnel",
+        "experiment",
+    }
 
 
 def test_orchestrator_asks_for_chat_variables_when_playbook_has_no_segments():
@@ -99,6 +106,8 @@ def test_execution_agent_blocks_browser_fallback_until_specific_approval():
     assert response["activeAgent"] == "execution"
     assert "specific approved action" in response["answer"].lower()
     assert "api first" in response["answer"].lower()
+    assert response["agentHandoffs"][0]["toAgent"] == "browser_operator"
+    assert response["agentHandoffs"][0]["confidence"] == "blocked_until_approval"
 
 
 def test_execution_agent_creates_approval_ready_plan_from_natural_language_action():
@@ -158,3 +167,29 @@ def test_meta_ai_strategist_explains_meta_side_strategy_scope():
     assert "meta-side strategy" in response["answer"].lower()
     assert "orchestrator" in response["answer"].lower()
     assert "not the final business strategy" in response["answer"].lower()
+    assert {handoff["toAgent"] for handoff in response["agentHandoffs"]} >= {
+        "audience",
+        "creative",
+        "funnel",
+        "experiment",
+    }
+
+
+def test_agent_handoffs_are_structured_for_meta_ai_advisor():
+    response = orchestrate_agent_chat(
+        "Use Meta AI Analyze for this campaign and ask what audiences and creatives worked",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "meta_ai_advisor"
+    assert response["agentHandoffs"]
+    assert response["agentHandoffs"][0].keys() >= {
+        "fromAgent",
+        "toAgent",
+        "reason",
+        "inputsNeeded",
+        "expectedOutput",
+        "confidence",
+    }
