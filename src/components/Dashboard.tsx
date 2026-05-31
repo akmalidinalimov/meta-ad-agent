@@ -648,7 +648,7 @@ function TrendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
     <article className="panel">
       <PanelHeading eyebrow="Trend" title="Spend, leads, buyers" icon={TrendingUp} />
       <div className="chart-box">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 640, height: 268 }}>
           <LineChart data={trend}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="day" tickLine={false} axisLine={false} />
@@ -742,7 +742,7 @@ function PlacementPanel({ placements }: { placements: ReturnType<typeof derivePl
     <article className="panel">
       <PanelHeading eyebrow="Placement" title="Spend share by channel" icon={RadioTower} />
       <div className="chart-box">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 640, height: 268 }}>
           <PieChart>
             <Pie data={placements} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88}>
               {placements.map((entry, index) => (
@@ -776,7 +776,7 @@ function AudiencePanel({ data }: { data: DashboardData }) {
     <article className="panel panel-wide">
       <PanelHeading eyebrow="Audience Quality" title="Purchasing power by segment" icon={Users} />
       <div className="chart-box tall">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 720, height: 318 }}>
           <BarChart data={data.audience}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="segment" tickLine={false} axisLine={false} />
@@ -796,7 +796,7 @@ function SpendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
     <article className="panel">
       <PanelHeading eyebrow="Spend Curve" title="Budget pressure" icon={CircleDollarSign} />
       <div className="chart-box">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 640, height: 268 }}>
           <AreaChart data={trend}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="day" tickLine={false} axisLine={false} />
@@ -1320,7 +1320,7 @@ function PlacementsView({ placements }: { placements: ReturnType<typeof derivePl
       <article className="panel panel-wide">
         <PanelHeading eyebrow="Placement Efficiency" title="Spend share vs buyers" icon={BarChart3} />
         <div className="chart-box tall">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 720, height: 318 }}>
             <BarChart data={placements}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tickLine={false} axisLine={false} />

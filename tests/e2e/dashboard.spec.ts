@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test';
 
 test('dashboard loads and exposes primary control surfaces', async ({ page }) => {
+  const backendHealth = await page.request.get('http://127.0.0.1:8000/api/health');
+  expect(backendHealth.ok()).toBeTruthy();
+
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: /campaign audit dashboard/i })).toBeVisible();
