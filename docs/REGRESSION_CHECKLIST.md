@@ -138,10 +138,10 @@ If a change is narrow, targeted tests may run during development, but the full c
 
 | Dependency | Status | Verification | Notes |
 | --- | --- | --- | --- |
-| Meta API token and account ID are configured locally | NOT TESTED | `/api/meta/status` | Do not expose token; real token health can expire and should be checked before campaign work. |
+| Meta API token and account ID are configured locally | PASS | `/api/meta/status` | Sanitized check confirmed Meta is configured and connected. Pixel is not configured yet. Do not expose token. |
 | Meta 90/180-day data sync works | NOT TESTED | Settings/API | Needed for real historical strategy; run before the next real strategy analysis. |
 | Bitrix24 full webhook URL or portal/user/key is configured | PASS | Real Bitrix stage discovery | Current local webhook fetched 17 Bitrix lead statuses. Do not expose webhook. |
-| Telegram bot token/admin/secret/allowlist are configured | PASS | Backend tests/configured local env | Command and outbound paths are test-covered; do not expose token. |
+| Telegram bot token/admin/secret/allowlist are configured | PASS | Backend tests + real outbound test | A sanitized Telegram test message was delivered successfully. Do not expose token. |
 | ChatPlace bot automations send external events | BLOCKED | Real bot test | User will build bots manually. |
 
 ## Current Checkpoint Notes
@@ -159,3 +159,4 @@ Update this section after each verified checkpoint.
 | 2026-06-01 | Real-backend e2e reliability | `python -m pytest backend -q`; `npm test -- --run`; `npm run lint`; `npm run build`; `npm run test:e2e` | PASS | Playwright now starts FastAPI and asserts `/api/health` before dashboard checks. Chart containers use initial dimensions so e2e output is clean instead of hiding Recharts sizing warnings. |
 | 2026-06-01 | Checklist and dashboard refactor plan | `python -m pytest --collect-only -q backend`; `npm test -- --run --reporter=verbose`; full gate from previous checkpoint | PASS | Checklist now reflects verified test coverage and blocked external dependencies. Added a safe `Dashboard.tsx` split plan for future UI work. |
 | 2026-06-01 | First dashboard shared-component extraction | `python -m pytest backend -q`; `npm test -- --run`; `npm run lint`; `npm run build`; `npm run test:e2e` | PASS | Extracted `PanelHeading`, `MediaThumb`, and `ChartFrame` shared components while preserving dashboard behavior and clean chart rendering. |
+| 2026-06-01 | Sanitized external connector check | TestClient `GET /api/meta/status`; `GET /api/crm/bitrix/status`; `GET /api/crm/bitrix/stages`; `POST /api/telegram/test-message` | PASS | Meta is connected, Bitrix returned 17 stages, and Telegram outbound delivered. Pixel remains unconfigured. No secrets printed and no Meta changes made. |
