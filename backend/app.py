@@ -704,7 +704,10 @@ async def bitrix_import() -> dict[str, Any]:
     config = get_bitrix_config()
     if not config.is_configured:
         raise HTTPException(status_code=400, detail="Bitrix24 webhook URL is not configured.")
-    leads = await fetch_bitrix_leads(transport=build_bitrix_transport(config))
+    try:
+        leads = await fetch_bitrix_leads(transport=build_bitrix_transport(config))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"Bitrix24 import failed: {exc}") from exc
     saved = save_crm_leads(leads, storage_dir=CRM_STORAGE_DIR)
     return {
         "ok": True,

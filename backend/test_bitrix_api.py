@@ -20,6 +20,11 @@ class FakeBitrixTransport:
         }
 
 
+class FailingBitrixTransport:
+    async def call(self, method, params):
+        raise RuntimeError("Bitrix24 API returned HTTP 401.")
+
+
 def bind_tmp_crm(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
     monkeypatch.setattr(app_module, "CRM_STORAGE_DIR", storage_dir)
@@ -53,3 +58,15 @@ def test_bitrix_import_saves_normalized_leads(monkeypatch, tmp_path):
     assert response.json()["imported"] == 1
     assert saved[0]["crmLeadId"] == "101"
     assert saved[0]["visitorId"] == "v_abc123"
+
+
+def test_bitrix_import_returns_sanitized_upstream_error(monkeypatch, tmp_path):
+    bind_tmp_crm(monkeypatch, tmp_path)
+    monkeypatch.setenv("BITRIX24_WEBHOOK_URL", "https://example.bitrix24.com/rest/1/secret/")
+    monkeypatch.setattr(app_module, "build_bitrix_transport", lambda config: FailingBitrixTransport())
+    client = TestClient(app)
+
+    response = client.post("/api/crm/bitrix/import")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Bitrix24 import failed: Bitrix24 API returned HTTP 401."
