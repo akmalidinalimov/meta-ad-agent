@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -49,6 +49,8 @@ def build_monitoring_snapshots(dashboard_data: dict[str, Any]) -> list[dict[str,
         if str(campaign.get("status", "active")).lower() in {"active", "paused"}
     }
     grouped: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    latest_metric_date = latest_date(dashboard_data.get("metrics", []))
+    stale_before = latest_metric_date - timedelta(days=7) if latest_metric_date else None
     for row in dashboard_data.get("metrics", []):
         campaign_id = str(row.get("campaignId") or row.get("campaign_id") or "")
         date = str(row.get("date") or row.get("date_start") or "")
@@ -63,6 +65,8 @@ def build_monitoring_snapshots(dashboard_data: dict[str, Any]) -> list[dict[str,
         dates = sorted(by_date)
         if len(dates) < 2:
             continue
+        if stale_before and parse_date(dates[-1]) < stale_before:
+            continue
         previous_date, current_date = dates[-2], dates[-1]
         snapshots.append(
             {
@@ -75,6 +79,19 @@ def build_monitoring_snapshots(dashboard_data: dict[str, Any]) -> list[dict[str,
             }
         )
     return snapshots
+
+
+def latest_date(rows: list[dict[str, Any]]) -> datetime | None:
+    dates = [parse_date(str(row.get("date") or row.get("date_start") or "")) for row in rows]
+    dates = [date for date in dates if date != datetime.min]
+    return max(dates) if dates else None
+
+
+def parse_date(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value[:10])
+    except ValueError:
+        return datetime.min
 
 
 def aggregate_rows(rows: list[dict[str, Any]]) -> dict[str, float]:

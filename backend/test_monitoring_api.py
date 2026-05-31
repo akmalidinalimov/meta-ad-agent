@@ -87,3 +87,23 @@ def test_monitoring_ignores_completed_old_campaigns(tmp_path):
 
     assert result["snapshotsChecked"] == 1
     assert result["alerts"] == []
+
+
+def test_monitoring_ignores_stale_active_campaigns_outside_latest_window(tmp_path):
+    dashboard = {
+        "campaigns": [
+            {"id": "stale_cmp", "name": "Old but paused", "status": "paused"},
+            {"id": "fresh_cmp", "name": "Fresh campaign", "status": "active"},
+        ],
+        "metrics": [
+            {"date": "2026-01-01", "campaignId": "stale_cmp", "spendUsd": 100, "clicks": 300, "leads": 60, "telegramSubscribers": 0},
+            {"date": "2026-01-02", "campaignId": "stale_cmp", "spendUsd": 100, "clicks": 280, "leads": 55, "telegramSubscribers": 0},
+            {"date": "2026-05-04", "campaignId": "fresh_cmp", "spendUsd": 100, "clicks": 200, "leads": 40, "telegramSubscribers": 20},
+            {"date": "2026-05-05", "campaignId": "fresh_cmp", "spendUsd": 100, "clicks": 205, "leads": 39, "telegramSubscribers": 20},
+        ],
+    }
+
+    result = run_monitoring_check(dashboard, storage_dir=tmp_path / "storage")
+
+    assert result["snapshotsChecked"] == 1
+    assert result["alerts"] == []

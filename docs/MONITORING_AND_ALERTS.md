@@ -23,6 +23,8 @@ The first rule set intentionally stays narrow:
 
 The runner ignores completed historical campaigns when active/paused campaign metadata is available. This keeps monitoring focused on campaigns that can still affect current decisions.
 
+The runner also ignores active/paused campaigns whose latest metric row is more than seven days older than the freshest metric date in the current dashboard payload. This prevents old paused campaigns from creating noisy "current" alerts when a historical 90/180-day dataset is loaded.
+
 These rules are not final strategy decisions. They are attention signals. The agent should explain why a metric may be moving and suggest two or three controlled next actions.
 
 ## Guardrails
