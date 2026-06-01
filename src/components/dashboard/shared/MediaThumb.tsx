@@ -9,13 +9,15 @@ interface MediaThumbProps {
 }
 
 export function MediaThumb({ assetUrl, videoUrl, videoId, format }: MediaThumbProps) {
-  const hasPlayableVideo = Boolean(videoUrl)
+  const hasVideoAsset = Boolean(videoUrl || videoId)
 
   return (
-    <span className={`creative-thumb ${assetUrl ? 'has-image' : ''}`} aria-label={`${format} creative preview`}>
+    <span
+      className={`creative-thumb ${assetUrl ? 'has-image' : ''} ${hasVideoAsset ? 'has-video' : ''}`}
+      aria-label={`${format} creative preview${hasVideoAsset ? ' with video asset' : ''}`}
+    >
       {assetUrl ? <img src={assetUrl} alt="" loading="lazy" /> : <Film size={18} />}
-      {hasPlayableVideo && <i aria-label="Playable video">▶</i>}
-      {!hasPlayableVideo && videoId && <span title="Video ID exists, but source URL is unavailable">ID</span>}
+      {hasVideoAsset && <i aria-label={videoUrl ? 'Playable video' : 'Video asset available'}>▶</i>}
       {!assetUrl && <small>{format}</small>}
     </span>
   )

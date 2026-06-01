@@ -116,6 +116,8 @@ describe('deriveCreativeScores', () => {
       hookType: 'case study',
       primaryPersona: 'business owner',
       cta: 'Join webinar',
+      assetUrl: 'https://example.com/buyer-proof.jpg',
+      videoId: 'video_a',
     },
     {
       id: 'creative_b',
@@ -204,6 +206,16 @@ describe('deriveCreativeScores', () => {
     expect(scores[0].rank).toBe(1)
     expect(scores[1].id).toBe('creative_b')
     expect(scores[1].rank).toBe(2)
+  })
+
+  it('preserves creative thumbnail and video metadata for the dashboard table', () => {
+    const scores = deriveCreativeScores(metrics, creatives, analyses)
+
+    expect(scores[0]).toMatchObject({
+      id: 'creative_a',
+      assetUrl: 'https://example.com/buyer-proof.jpg',
+      videoId: 'video_a',
+    })
   })
 })
 

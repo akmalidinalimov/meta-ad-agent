@@ -1235,10 +1235,16 @@ function RankingTable({ rows }: { rows: RankingRow[] }) {
 }
 
 function CreativePreview({ creative }: { creative: Creative }) {
-  const [videoAsset, setVideoAsset] = useState<{ creativeId: string; videoUrl?: string; posterUrl?: string } | null>(null)
+  const [videoAsset, setVideoAsset] = useState<{
+    creativeId: string
+    videoUrl?: string
+    posterUrl?: string
+    permalinkUrl?: string
+  } | null>(null)
   const fetchedAsset = videoAsset?.creativeId === creative.id ? videoAsset : null
   const resolvedVideoUrl = creative.videoUrl ?? fetchedAsset?.videoUrl ?? ''
   const resolvedPosterUrl = creative.assetUrl ?? fetchedAsset?.posterUrl ?? ''
+  const resolvedPermalinkUrl = normalizeMetaPermalink(fetchedAsset?.permalinkUrl)
 
   useEffect(() => {
     if (!creative.videoId || creative.videoUrl) {
@@ -1248,11 +1254,16 @@ function CreativePreview({ creative }: { creative: Creative }) {
     let cancelled = false
     void fetch(`/api/meta/video/${creative.videoId}`)
       .then((response) => (response.ok ? response.json() : null))
-      .then((payload: { videoUrl?: string; posterUrl?: string } | null) => {
+      .then((payload: { videoUrl?: string; posterUrl?: string; permalinkUrl?: string } | null) => {
         if (cancelled || !payload) {
           return
         }
-        setVideoAsset({ creativeId: creative.id, videoUrl: payload.videoUrl, posterUrl: payload.posterUrl })
+        setVideoAsset({
+          creativeId: creative.id,
+          videoUrl: payload.videoUrl,
+          posterUrl: payload.posterUrl,
+          permalinkUrl: payload.permalinkUrl,
+        })
       })
       .catch(() => undefined)
 
@@ -1280,12 +1291,27 @@ function CreativePreview({ creative }: { creative: Creative }) {
           {resolvedVideoUrl
             ? creative.hookType
             : creative.videoId
-              ? `${creative.hookType} / video source unavailable`
+              ? `${creative.hookType} / Meta video ID ${creative.videoId}`
               : creative.hookType}
         </span>
+        {!resolvedVideoUrl && resolvedPermalinkUrl && (
+          <a href={resolvedPermalinkUrl} target="_blank" rel="noreferrer">
+            Open Meta video
+          </a>
+        )}
       </div>
     </div>
   )
+}
+
+function normalizeMetaPermalink(permalinkUrl?: string) {
+  if (!permalinkUrl) {
+    return ''
+  }
+  if (/^https?:\/\//i.test(permalinkUrl)) {
+    return permalinkUrl
+  }
+  return `https://www.facebook.com${permalinkUrl.startsWith('/') ? permalinkUrl : `/${permalinkUrl}`}`
 }
 
 function FunnelView({ funnel, trend }: { funnel: ReturnType<typeof deriveFunnel>; trend: ReturnType<typeof deriveTrend> }) {

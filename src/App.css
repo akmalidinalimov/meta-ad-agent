@@ -727,6 +727,20 @@
   font-weight: 900;
 }
 
+.creative-thumb.has-video::after {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.72);
+  content: 'VID';
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
 .creative-thumb span {
   position: absolute;
   right: 4px;
@@ -989,6 +1003,17 @@
 .creative-preview span {
   color: #64748b;
   font-weight: 800;
+}
+
+.creative-preview a {
+  color: #0f766e;
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.creative-preview a:hover {
+  text-decoration: underline;
 }
 
 .score-grid {

@@ -24,6 +24,11 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await expect(page.getByRole('button', { name: /generate draft proposal/i })).toBeVisible();
   await expect(page.getByText(/review-only draft proposal/i)).toBeVisible();
 
+  await page.getByRole('button', { name: /creatives/i }).click();
+  await expect(page.getByText(/creative performance and quality/i)).toBeVisible();
+  await expect(page.locator('.creative-thumb.has-video').first()).toBeVisible();
+  await expect(page.locator('.creative-thumb img').first()).toBeVisible();
+
   await page.getByRole('button', { name: /refresh data/i }).click();
   await expect(page.getByRole('heading', { name: /campaign audit dashboard/i })).toBeVisible();
 });
