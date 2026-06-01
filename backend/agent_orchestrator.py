@@ -119,6 +119,15 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
     },
 }
 
+SPECIALIST_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "audience": ("audience", "target", "interest", "age", "gender", "country", "region", "city", "tashkent"),
+    "creative": ("creative", "creatives", "video", "hook", "thumbnail", "viral", "visual"),
+    "placement": ("placement", "facebook", "instagram", "reels", "stories", "feed", "threads"),
+    "funnel": ("funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"),
+    "monitoring": ("monitor", "alert", "trend", "rising", "improving", "getting expensive"),
+    "experiment": ("experiment", "test", "ab test", "a/b", "scale rule", "stop rule"),
+}
+
 
 def agent_registry() -> dict[str, dict[str, Any]]:
     return {agent_id: {"id": agent_id, **spec} for agent_id, spec in AGENT_SPECS.items()}
@@ -134,10 +143,12 @@ def route_question(question: str) -> dict[str, Any]:
         return route("meta_ai_strategist", "Captured Meta AI evidence should be converted into Meta-side strategy.")
     if any(word in lower for word in ["meta ai", "ads manager ai", "analyze button", "opportunity score", "opportunity-score"]):
         return route("meta_ai_advisor", "Meta AI Analyze request should be captured read-only and validated against business data.")
-    if any(word in lower for word in ["setup", "set up", "create campaign", "launch campaign", "new campaign", "campaign plan", "vsl"]):
-        return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
     if any(word in lower for word in ["execute", "change budget", "browser", "go to meta", "pause", "publish", "upload creative"]):
         return route("execution", "Live Meta change request requires approval and API-first execution policy.")
+    if len(detect_involved_agents(question)) >= 2:
+        return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
+    if any(word in lower for word in ["setup", "set up", "create campaign", "launch campaign", "new campaign", "campaign plan", "vsl"]):
+        return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
     if any(word in lower for word in ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
         return route("creative", "Creative question needs hook, asset, and buyer-intent analysis.")
     if any(word in lower for word in ["audience", "target", "interest", "age", "gender", "country", "region", "city", "tashkent"]):
@@ -290,6 +301,19 @@ def orchestrate_agent_chat(
             ],
         )
 
+    if routed["agentId"] == "orchestrator" and len(detect_involved_agents(question)) >= 2:
+        involved = detect_involved_agents(question)
+        return response(
+            routed,
+            answer=format_multi_specialist_answer(involved),
+            sources=["agent_orchestrator", "storage/meta_knowledge_base.json", "docs/AGENT_OPERATING_POLICY.md"],
+            suggested=[
+                "Generate a campaign plan from the saved playbook.",
+                "Ask the Creative Agent for the top replicate and avoid list.",
+                "Ask the Audience Agent for target hypotheses with confidence limits.",
+            ],
+        )
+
     return None
 
 
@@ -393,6 +417,21 @@ def format_meta_action_answer(plan: dict[str, Any], approval: dict[str, Any]) ->
     )
 
 
+def format_multi_specialist_answer(involved: list[str]) -> str:
+    agent_names = [AGENT_SPECS[agent]["name"] for agent in involved if agent in AGENT_SPECS]
+    return "\n".join(
+        [
+            "I will handle this through the Orchestrator because the question needs several specialists, not a single-agent answer.",
+            "",
+            f"Agents involved: {', '.join(agent_names)}.",
+            "",
+            "Decision rule: use Meta-side data for delivery signals, then verify with landing-page, Telegram START, CRM, and sales-capacity quality before turning any recommendation into an approval request.",
+            "",
+            "I will not execute or publish changes from this analysis. The output should become a campaign plan, experiment card, or approval request after the evidence is checked.",
+        ]
+    )
+
+
 def should_prepare_meta_action(question: str, routed: dict[str, Any], plan: dict[str, Any]) -> bool:
     if plan["intent"] == "unknown":
         return False
@@ -427,8 +466,52 @@ def response(
         "suggestedQuestions": suggested,
         "agentHandoffs": build_agent_handoffs(routed["agentId"]),
     }
+    payload["agentDecision"] = build_agent_decision(routed, payload)
     payload["quality"] = evaluate_agent_response(payload)
     return payload
+
+
+def build_agent_decision(routed: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    handoff_agents = [handoff["toAgent"] for handoff in payload.get("agentHandoffs", []) if handoff.get("toAgent")]
+    involved = list(dict.fromkeys([*handoff_agents] or [routed["agentId"]]))
+    high_confidence_handoffs = sum(1 for handoff in payload.get("agentHandoffs", []) if handoff.get("confidence") in {"high", "medium"})
+    confidence_score = 95 if payload.get("sources") and payload.get("suggestedQuestions") else 75
+    if routed["agentId"] == "orchestrator" and high_confidence_handoffs >= 3:
+        confidence_score = 100
+    if routed["agentId"] == "execution":
+        confidence_score = 95 if payload.get("sources") else 70
+    return {
+        "primaryAgent": routed["agentId"],
+        "involvedAgents": involved,
+        "approvalRequired": routed["agentId"] in {"orchestrator", "execution", "browser_operator"},
+        "confidenceScore": confidence_score,
+        "reason": routed["reason"],
+        "evidenceNeeds": build_evidence_needs(involved),
+    }
+
+
+def build_evidence_needs(involved_agents: list[str]) -> list[str]:
+    needs: list[str] = []
+    if "audience" in involved_agents:
+        needs.append("Audience breakdowns with purchasing-power and location context.")
+    if "creative" in involved_agents:
+        needs.append("Creative ranking with hook, visual, offer, and buyer-intent notes.")
+    if "placement" in involved_agents:
+        needs.append("Placement-level CPC, CPL, lead rate, and downstream quality.")
+    if "funnel" in involved_agents:
+        needs.append("Landing click, Telegram START, form click, and CRM attribution events.")
+    if "experiment" in involved_agents:
+        needs.append("One-variable test plan with stop and scale rules.")
+    return needs
+
+
+def detect_involved_agents(question: str) -> list[str]:
+    lower = question.lower()
+    return [
+        agent
+        for agent, keywords in SPECIALIST_KEYWORDS.items()
+        if any(keyword in lower for keyword in keywords)
+    ]
 
 
 def build_agent_handoffs(agent_id: str) -> list[dict[str, Any]]:

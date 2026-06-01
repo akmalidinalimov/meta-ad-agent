@@ -26,6 +26,7 @@ from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, fetch_bitrix
 from .campaign_watch import build_campaign_watch
 from .chatplace_events import normalize_chatplace_event
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
+from .draft_campaign_proposal import build_draft_campaign_proposal
 from .funnel_events import build_funnel_summary, save_funnel_event
 from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
@@ -98,6 +99,7 @@ class ChatResponse(BaseModel):
     activeAgent: str | None = None
     routeReason: str | None = None
     agentHandoffs: list[dict[str, Any]] = Field(default_factory=list)
+    agentDecision: dict[str, Any] | None = None
     quality: dict[str, Any] | None = None
     generatedPlaybook: dict[str, Any] | None = None
     generatedStrategy: dict[str, Any] | None = None
@@ -120,6 +122,11 @@ class StrategyRequest(BaseModel):
 class CampaignExecutionPlanRequest(BaseModel):
     playbook: dict[str, Any] | None = None
     reason: str | None = None
+
+
+class DraftCampaignProposalRequest(BaseModel):
+    playbook: dict[str, Any] | None = None
+    accountId: str | None = None
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -538,6 +545,22 @@ def generate_strategy(request: StrategyRequest) -> dict[str, Any]:
         "ok": True,
         "strategy": generate_launch_strategy(playbook, knowledge),
         "knowledgeAvailable": bool(knowledge),
+    }
+
+
+@app.post("/api/campaign-proposals/draft")
+def draft_campaign_proposal(request: DraftCampaignProposalRequest) -> dict[str, Any]:
+    playbook = request.playbook or first_playbook_with_segments(load_playbooks())
+    if not playbook:
+        raise HTTPException(status_code=400, detail="A playbook with at least one segment is required.")
+    account_id = request.accountId or os.getenv("META_AD_ACCOUNT_ID") or "act_unconfigured"
+    return {
+        "ok": True,
+        "proposal": build_draft_campaign_proposal(
+            playbook,
+            load_knowledge_base(),
+            account_id=account_id,
+        ),
     }
 
 

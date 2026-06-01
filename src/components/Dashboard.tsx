@@ -55,6 +55,7 @@ import {
   getCampaignOptions,
   getDateWindow,
 } from '../lib/analytics'
+import { buildOperatorAttention } from '../lib/operatorAttention'
 import {
   buildEmptySegment,
   buildPlaybookDraft,
@@ -696,18 +697,21 @@ function TrendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
 }
 
 function TopProblemsPanel({ data }: { data: DashboardData }) {
+  const attentionItems = buildOperatorAttention(data)
   return (
     <article className="panel">
-      <PanelHeading eyebrow="Top Problems Today" title="Priority watchlist" icon={AlertTriangle} />
+      <PanelHeading eyebrow="What Needs Attention Now" title="Operator priority queue" icon={AlertTriangle} />
       <div className="problem-list">
-        {data.insights.map((insight) => {
-          const Icon = iconMap[insight.icon]
+        {attentionItems.map((item, index) => {
+          const Icon = item.tone === 'good' ? CheckCircle2 : item.tone === 'danger' ? XCircle : AlertTriangle
           return (
-            <div className={`problem-item ${insight.tone}`} key={insight.title}>
+            <div className={`problem-item ${item.tone}`} key={item.id}>
               <Icon size={18} />
               <div>
-                <strong>{insight.title}</strong>
-                <p>{insight.body}</p>
+                <small>{index + 1}. {item.source}</small>
+                <strong>{item.title}</strong>
+                <p>{item.reason}</p>
+                <em>{item.action}</em>
               </div>
             </div>
           )

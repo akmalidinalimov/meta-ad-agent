@@ -42,6 +42,28 @@ def test_route_question_selects_specialist_without_live_execution():
     assert route_question("Create a Meta AI strategy from the Analyze answers")["agentId"] == "meta_ai_strategist"
 
 
+def test_orchestrator_handles_multi_specialist_strategy_questions_with_decision_trace():
+    response = orchestrate_agent_chat(
+        "Analyze the best audience, creatives, placements, funnel quality, and experiments for the next campaign",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    assert response["agentDecision"]["primaryAgent"] == "orchestrator"
+    assert response["agentDecision"]["confidenceScore"] >= 95
+    assert set(response["agentDecision"]["involvedAgents"]) >= {
+        "audience",
+        "creative",
+        "placement",
+        "funnel",
+        "experiment",
+    }
+    assert response["agentDecision"]["approvalRequired"] is True
+    assert response["quality"]["status"] == "usable"
+
+
 def test_orchestrator_generates_campaign_plan_from_latest_playbook():
     response = orchestrate_agent_chat(
         "Create a campaign plan from the saved playbook",
