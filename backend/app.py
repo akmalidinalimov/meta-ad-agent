@@ -24,6 +24,7 @@ from .approval_store import (
 )
 from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, fetch_bitrix_statuses, get_bitrix_config
 from .campaign_watch import build_campaign_watch
+from .campaign_specific_analysis import campaign_specific_answer
 from .chatplace_events import normalize_chatplace_event
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
 from .draft_campaign_proposal import build_draft_campaign_proposal
@@ -1415,6 +1416,18 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if knowledge:
+        campaign_answer = campaign_specific_answer(question, knowledge)
+        if campaign_answer:
+            return specialist_chat_response(
+                question,
+                answer=campaign_answer,
+                sources=["campaign_specific_analysis", "storage/meta_knowledge_base.json"],
+                suggestedQuestions=[
+                    "Rank creatives for this campaign.",
+                    "Which ad set should become the scale candidate?",
+                    "What tracking is missing before scaling?",
+                ],
+            )
         try:
             llm_answer = await generate_chat_answer(question, knowledge_chat_preview(knowledge))
         except Exception:
@@ -1455,7 +1468,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if any(word in lower for word in ["creative", "video", "hook", "viral", "convert", "conversion"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_creatives(dashboard_data),
             sources=["creativeAnalyses", "metrics"],
             suggestedQuestions=[
@@ -1466,7 +1480,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if any(word in lower for word in ["audience", "age", "buyer", "purchasing", "target"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_audiences(dashboard_data),
             sources=["audience", "metrics"],
             suggestedQuestions=[
@@ -1477,7 +1492,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if any(word in lower for word in ["placement", "facebook", "instagram", "reels", "feed"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_placements(dashboard_data),
             sources=["placements", "metrics"],
             suggestedQuestions=[
@@ -1488,7 +1504,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if any(word in lower for word in ["funnel", "telegram", "landing", "webinar", "lead", "leak"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_funnel(dashboard_data),
             sources=["funnel", "trackingHealth"],
             suggestedQuestions=[
@@ -1498,8 +1515,21 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
             ],
         )
 
+    if any(word in lower for word in ["monitor", "alert", "attention", "trend", "rising", "improving", "getting expensive"]):
+        return specialist_chat_response(
+            question,
+            answer=answer_monitoring(dashboard_data),
+            sources=["monitoring", "alerts", "approvalActions"],
+            suggestedQuestions=[
+                "What should we check every four hours?",
+                "Which alert should become an experiment?",
+                "What should require approval before execution?",
+            ],
+        )
+
     if any(word in lower for word in ["experiment", "test", "budget", "scale", "pause", "recommend"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_experiments(dashboard_data),
             sources=["experiments", "approvalActions"],
             suggestedQuestions=[
@@ -2087,7 +2117,7 @@ def answer_from_knowledge_base(lower_question: str, knowledge: dict[str, Any]) -
             "I would separate placement tests rather than mixing everything blindly: scale high-quality placements and keep weak placements for retargeting only."
         )
 
-    if any(word in lower_question for word in ["creative", "ad", "video", "worked", "didn't", "did not"]):
+    if any(word in lower_question for word in ["creative", "video", "hook", "thumbnail", "viral", "worked", "didn't", "did not"]):
         top_ad = first(analysis.get("topAds", []))
         return (
             f"Top ad from the saved Meta analysis is {top_ad['label'] if top_ad else 'not enough data'}. "
@@ -2244,7 +2274,18 @@ def answer_funnel(data: dict[str, Any]) -> str:
     warning_text = " ".join(f"{item['name']} is {item['status']} at {item['matchRate']}% match." for item in warning_tracking)
     return (
         f"The weakest funnel step is {weakest['step']} at {weakest['rate']}. "
-        f"That is the first place I would diagnose before scaling spend. {warning_text}"
+        f"That is the first place I would diagnose before scaling spend. "
+        f"Watch landing visit rate, landing lead rate, Telegram START rate, and CRM quality together. {warning_text}"
+    )
+
+
+def answer_monitoring(data: dict[str, Any]) -> str:
+    high_priority = [item for item in data["approvalActions"] if item.get("priority") == "high"]
+    first_alert = data.get("alerts", [{}])[0]
+    action_text = high_priority[0]["title"] if high_priority else first_alert.get("title", "Run the scheduled monitoring check")
+    return (
+        f"The Monitoring Agent should monitor cost and quality every four hours, then turn alerts into approval-safe recommendations. "
+        f"Current highest-priority item: {action_text}. It should not execute pauses, budget changes, or creative rotations without approval."
     )
 
 

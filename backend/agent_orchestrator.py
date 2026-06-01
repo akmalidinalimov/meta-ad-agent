@@ -145,10 +145,17 @@ def route_question(question: str) -> dict[str, Any]:
         return route("meta_ai_advisor", "Meta AI Analyze request should be captured read-only and validated against business data.")
     if any(word in lower for word in ["execute", "change budget", "browser", "go to meta", "pause", "publish", "upload creative"]):
         return route("execution", "Live Meta change request requires approval and API-first execution policy.")
+    if is_campaign_creation_request(lower):
+        return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
     if len(detect_involved_agents(question)) >= 2:
         return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
-    if any(word in lower for word in ["setup", "set up", "create campaign", "launch campaign", "new campaign", "campaign plan", "vsl"]):
-        return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
+    if is_campaign_analysis_request(lower):
+        if any(word in lower for word in ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
+            return route("creative", "Campaign-specific creative analysis should rank actual ads before planning.")
+        if any(word in lower for word in ["placement", "facebook", "instagram", "reels", "stories", "feed", "threads"]):
+            return route("placement", "Campaign-specific placement analysis should inspect delivery quality before planning.")
+        if any(word in lower for word in ["audience", "target", "interest", "age", "gender", "country", "region", "city", "tashkent"]):
+            return route("audience", "Campaign-specific audience analysis should rank actual ad sets before planning.")
     if any(word in lower for word in ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
         return route("creative", "Creative question needs hook, asset, and buyer-intent analysis.")
     if any(word in lower for word in ["audience", "target", "interest", "age", "gender", "country", "region", "city", "tashkent"]):
@@ -162,6 +169,44 @@ def route_question(question: str) -> dict[str, Any]:
     if any(word in lower for word in ["experiment", "test", "ab test", "a/b", "scale rule", "stop rule"]):
         return route("experiment", "Experiment question needs hypothesis, variable, metric, and guardrail design.")
     return route("audit", "Default to audit agent for historical performance and lessons.")
+
+
+def is_campaign_creation_request(lower_question: str) -> bool:
+    creation_phrases = (
+        "setup",
+        "set up",
+        "create campaign",
+        "create a campaign",
+        "build campaign",
+        "build a campaign",
+        "launch campaign",
+        "launch a campaign",
+        "new campaign",
+        "campaign plan",
+        "prepare campaign",
+        "prepare a campaign",
+    )
+    return any(phrase in lower_question for phrase in creation_phrases)
+
+
+def is_campaign_analysis_request(lower_question: str) -> bool:
+    analysis_words = (
+        "which",
+        "what",
+        "why",
+        "rank",
+        "analyze",
+        "analyse",
+        "audit",
+        "compare",
+        "worked",
+        "scale",
+        "avoid",
+        "cheapest",
+        "best",
+        "top",
+    )
+    return any(word in lower_question for word in analysis_words)
 
 
 def orchestrate_agent_chat(
