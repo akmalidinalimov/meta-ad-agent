@@ -52,7 +52,9 @@ from .demo_dashboard import (
     tracking_health,
 )
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
+from .routers import funnel as funnel_router
 from .routers import meta as meta_router
+from .routers import planning as planning_router
 from .routers.meta import meta_status
 from .dashboard_service import (
     answer_audiences,
@@ -125,48 +127,13 @@ app.add_middleware(
 )
 
 app.include_router(meta_router.router)
+app.include_router(planning_router.router)
+app.include_router(funnel_router.router)
 
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/api/playbooks")
-def campaign_playbooks() -> dict[str, Any]:
-    return {"playbooks": load_playbooks()}
-
-
-@app.post("/api/playbooks")
-def upsert_campaign_playbook(request: CampaignPlaybookRequest) -> dict[str, Any]:
-    return {"playbook": save_playbook(request.playbook)}
-
-
-@app.post("/api/strategy/generate")
-def generate_strategy(request: StrategyRequest) -> dict[str, Any]:
-    playbook = request.playbook or load_playbooks()[0]
-    knowledge = load_knowledge_base()
-    return {
-        "ok": True,
-        "strategy": generate_launch_strategy(playbook, knowledge),
-        "knowledgeAvailable": bool(knowledge),
-    }
-
-
-@app.post("/api/campaign-proposals/draft")
-def draft_campaign_proposal(request: DraftCampaignProposalRequest) -> dict[str, Any]:
-    playbook = request.playbook or first_playbook_with_segments(load_playbooks())
-    if not playbook:
-        raise HTTPException(status_code=400, detail="A playbook with at least one segment is required.")
-    account_id = request.accountId or os.getenv("META_AD_ACCOUNT_ID") or "act_unconfigured"
-    return {
-        "ok": True,
-        "proposal": build_draft_campaign_proposal(
-            playbook,
-            load_knowledge_base(),
-            account_id=account_id,
-        ),
-    }
 
 
 @app.get("/api/approvals")
@@ -791,36 +758,6 @@ def sync_task_with_approval(
     if extra_patch:
         patch.update(extra_patch)
     return update_agent_task_by_approval(approval_id, patch)
-
-
-@app.post("/api/funnel/events")
-def ingest_funnel_event(request: FunnelEventRequest) -> dict[str, Any]:
-    event = save_funnel_event(request.event)
-    return {"ok": True, "event": event, "summary": build_funnel_summary()}
-
-
-@app.post("/api/chatplace/events")
-async def ingest_chatplace_event(payload: dict[str, Any], request: Request) -> dict[str, Any]:
-    expected_secret = os.getenv("CHATPLACE_WEBHOOK_SECRET", "").strip()
-    provided_secret = str(payload.get("secret") or request.headers.get("x-chatplace-secret") or "").strip()
-    if expected_secret and provided_secret != expected_secret:
-        raise HTTPException(status_code=401, detail="Invalid ChatPlace webhook secret.")
-
-    event_payload = normalize_chatplace_event(payload)
-    event = save_funnel_event(event_payload)
-    return {
-        "ok": True,
-        "tracking_status": "saved",
-        "visitor_id": event.get("visitorId"),
-        "event_name": event.get("eventName"),
-        "telegram_user_id": event.get("telegramUserId"),
-        "summary": build_funnel_summary(),
-    }
-
-
-@app.get("/api/funnel/summary")
-def funnel_event_summary() -> dict[str, Any]:
-    return build_funnel_summary()
 
 
 @app.get("/api/dashboard")
