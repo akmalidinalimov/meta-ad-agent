@@ -1,9 +1,15 @@
+import pytest
+
 from backend.agent_orchestrator import (
     agent_registry,
+    is_campaign_creation_request,
     orchestrate_agent_chat,
     route_question,
 )
 from backend.test_strategy_generator import sample_knowledge, sample_playbook
+
+
+CAMPAIGN_NAME = "DA - SHAHLOAI - VSL 2 - 26.04.2026 Y"
 
 
 def test_agent_registry_contains_required_specialists_with_safe_permissions():
@@ -40,6 +46,64 @@ def test_route_question_selects_specialist_without_live_execution():
     assert route_question("Go to browser and change the budget")["agentId"] == "execution"
     assert route_question("Ask Meta AI to analyze this ad set and compare it with our funnel data")["agentId"] == "meta_ai_advisor"
     assert route_question("Create a Meta AI strategy from the Analyze answers")["agentId"] == "meta_ai_strategist"
+
+
+@pytest.mark.parametrize(
+    "question, expected_agent",
+    [
+        # Analysis questions about a named campaign must hit the analysis specialists,
+        # even though the campaign name itself contains the token "VSL".
+        (f"Which audience should we scale from {CAMPAIGN_NAME} and why?", "audience"),
+        (f"Which creative worked best in {CAMPAIGN_NAME}?", "creative"),
+        (f"Rank the creatives by leads and CPL for {CAMPAIGN_NAME}", "creative"),
+        (f"Which placement performed best for {CAMPAIGN_NAME}?", "placement"),
+        ("Which interests and age range converted cheapest?", "audience"),
+        ("Should we trust Facebook placements or stay on Instagram Reels?", "placement"),
+        # Creation requests route to the campaign builder (orchestrator) ...
+        ("Create a campaign with $100 per segment optimized for Telegram START", "orchestrator"),
+        ("Build a new campaign plan from the VSL 2 winners", "orchestrator"),
+        ("Set up my next campaign", "orchestrator"),
+        # ... including paused-draft creation, which must NOT be read as a pause action.
+        ("Create a paused campaign plan - DO NOT PUBLISH - DRAFT", "orchestrator"),
+        ("Prepare a paused campaign and paused ad sets only", "orchestrator"),
+        # Object-level edits route to the approval-gated execution agent.
+        ("Rename campaign 120123 to Business Automation VSL", "execution"),
+        ("Pause ad set 987654321 now", "execution"),
+        ("Go to the browser and change the budget", "execution"),
+    ],
+)
+def test_route_question_distinguishes_analysis_creation_and_execution(question, expected_agent):
+    assert route_question(question)["agentId"] == expected_agent
+
+
+def test_campaign_name_token_vsl_is_not_treated_as_creation_intent():
+    assert is_campaign_creation_request(f"Which audience should we scale from {CAMPAIGN_NAME}?") is False
+    assert is_campaign_creation_request("Create a paused campaign plan - DO NOT PUBLISH") is True
+
+
+def test_named_campaign_audience_question_does_not_generate_plan_or_execution():
+    response = orchestrate_agent_chat(
+        f"Which audience should we scale from {CAMPAIGN_NAME} and why?",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    # The analysis specialists are answered downstream (LLM/knowledge base), so the
+    # orchestrator must not hijack the turn with a planning or execution response.
+    assert response is None
+
+
+def test_paused_campaign_plan_request_builds_plan_not_execution_action():
+    response = orchestrate_agent_chat(
+        "Create a paused campaign plan with $100 per segment - DO NOT PUBLISH - DRAFT",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    assert "generatedApprovalRequest" not in response
+    assert "I will not execute" in response["answer"]
 
 
 def test_orchestrator_handles_multi_specialist_strategy_questions_with_decision_trace():
