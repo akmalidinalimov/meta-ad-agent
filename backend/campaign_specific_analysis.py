@@ -105,12 +105,13 @@ def creative_answer(campaign: dict[str, str], rows: list[dict[str, Any]], knowle
     lines = []
     for index, item in enumerate(enriched, start=1):
         media = "thumbnail+video" if item.get("hasThumbnail") and item.get("videoId") else "metadata only"
-        lines.append(f"{index}. {item['label']}: {metric_sentence(item)}; {media}.")
+        lines.append(f"{index}. {item['label']}: {metric_sentence(item)}; {media}. {creative_diagnosis(item)}")
 
     return (
         f"Campaign-specific creative ranking for {campaign['name']}:\n"
         + "\n".join(lines or ["No creative rows were found."])
-        + "\n\nRecommendation: replicate the top lead-volume creatives only after checking buyer intent. A viral creative should be reworked if it attracts low purchasing-power viewers."
+        + "\n\nRecommendation: replicate the top lead-volume creatives only after checking Telegram START and CRM quality. "
+        "A viral creative should be reworked if it attracts low purchasing-power viewers or creates registrations without purchases."
     )
 
 
@@ -129,7 +130,9 @@ def placement_answer(campaign: dict[str, str], rows: list[dict[str, Any]]) -> st
 
 
 def rank_rows(rows: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any]]:
-    grouped: dict[str, dict[str, Any]] = defaultdict(lambda: {"spend": 0.0, "clicks": 0.0, "leads": 0.0, "rows": 0})
+    grouped: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"spend": 0.0, "clicks": 0.0, "leads": 0.0, "purchases": 0.0, "rows": 0}
+    )
     for row in rows:
         label = label_for(row, keys)
         item = grouped[label]
@@ -138,6 +141,7 @@ def rank_rows(rows: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any
         item["spend"] += as_float(row.get("spend"))
         item["clicks"] += as_float(row.get("clicks"))
         item["leads"] += action_count(row, "lead") + action_count(row, "registration")
+        item["purchases"] += action_count(row, "purchase")
         item["rows"] += 1
     ranked = [with_rates(item) for item in grouped.values()]
     return sorted(ranked, key=lambda item: (item["cpl"] if item["cpl"] else 999999, -item["leads"], -item["spend"]))
@@ -171,8 +175,19 @@ def format_ranked(items: list[dict[str, Any]]) -> str:
 def metric_sentence(item: dict[str, Any]) -> str:
     return (
         f"${item['spend']:,.2f} spend, {item['clicks']:,.0f} clicks, {item['leads']:,.0f} leads, "
+        f"{item.get('purchases', 0):,.0f} purchases, "
         f"CPC ${item['cpc']:.4f}, CPL ${item['cpl']:.2f}, lead rate {item['leadRateFromClick']:.1f}%"
     )
+
+
+def creative_diagnosis(item: dict[str, Any]) -> str:
+    if item.get("leads", 0) >= 100 and item.get("purchases", 0) == 0:
+        return "Traffic magnet: audit buyer quality before scaling."
+    if item.get("purchases", 0) > 0:
+        return "Scale candidate: has downstream purchase proof."
+    if item.get("clicks", 0) < 50:
+        return "Insufficient data: keep in controlled rotation before judging."
+    return "Review candidate: compare lead quality against Telegram/CRM outcomes."
 
 
 def normalize(value: str) -> str:

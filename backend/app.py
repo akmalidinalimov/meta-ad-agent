@@ -2118,13 +2118,7 @@ def answer_from_knowledge_base(lower_question: str, knowledge: dict[str, Any]) -
         )
 
     if any(word in lower_question for word in ["creative", "video", "hook", "thumbnail", "viral", "worked", "didn't", "did not"]):
-        top_ad = first(analysis.get("topAds", []))
-        return (
-            f"Top ad from the saved Meta analysis is {top_ad['label'] if top_ad else 'not enough data'}. "
-            f"It produced {top_ad.get('leads', 0) if top_ad else 0:,.0f} leads and "
-            f"{top_ad.get('purchases', 0) if top_ad else 0:,.0f} purchases. "
-            "For creative decisions, compare high attention against downstream quality; cheap clicks alone are not enough."
-        )
+        return answer_creatives_from_knowledge_base(knowledge)
 
     if any(word in lower_question for word in ["summary", "learn", "lesson", "analysis", "recommend"]):
         llm = analysis.get("llmSummary")
@@ -2229,16 +2223,121 @@ def ratio_percent(value: float, base: float) -> float:
 
 def answer_creatives(data: dict[str, Any]) -> str:
     scores = sorted(data["creativeScores"], key=lambda item: item["quality"], reverse=True)
+    if not scores:
+        return "I do not have enough creative rows yet. Sync ads and insights first, then ask again."
+
     best = scores[0]
+    traffic_magnet = max(scores, key=lambda item: (item.get("leads", 0), item.get("clicks", 0)))
     weakest_intent = min(scores, key=lambda item: item["intent"])
-    analysis = next(item for item in data["creativeAnalyses"] if item["creativeId"] == weakest_intent["id"])
+    analysis_by_id = {item["creativeId"]: item for item in data["creativeAnalyses"]}
+    risky_analysis = analysis_by_id.get(weakest_intent["id"], {})
+    top_lines = []
+    for index, item in enumerate(scores[:5], start=1):
+        top_lines.append(
+            f"{index}. {item['name']}: quality {item['quality']}, intent {item['intent']}, "
+            f"{item.get('clicks', 0):,.0f} clicks, {item.get('leads', 0):,.0f} leads, "
+            f"{item.get('buyers', 0):,.0f} buyers. Action: {item.get('action', 'Review')}."
+        )
+
     return (
-        f"Best quality creative right now is {best['name']} with quality {best['quality']}, "
-        f"buyer intent {best['intent']}, and {best['buyers']} buyers. "
-        f"The risky creative is {weakest_intent['name']}: it has viral score {weakest_intent['viral']} "
-        f"but buyer intent only {weakest_intent['intent']}. Why: {analysis['whyItDidNotConvert']} "
-        f"Recommendation: {analysis['recommendedAction'].lower()} and make the course value clear earlier."
+        "Creative specialist ranking from the current dashboard data:\n"
+        + "\n".join(top_lines)
+        + (
+            f"\n\nScale candidate: {best['name']} because it has the strongest quality score "
+            f"({best['quality']}) and buyer-intent score ({best['intent']})."
+        )
+        + (
+            f"\nTraffic magnet to audit: {traffic_magnet['name']} produced "
+            f"{traffic_magnet.get('leads', 0):,.0f} leads from {traffic_magnet.get('clicks', 0):,.0f} clicks. "
+            "If buyer/Telegram quality is weak, keep the hook but aim it at higher purchasing-power audiences."
+        )
+        + (
+            f"\nRisk to avoid: {weakest_intent['name']} has viral score {weakest_intent['viral']} "
+            f"but buyer intent only {weakest_intent['intent']}. "
+            f"Why: {risky_analysis.get('whyItDidNotConvert', 'buyer quality is not proven yet')} "
+            f"Next action: {risky_analysis.get('recommendedAction', 'Review quality').lower()} and make course value clear earlier."
+        )
     )
+
+
+def answer_creatives_from_knowledge_base(knowledge: dict[str, Any]) -> str:
+    analysis = knowledge.get("analysis", {})
+    top_ads = analysis.get("topAds", []) or []
+    if not top_ads:
+        return "The saved knowledge base does not have creative-level Meta analysis yet. Refresh ads and insights first."
+
+    raw_ads = knowledge.get("raw", {}).get("ads", []) or []
+    ad_lookup = {str(ad.get("id")): ad for ad in raw_ads}
+    meaningful = [item for item in top_ads if has_meaningful_creative_evidence(item)]
+    ranked = meaningful or top_ads[:5]
+    top_lines = []
+    for index, item in enumerate(ranked[:5], start=1):
+        top_lines.append(f"{index}. {creative_label(item)}: {creative_metric_sentence(item)}; {creative_media_sentence(item, ad_lookup)}")
+
+    scale = first(ranked)
+    traffic_magnet = max(ranked, key=lambda item: (as_float(item.get("leads")), as_float(item.get("clicks")))) if ranked else None
+    weak_buyer = first([item for item in ranked if as_float(item.get("leads")) > 0 and as_float(item.get("purchases")) == 0])
+
+    return (
+        "Creative specialist ranking from the saved Meta knowledge base:\n"
+        + "\n".join(top_lines)
+        + (
+            f"\n\nScale candidate: {creative_label(scale)} has the strongest usable creative signal in the saved data. "
+            "Replicate the hook only if Telegram START and CRM quality are acceptable."
+            if scale
+            else "\n\nScale candidate: not enough meaningful creative data yet."
+        )
+        + (
+            f"\nTraffic magnet to audit: {creative_label(traffic_magnet)} generated "
+            f"{as_float(traffic_magnet.get('leads')):,.0f} leads from {as_float(traffic_magnet.get('clicks')):,.0f} clicks. "
+            "This can be useful for attention, but it is not a buyer-quality winner until downstream quality is proven."
+            if traffic_magnet
+            else ""
+        )
+        + (
+            f"\nAvoid scaling blindly: {creative_label(weak_buyer)} has registrations but no attributed purchases. "
+            "Use it with higher purchasing-power audiences or rework the first seconds to qualify course value."
+            if weak_buyer
+            else "\nAvoid scaling blindly: no clear zero-purchase traffic magnet was found in the meaningful creative slice."
+        )
+    )
+
+
+def has_meaningful_creative_evidence(item: dict[str, Any]) -> bool:
+    return as_float(item.get("spend")) >= 5 or as_float(item.get("clicks")) >= 50 or as_float(item.get("leads")) >= 20
+
+
+def creative_label(item: dict[str, Any] | None) -> str:
+    if not item:
+        return "not enough data"
+    keys = item.get("keys", {}) or {}
+    return str(keys.get("ad_name") or item.get("label") or keys.get("ad_id") or "Unknown creative")
+
+
+def creative_metric_sentence(item: dict[str, Any]) -> str:
+    return (
+        f"${as_float(item.get('spend')):,.2f} spend, {as_float(item.get('clicks')):,.0f} clicks, "
+        f"{as_float(item.get('leads')):,.0f} leads, {as_float(item.get('purchases')):,.0f} purchases, "
+        f"CPC ${as_float(item.get('cpc')):.4f}, CPL ${as_float(item.get('cpl')):.2f}, "
+        f"quality {as_float(item.get('qualityScore')):.1f}"
+    )
+
+
+def creative_media_sentence(item: dict[str, Any], ad_lookup: dict[str, dict[str, Any]]) -> str:
+    keys = item.get("keys", {}) or {}
+    ad_id = str(keys.get("ad_id") or "")
+    ad = ad_lookup.get(ad_id) or {}
+    raw_creative = ad.get("creative", {}) or {}
+    analysis_creative = item.get("creative", {}) or {}
+    has_thumbnail = bool(raw_creative.get("thumbnail_url") or analysis_creative.get("thumbnailUrl"))
+    has_video = bool(raw_creative.get("video_id") or analysis_creative.get("videoId"))
+    if has_thumbnail and has_video:
+        return "thumbnail and video ID available"
+    if has_thumbnail:
+        return "thumbnail available"
+    if has_video:
+        return "video ID available"
+    return "media metadata missing"
 
 
 def answer_audiences(data: dict[str, Any]) -> str:
