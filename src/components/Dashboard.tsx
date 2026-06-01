@@ -77,6 +77,7 @@ import type {
   DashboardFilters,
   DashboardKpi,
   DailyAdMetric,
+  DraftCampaignProposal,
   FunnelEventSummary,
   IconName,
   LaunchStrategy,
@@ -1722,9 +1723,11 @@ function StrategyView() {
   const [playbooks, setPlaybooks] = useState<CampaignPlaybook[]>([])
   const [selectedPlaybookId, setSelectedPlaybookId] = useState('')
   const [strategy, setStrategy] = useState<LaunchStrategy | null>(null)
+  const [proposal, setProposal] = useState<DraftCampaignProposal | null>(null)
   const [knowledgeAvailable, setKnowledgeAvailable] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isPreparing, setIsPreparing] = useState(false)
+  const [isGeneratingProposal, setIsGeneratingProposal] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
   useEffect(() => {
@@ -1809,6 +1812,33 @@ function StrategyView() {
     }
   }
 
+  const generateDraftProposal = async () => {
+    if (isGeneratingProposal || !selectedPlaybookHasSegments) {
+      return
+    }
+
+    setIsGeneratingProposal(true)
+    setMessage('Generating review-only draft proposal...')
+    try {
+      const response = await fetch('/api/campaign-proposals/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playbook: selectedPlaybook ?? null }),
+      })
+      const result = (await response.json()) as { ok?: boolean; proposal?: DraftCampaignProposal; detail?: string; error?: string }
+      if (!response.ok || !result.ok || !result.proposal) {
+        setMessage(result.detail ?? result.error ?? `Draft proposal failed with ${response.status}`)
+        return
+      }
+      setProposal(result.proposal)
+      setMessage('Review-only draft proposal generated. Nothing was created in Meta.')
+    } catch {
+      setMessage('Could not reach the draft proposal endpoint.')
+    } finally {
+      setIsGeneratingProposal(false)
+    }
+  }
+
   return (
     <section className="dashboard-grid">
       <article className="panel panel-wide">
@@ -1832,8 +1862,43 @@ function StrategyView() {
             <ShieldAlert size={16} />
             {isPreparing ? 'Preparing...' : 'Prepare approval'}
           </button>
+          <button className="sync-button secondary" type="button" onClick={generateDraftProposal} disabled={isGeneratingProposal || !selectedPlaybookHasSegments}>
+            <ClipboardCheck size={16} />
+            {isGeneratingProposal ? 'Generating...' : 'Generate draft proposal'}
+          </button>
           {message && <small className="sync-message">{message}</small>}
         </div>
+      </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Review-Only Draft Proposal" title="Paused campaign packet" icon={ClipboardCheck} />
+        {proposal ? (
+          <div className="proposal-layout">
+            <div className="proposal-summary">
+              <MiniMetric label="Campaign status" value={proposal.draftCampaign.status} />
+              <MiniMetric label="Draft ad sets" value={proposal.draftAdSets.length.toString()} />
+              <MiniMetric label="Daily budget" value={formatCurrency(proposal.budgetPlan.totalDailyBudgetUsd)} />
+              <MiniMetric label="Tracking" value={labelRawSetting(proposal.trackingReadiness.status)} />
+            </div>
+            <div className="metric-list">
+              <div><strong>Campaign</strong><span>{proposal.draftCampaign.name}</span></div>
+              <div><strong>Recommended placements</strong><span>{proposal.recommendedPlacements.map(labelRawSetting).join(', ')}</span></div>
+              <div><strong>Avoid placements</strong><span>{proposal.avoidPlacements.map(labelRawSetting).join(', ')}</span></div>
+              <div><strong>Approval packet</strong><span>{proposal.approvalPacket.status} / {proposal.approvalPacket.guardrailResult}</span></div>
+            </div>
+            <div className="proposal-checklist">
+              {proposal.operatorChecklist.slice(0, 5).map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="empty-panel compact">
+            <ClipboardCheck size={24} />
+            <strong>No proposal generated yet</strong>
+            <p>Generate a review-only packet to inspect paused campaign/ad set payloads before creating anything in Meta.</p>
+          </div>
+        )}
       </article>
 
       {strategy ? (

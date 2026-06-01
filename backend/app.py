@@ -37,6 +37,7 @@ from .meta_execution import (
     payload_for_meta_action,
 )
 from .monitoring_runner import ALERTS_PATH, list_monitoring_alerts, run_monitoring_check
+from .monitoring_scheduler import list_monitoring_runs, run_scheduled_monitoring
 from .meta_client import (
     MetaApiError,
     get_ad_account_summary,
@@ -146,6 +147,10 @@ class ApprovalChangesRequest(BaseModel):
 class ApprovalExecutionRequest(BaseModel):
     dryRun: bool = True
     confirmLive: bool = False
+
+
+class ScheduledMonitoringRequest(BaseModel):
+    force: bool = False
 
 
 class FunnelEventRequest(BaseModel):
@@ -788,6 +793,20 @@ def run_monitoring() -> dict[str, Any]:
     return run_monitoring_check(dashboard(), send_alert=send_telegram_message_sync)
 
 
+@app.get("/api/monitoring/runs")
+def monitoring_runs() -> dict[str, Any]:
+    return {"runs": list_monitoring_runs()}
+
+
+@app.post("/api/monitoring/scheduled")
+def scheduled_monitoring(request: ScheduledMonitoringRequest) -> dict[str, Any]:
+    return run_scheduled_monitoring(
+        dashboard,
+        send_alert=send_telegram_message_sync,
+        force=request.force,
+    )
+
+
 @app.post("/api/tasks")
 def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
     command = request.command.strip()
@@ -936,13 +955,23 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     shortcut = handle_telegram_shortcut(command, text)
     if shortcut:
         return shortcut
+    if is_attention_question(text):
+        answer = telegram_attention_text()
+        reply = send_telegram_reply(command, answer)
+        return {
+            "ok": True,
+            "shortcut": "attention",
+            "telegram": command,
+            "answer": answer,
+            "reply": reply,
+        }
 
     source_task = AgentTaskRequest(source="telegram", command=text)
     result = create_orchestrated_agent_task(source_task)
     task = result.get("task", {})
     plan = task.get("plan") or {}
     answer = plan.get("answer") or "Telegram command sent to the orchestrator."
-    telegram_reply = send_telegram_reply(command, clamp_telegram_text(answer))
+    telegram_reply = send_telegram_reply(command, clamp_telegram_text(format_telegram_orchestrator_reply(plan, answer)))
     return {
         **result,
         "telegram": command,
@@ -964,6 +993,32 @@ def send_telegram_reply(command: dict[str, Any], message: str) -> dict[str, Any]
     return send_telegram_message_sync(message, chat_id=chat_id)
 
 
+def format_telegram_orchestrator_reply(plan: dict[str, Any], answer: str) -> str:
+    lines = [answer.strip()]
+    active_agent = plan.get("activeAgent")
+    if active_agent:
+        lines.extend(["", f"Agent: {active_agent}"])
+    quality = plan.get("quality") or {}
+    if quality:
+        lines.append(f"Quality: {quality.get('score', 0)}/100 ({quality.get('status', 'unknown')})")
+    decision = plan.get("agentDecision") or {}
+    involved = decision.get("involvedAgents") or [
+        handoff.get("toAgent")
+        for handoff in plan.get("agentHandoffs", [])
+        if handoff.get("toAgent")
+    ]
+    if involved:
+        lines.append(f"Involved agents: {', '.join(dict.fromkeys(involved))}")
+    suggested = plan.get("suggestedQuestions") or []
+    if suggested:
+        lines.extend(["", "Next:", *[f"- {item}" for item in suggested[:3]]])
+    approval = plan.get("generatedApprovalRequest")
+    if approval:
+        lines.extend(["", f"Approval: {approval.get('status')} ({approval.get('id')})"])
+    lines.append("Safety: no Meta change is published without approval.")
+    return "\n".join(lines)
+
+
 def handle_telegram_shortcut(command: dict[str, Any], text: str) -> dict[str, Any] | None:
     shortcut = text.strip().split(maxsplit=1)[0].lower().lstrip("/")
     handlers = {
@@ -973,6 +1028,8 @@ def handle_telegram_shortcut(command: dict[str, Any], text: str) -> dict[str, An
         "tasks": telegram_tasks_text,
         "approvals": telegram_approvals_text,
         "agents": telegram_agents_text,
+        "attention": telegram_attention_text,
+        "monitoring": telegram_attention_text,
     }
     handler = handlers.get(shortcut)
     if not handler:
@@ -986,6 +1043,19 @@ def handle_telegram_shortcut(command: dict[str, Any], text: str) -> dict[str, An
         "answer": answer,
         "reply": reply,
     }
+
+
+def is_attention_question(text: str) -> bool:
+    lower = text.lower()
+    return any(
+        phrase in lower
+        for phrase in [
+            "what needs attention",
+            "what should i watch",
+            "show alerts",
+            "monitoring status",
+        ]
+    )
 
 
 def telegram_command_allowed(command: dict[str, Any]) -> bool:
@@ -1016,6 +1086,7 @@ def telegram_help_text() -> str:
             "/tasks - latest orchestrator tasks",
             "/approvals - pending approval requests",
             "/agents - available specialist agents",
+            "/attention - latest monitoring and alert priorities",
             "/help - show this menu",
             "",
             "You can also write a normal instruction, for example: create a paused campaign plan for 3 VSLs.",
@@ -1047,6 +1118,27 @@ def telegram_tasks_text() -> str:
     lines = ["Latest tasks"]
     for task in tasks:
         lines.append(f"- {task.get('requestedAction', 'Untitled task')}: {task.get('status')}")
+    return "\n".join(lines)
+
+
+def telegram_attention_text() -> str:
+    alerts = list_monitoring_alerts()[:5]
+    runs = list_monitoring_runs()[:3]
+    lines = ["What needs attention now"]
+    if runs:
+        latest = runs[0]
+        lines.append(
+            f"Last monitoring run: {latest.get('status', 'unknown')} at {latest.get('finishedAt') or latest.get('startedAt') or 'unknown'}"
+        )
+    else:
+        lines.append("Last monitoring run: none recorded yet")
+    if not alerts:
+        lines.append("No saved monitoring alerts. Run /monitoring or the dashboard monitoring check before scaling.")
+    else:
+        lines.append("Top alerts:")
+        for alert in alerts:
+            lines.append(f"- {alert.get('severity', 'unknown')}: {alert.get('title', 'Untitled alert')}")
+    lines.append("Safety: alerts are recommendations only; execution still requires approval.")
     return "\n".join(lines)
 
 

@@ -87,6 +87,10 @@ def test_telegram_command_creates_agent_task(monkeypatch, tmp_path):
     assert tasks[0]["activeAgent"] == "orchestrator"
     assert sent[0][1]["chat_id"] == "1001"
     assert "approval-ready campaign plan" in sent[0][0]
+    assert "Agent: orchestrator" in sent[0][0]
+    assert "Quality:" in sent[0][0]
+    assert "Involved agents:" in sent[0][0]
+    assert "Next:" in sent[0][0]
 
 
 def test_telegram_natural_language_meta_action_creates_approval(monkeypatch, tmp_path):
@@ -138,6 +142,32 @@ def test_telegram_status_command_replies_without_creating_task(monkeypatch, tmp_
     assert response.json()["shortcut"] == "status"
     assert client.get("/api/tasks").json()["tasks"] == []
     assert "Agent status" in sent[0][0]
+
+
+def test_telegram_attention_question_replies_with_monitoring_context(monkeypatch, tmp_path):
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    monkeypatch.setattr(app_module, "list_monitoring_alerts", lambda: [{"title": "Lead rate dropped", "severity": "medium"}])
+    monkeypatch.setattr(app_module, "list_monitoring_runs", lambda: [{"status": "completed", "finishedAt": "2026-06-01T10:00:00Z", "alertsCreated": 1}])
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "message": {
+                "chat": {"id": 1001},
+                "from": {"id": 2002, "username": "akmal"},
+                "text": "what needs attention now?",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["shortcut"] == "attention"
+    assert "What needs attention now" in sent[0][0]
+    assert "Lead rate dropped" in sent[0][0]
+    assert client.get("/api/tasks").json()["tasks"] == []
 
 
 def test_telegram_tasks_and_approvals_commands_show_queue(monkeypatch, tmp_path):

@@ -1410,9 +1410,29 @@
 .strategy-budget-list,
 .strategy-angle-list,
 .strategy-knowledge-grid,
+.proposal-layout,
+.proposal-checklist,
 .knowledge-list {
   display: grid;
   gap: 10px;
+}
+
+.proposal-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.proposal-checklist span {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.4;
 }
 
 .strategy-budget-row {
@@ -1810,6 +1830,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .proposal-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .builder-grid,
   .command-grid,
   .builder-summary,
@@ -1877,6 +1901,10 @@
   }
 
   .strategy-budget-row {
+    grid-template-columns: 1fr;
+  }
+
+  .proposal-summary {
     grid-template-columns: 1fr;
   }
 

@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 import backend.app as app_module
 from backend.app import app
 from backend.monitoring_runner import list_monitoring_alerts, run_monitoring_check
+from backend.monitoring_scheduler import list_monitoring_runs, run_scheduled_monitoring
 
 
 def sample_monitoring_dashboard() -> dict:
@@ -107,3 +108,54 @@ def test_monitoring_ignores_stale_active_campaigns_outside_latest_window(tmp_pat
 
     assert result["snapshotsChecked"] == 1
     assert result["alerts"] == []
+
+
+def test_scheduled_monitoring_runs_once_per_interval_and_logs_results(tmp_path):
+    storage_dir = tmp_path / "storage"
+    sent = []
+
+    first = run_scheduled_monitoring(
+        sample_monitoring_dashboard,
+        storage_dir=storage_dir,
+        send_alert=lambda text: sent.append(text) or {"ok": True},
+    )
+    second = run_scheduled_monitoring(
+        sample_monitoring_dashboard,
+        storage_dir=storage_dir,
+        send_alert=lambda text: sent.append(text) or {"ok": True},
+    )
+
+    runs = list_monitoring_runs(storage_dir=storage_dir)
+    assert first["ok"] is True
+    assert first["skipped"] is False
+    assert second["ok"] is True
+    assert second["skipped"] is True
+    assert len(runs) == 2
+    assert runs[0]["status"] == "skipped"
+    assert runs[1]["status"] == "completed"
+
+
+def test_scheduled_monitoring_endpoint_exposes_safe_run_log(monkeypatch, tmp_path):
+    storage_dir = tmp_path / "storage"
+    monkeypatch.setattr(app_module, "dashboard", sample_monitoring_dashboard)
+    monkeypatch.setattr(
+        app_module,
+        "run_scheduled_monitoring",
+        lambda dashboard_factory, send_alert, force=False: run_scheduled_monitoring(
+            dashboard_factory,
+            storage_dir=storage_dir,
+            send_alert=send_alert,
+            force=force,
+        ),
+    )
+    monkeypatch.setattr(app_module, "list_monitoring_runs", lambda: list_monitoring_runs(storage_dir=storage_dir))
+    monkeypatch.setattr(app_module, "send_telegram_message_sync", lambda text: {"ok": True})
+    client = TestClient(app)
+
+    run_response = client.post("/api/monitoring/scheduled", json={"force": True})
+    status_response = client.get("/api/monitoring/runs")
+
+    assert run_response.status_code == 200
+    assert run_response.json()["mode"] == "alert_only"
+    assert status_response.status_code == 200
+    assert status_response.json()["runs"][0]["status"] == "completed"

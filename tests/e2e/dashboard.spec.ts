@@ -20,6 +20,10 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await expect(page.getByText(/current campaign decisions/i)).toBeVisible();
   await expect(page.getByText(/latest campaign health warnings/i)).toBeVisible();
 
+  await page.getByRole('button', { name: /strategy/i }).click();
+  await expect(page.getByRole('button', { name: /generate draft proposal/i })).toBeVisible();
+  await expect(page.getByText(/review-only draft proposal/i)).toBeVisible();
+
   await page.getByRole('button', { name: /refresh data/i }).click();
   await expect(page.getByRole('heading', { name: /campaign audit dashboard/i })).toBeVisible();
 });

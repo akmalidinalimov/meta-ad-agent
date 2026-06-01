@@ -432,6 +432,64 @@ export interface LaunchStrategy {
   assumptions: string[]
 }
 
+export interface DraftCampaignProposal {
+  id: string
+  mode: 'review_only'
+  requiresApproval: boolean
+  publishBlocked: boolean
+  generatedAt: string
+  playbookId?: string
+  playbookName?: string
+  strategyId: string
+  draftCampaign: {
+    name: string
+    objective: string
+    status: string
+    buying_type?: string
+  }
+  draftAdSets: Array<{
+    name: string
+    status: string
+    daily_budget: number
+    optimization_goal: string
+    targeting: {
+      geo_locations?: Record<string, unknown>
+      age_min?: number
+      age_max?: number
+      publisher_platforms?: string[]
+      instagram_positions?: string[]
+      flexible_spec?: Array<{
+        interests?: Array<{ name: string }>
+      }>
+    }
+  }>
+  recommendedAudiences: Array<{
+    segmentId: string
+    segmentName: string
+    audienceHypothesis: string
+    ageRange: string
+    gender: string
+    locations: string[]
+    interestStrategy: string[]
+    confidence: string
+  }>
+  recommendedPlacements: string[]
+  avoidPlacements: string[]
+  budgetPlan: LaunchStrategy['budget']
+  trackingReadiness: {
+    status: 'ready' | 'needs_links'
+    missing: Array<{
+      segmentId: string
+      segmentName: string
+      missing: string[]
+    }>
+    requiredEvents: string[]
+  }
+  approvalPacket: ApprovalRequest
+  operatorChecklist: string[]
+  evidence: LaunchStrategy['knowledgeUsed']
+}
+
 export interface ApprovalRequest {
   id: string
   actionType: string
