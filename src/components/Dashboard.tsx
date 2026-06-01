@@ -930,6 +930,7 @@ function CreativesView({
         {selectedCreative && score ? (
           <>
             <CreativePreview creative={selectedCreative} />
+            <CreativeMetrics score={score} />
             <div className="score-grid">
               <Score label="Viral" value={analysis?.viralScore ?? score.viral} tone="neutral" />
               <Score label="Intent" value={analysis?.buyerIntentScore ?? score.intent} tone={score.intent >= 70 ? 'good' : 'warning'} />
@@ -967,6 +968,38 @@ function CreativesView({
         )}
       </article>
     </section>
+  )
+}
+
+function CreativeMetrics({ score }: { score: ReturnType<typeof deriveCreativeScores>[number] }) {
+  const stats: { label: string; value: string; tone?: string }[] = [
+    { label: 'Spend', value: `$${score.spendUsd.toFixed(2)}` },
+    { label: 'CPL', value: score.cpl > 0 ? `$${score.cpl.toFixed(2)}` : '—' },
+    { label: 'Lead rate', value: `${score.leadRate.toFixed(1)}%` },
+    { label: 'Leads', value: formatNumber(score.leads) },
+    { label: 'Clicks', value: formatNumber(score.clicks) },
+    { label: 'Confidence', value: score.spendConfidence, tone: score.spendConfidence },
+  ]
+
+  return (
+    <div className="creative-metrics">
+      <div className="metric-stats">
+        {stats.map((stat) => (
+          <div className="metric-stat" key={stat.label}>
+            <small>{stat.label}</small>
+            <strong className={stat.tone ? `confidence ${stat.tone}` : undefined}>{stat.value}</strong>
+          </div>
+        ))}
+      </div>
+      {(score.lowSample || score.mismatch >= 40) && (
+        <div className="metric-notes">
+          {score.lowSample && <span className="creative-flag low-sample">Low sample — ranking is provisional</span>}
+          {score.mismatch >= 40 && (
+            <span className="creative-flag mismatch">Viral≫intent — attention without buyer intent</span>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
