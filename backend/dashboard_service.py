@@ -13,11 +13,13 @@ from typing import Any
 
 from .analysis_engine import action_count, as_float, extract_interests, valid_rows
 from .campaign_watch import build_campaign_watch
+from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base
 from .meta_client import get_meta_config
-from .monitoring_runner import list_monitoring_alerts
+from .monitoring_runner import ALERTS_PATH, list_monitoring_alerts
 from .demo_dashboard import (
     ad_sets,
     ads,
+    approval_actions,
     audience,
     campaigns,
     creative_analyses,
@@ -28,6 +30,68 @@ from .demo_dashboard import (
     metrics,
     tracking_health,
 )
+
+DASHBOARD_CACHE: dict[str, Any] = {
+    "key": None,
+    "payload": None,
+}
+
+
+def build_dashboard() -> dict[str, Any]:
+    knowledge = load_knowledge_base()
+    if knowledge:
+        cache_key = dashboard_cache_key()
+        if DASHBOARD_CACHE["key"] == cache_key and DASHBOARD_CACHE["payload"]:
+            return DASHBOARD_CACHE["payload"]
+
+        payload = dashboard_from_knowledge_base(knowledge)
+        DASHBOARD_CACHE["key"] = cache_key
+        DASHBOARD_CACHE["payload"] = payload
+        return payload
+
+    return {
+        "campaigns": campaigns,
+        "adSets": ad_sets,
+        "ads": ads,
+        "creatives": creatives,
+        "creativeAnalyses": creative_analyses,
+        "metrics": metrics,
+        "kpis": derive_kpis(metrics),
+        "funnel": derive_funnel(metrics),
+        "trend": derive_trend(metrics),
+        "creativeScores": derive_creative_scores(metrics),
+        "placements": derive_placements(metrics),
+        "audience": audience,
+        "insights": insights,
+        "experiments": experiments,
+        "trackingHealth": tracking_health,
+        "monitoringAlerts": list_monitoring_alerts(),
+        "campaignWatch": build_campaign_watch(
+            {
+                "campaigns": campaigns,
+                "metrics": metrics,
+            }
+        ),
+        "approvalActions": approval_actions,
+        "glossary": glossary,
+        "dataSource": {
+            "kind": "mock",
+            "label": "Mock dashboard model",
+            "generatedAt": None,
+            "syncErrors": [],
+        },
+    }
+
+
+def dashboard_cache_key() -> tuple[int | None, int | None]:
+    return (file_mtime_ns(KNOWLEDGE_BASE_PATH), file_mtime_ns(ALERTS_PATH))
+
+
+def file_mtime_ns(path: Any) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
 
 def derive_kpis(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     spend = sum(row["spendUsd"] for row in rows)

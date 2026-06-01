@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api_models import (
@@ -34,7 +33,6 @@ from .approval_store import (
     request_changes,
     update_approval_request,
 )
-from .campaign_watch import build_campaign_watch
 from .chatplace_events import normalize_chatplace_event
 from .demo_dashboard import (
     ad_sets,
@@ -51,12 +49,15 @@ from .demo_dashboard import (
     tracking_health,
 )
 from .routers import crm as crm_router
+from .routers import dashboard as dashboard_router
 from .routers import funnel as funnel_router
 from .routers import meta as meta_router
+from .routers import monitoring as monitoring_router
 from .routers import planning as planning_router
 from .routers.meta import meta_status
 from .dashboard_service import (
     answer_audiences,
+    build_dashboard,
     answer_creatives,
     answer_experiments,
     answer_from_knowledge_base,
@@ -78,7 +79,7 @@ from .dashboard_service import (
 )
 from .draft_campaign_proposal import build_draft_campaign_proposal
 from .funnel_events import build_funnel_summary, save_funnel_event
-from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base
+from .knowledge_base import load_knowledge_base
 from .llm_reasoner import generate_chat_answer
 from .meta_execution import (
     build_campaign_creation_approval,
@@ -86,8 +87,8 @@ from .meta_execution import (
     execute_meta_action_approval,
     payload_for_meta_action,
 )
-from .monitoring_runner import ALERTS_PATH, list_monitoring_alerts, run_monitoring_check
-from .monitoring_scheduler import list_monitoring_runs, run_scheduled_monitoring
+from .monitoring_runner import list_monitoring_alerts
+from .monitoring_scheduler import list_monitoring_runs
 from .meta_client import (
     create_ad_set as meta_create_ad_set,
     create_campaign as meta_create_campaign,
@@ -102,11 +103,6 @@ from .telegram_commands import normalize_telegram_command
 from .telegram_outbound import send_approval_notification, send_telegram_message_sync
 
 app = FastAPI(title="Meta Ad Agent API")
-
-DASHBOARD_CACHE: dict[str, Any] = {
-    "key": None,
-    "payload": None,
-}
 
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -129,6 +125,8 @@ app.include_router(meta_router.router)
 app.include_router(planning_router.router)
 app.include_router(funnel_router.router)
 app.include_router(crm_router.router)
+app.include_router(dashboard_router.router)
+app.include_router(monitoring_router.router)
 
 
 @app.get("/api/health")
@@ -297,30 +295,6 @@ def agents() -> dict[str, Any]:
 @app.get("/api/tasks")
 def agent_tasks() -> dict[str, Any]:
     return {"tasks": list_agent_tasks()}
-
-
-@app.get("/api/monitoring/alerts")
-def monitoring_alerts() -> dict[str, Any]:
-    return {"alerts": list_monitoring_alerts()}
-
-
-@app.post("/api/monitoring/run")
-def run_monitoring() -> dict[str, Any]:
-    return run_monitoring_check(dashboard(), send_alert=send_telegram_message_sync)
-
-
-@app.get("/api/monitoring/runs")
-def monitoring_runs() -> dict[str, Any]:
-    return {"runs": list_monitoring_runs()}
-
-
-@app.post("/api/monitoring/scheduled")
-def scheduled_monitoring(request: ScheduledMonitoringRequest) -> dict[str, Any]:
-    return run_scheduled_monitoring(
-        dashboard,
-        send_alert=send_telegram_message_sync,
-        force=request.force,
-    )
 
 
 @app.post("/api/tasks")
@@ -709,75 +683,6 @@ def sync_task_with_approval(
     return update_agent_task_by_approval(approval_id, patch)
 
 
-@app.get("/api/dashboard")
-def dashboard() -> dict[str, Any]:
-    knowledge = load_knowledge_base()
-    if knowledge:
-        cache_key = dashboard_cache_key()
-        if DASHBOARD_CACHE["key"] == cache_key and DASHBOARD_CACHE["payload"]:
-            return DASHBOARD_CACHE["payload"]
-
-        payload = dashboard_from_knowledge_base(knowledge)
-        DASHBOARD_CACHE["key"] = cache_key
-        DASHBOARD_CACHE["payload"] = payload
-        return payload
-
-    return {
-        "campaigns": campaigns,
-        "adSets": ad_sets,
-        "ads": ads,
-        "creatives": creatives,
-        "creativeAnalyses": creative_analyses,
-        "metrics": metrics,
-        "kpis": derive_kpis(metrics),
-        "funnel": derive_funnel(metrics),
-        "trend": derive_trend(metrics),
-        "creativeScores": derive_creative_scores(metrics),
-        "placements": derive_placements(metrics),
-        "audience": audience,
-        "insights": insights,
-        "experiments": experiments,
-        "trackingHealth": tracking_health,
-        "monitoringAlerts": list_monitoring_alerts(),
-        "campaignWatch": build_campaign_watch(
-            {
-                "campaigns": campaigns,
-                "metrics": metrics,
-            }
-        ),
-        "approvalActions": approval_actions,
-        "glossary": glossary,
-        "dataSource": {
-            "kind": "mock",
-            "label": "Mock dashboard model",
-            "generatedAt": None,
-            "syncErrors": [],
-        },
-    }
-
-
-def dashboard_cache_key() -> tuple[int | None, int | None]:
-    return (file_mtime_ns(KNOWLEDGE_BASE_PATH), file_mtime_ns(ALERTS_PATH))
-
-
-def file_mtime_ns(path: Any) -> int | None:
-    try:
-        return path.stat().st_mtime_ns
-    except FileNotFoundError:
-        return None
-
-
-@app.get("/api/dashboard.js")
-def dashboard_script(callback: str = "__META_AD_AGENT_DASHBOARD__") -> Response:
-    safe_callback = "".join(character for character in callback if character.isalnum() or character in "._$")
-    if not safe_callback:
-        safe_callback = "__META_AD_AGENT_DASHBOARD__"
-    return Response(
-        content=f"{safe_callback}({json.dumps(dashboard(), ensure_ascii=False)});",
-        media_type="application/javascript",
-    )
-
-
 def specialist_chat_response(
     question: str,
     *,
@@ -809,7 +714,7 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     lower = question.lower()
-    dashboard_data = dashboard()
+    dashboard_data = build_dashboard()
     meta = await meta_status()
     knowledge = load_knowledge_base()
     orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks())
