@@ -24,7 +24,7 @@ def generate_launch_strategy(playbook: dict[str, Any], knowledge: dict[str, Any]
     estimated_leads = round(total_budget / cpl, 1) if total_budget else 0
     risks = build_risks(strategy_segments, analysis, estimated_leads, capacity)
 
-    return {
+    strategy = {
         "id": f"strategy_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
         "playbookId": playbook.get("id", "pb_default"),
         "playbookName": playbook.get("name", "Configurable launch playbook"),
@@ -63,6 +63,8 @@ def generate_launch_strategy(playbook: dict[str, Any], knowledge: dict[str, Any]
             "Keep Meta changes approval-gated; the agent recommends actions before executing them.",
         ],
     }
+    strategy["launchPacket"] = build_launch_packet(strategy, playbook, analysis)
+    return strategy
 
 
 def build_segment_strategy(segment: dict[str, Any], analysis: dict[str, Any], default_budget: float) -> dict[str, Any]:
@@ -294,6 +296,86 @@ def build_knowledge_used(analysis: dict[str, Any]) -> dict[str, Any]:
         "lessons": analysis.get("lessons", [])[:5],
         "recommendations": analysis.get("recommendations", [])[:5],
     }
+
+
+def build_launch_packet(strategy: dict[str, Any], playbook: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "decision": "approval_required",
+        "primaryGoal": playbook.get("primarySuccessMetric", "telegram_start"),
+        "audiencePlan": [
+            {
+                "segmentId": segment["id"],
+                "segmentName": segment["name"],
+                "hypothesis": segment["audienceHypothesis"],
+                "ageRange": segment["ageRange"],
+                "gender": segment["gender"],
+                "locations": segment["geoStrategy"]["locations"],
+                "interests": segment["interestStrategy"],
+                "scaleCondition": "Scale only after Telegram START quality and CRM lead quality hold for the monitoring window.",
+            }
+            for segment in strategy.get("segments", [])
+        ],
+        "creativePlan": [
+            {
+                "segmentId": segment["id"],
+                "segmentName": segment["name"],
+                "angles": segment["creativeAngles"],
+                "replicate": "Proof-led Shahlo teaching/workflow videos and strong AI visual hooks.",
+                "avoid": "Viral curiosity creatives that generate registrations without buyer-quality proof.",
+            }
+            for segment in strategy.get("segments", [])
+        ],
+        "placementPlan": {
+            "use": list(dict.fromkeys(placement for segment in strategy.get("segments", []) for placement in segment.get("recommendedPlacements", []))),
+            "avoid": launch_packet_avoid_placements(analysis),
+            "rule": "Keep Instagram placements separated from Facebook tests until downstream buyer quality is proven.",
+        },
+        "funnelPlan": {
+            "readiness": "ready" if all(segment["funnelReadiness"]["status"] == "ready" for segment in strategy.get("segments", [])) else "needs_links",
+            "requiredEvents": [
+                "landing_page_view",
+                "landing_button_click",
+                "telegram_start",
+                "bot_step",
+                "crm_form_submit",
+                "crm_stage_change",
+                "payment",
+            ],
+            "risks": strategy.get("risks", []),
+        },
+        "experimentPlan": strategy.get("testMatrix", []),
+        "monitoringPlan": {
+            "cadenceHours": 4,
+            "watchMetrics": ["CPC", "CPL", "landing visit rate", "landing lead rate", "Telegram START rate", "CRM qualified rate"],
+            "approvalRule": "Monitoring can recommend pauses, budget changes, and creative rotations, but execution requires approval.",
+        },
+        "approvalPlan": {
+            "required": True,
+            "actions": strategy.get("approvalActions", []),
+            "publishBlocked": True,
+        },
+        "regressionChecklist": [
+            "Dashboard loads and primary tabs render.",
+            "Meta knowledge base is available or missing state is explicit.",
+            "Agent chat routes to orchestrator, audience, creative, placement, funnel, monitoring, experiment, Meta AI, and execution agents.",
+            "Campaign proposal remains review-only and paused.",
+            "Approval queue blocks live Meta writes until approved.",
+            "Dry-run execution never sends Meta write requests.",
+            "Telegram command endpoint accepts natural-language tasks with the configured secret.",
+            "Monitoring run stores alerts and does not execute changes.",
+            "Funnel tracking keeps visitor_id and telegram_user_id requirements visible.",
+            "Build, lint, backend tests, frontend tests, and e2e smoke test pass.",
+        ],
+    }
+
+
+def launch_packet_avoid_placements(analysis: dict[str, Any]) -> list[str]:
+    avoid = []
+    for item in analysis.get("placements", []):
+        label = str(item.get("label") or "").lower()
+        if any(word in label for word in ["facebook", "audience_network", "messenger"]):
+            avoid.append(label.replace(" / ", "_").replace(" ", "_"))
+    return avoid or ["facebook_feed", "audience_network"]
 
 
 def strategy_placement_evidence(analysis: dict[str, Any]) -> list[dict[str, Any]]:

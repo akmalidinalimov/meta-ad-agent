@@ -21,10 +21,12 @@ def run_monitoring_check(
     send_alert: AlertSender | None = None,
 ) -> dict[str, Any]:
     snapshots = build_monitoring_snapshots(dashboard_data)
-    alerts = []
+    findings = []
     for snapshot in snapshots:
-        alerts.extend(evaluate_monitoring_snapshot(snapshot))
+        findings.extend(evaluate_monitoring_snapshot(snapshot))
 
+    alerts = [finding for finding in findings if finding.get("severity") != "info"]
+    opportunities = [finding for finding in findings if finding.get("severity") == "info"]
     saved_alerts = save_monitoring_alerts(alerts, storage_dir=storage_dir)
     notifications = []
     if send_alert:
@@ -37,6 +39,7 @@ def run_monitoring_check(
         "checkedAt": datetime.now(timezone.utc).isoformat(),
         "snapshotsChecked": len(snapshots),
         "alerts": saved_alerts,
+        "opportunities": opportunities,
         "notifications": notifications,
     }
 

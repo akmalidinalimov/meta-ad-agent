@@ -86,6 +86,7 @@ import type {
   MetaSettingsAudit,
   Placement,
   RankingRow,
+  SystemChecklist,
   TrackingHealthItem,
   Tone,
 } from '../types/marketing'
@@ -970,6 +971,7 @@ function CreativeDecisionPanel({ insight }: { insight: ReturnType<typeof deriveC
 function CommandCenterView({ data }: { data: DashboardData }) {
   const [tasks, setTasks] = useState<AgentTask[]>([])
   const [agents, setAgents] = useState<AgentSpec[]>([])
+  const [systemChecklist, setSystemChecklist] = useState<SystemChecklist | null>(null)
   const [command, setCommand] = useState('Create a campaign with 3 VSLs: income, business automation, content creators. Use $100 each and optimize for Telegram START.')
   const [source, setSource] = useState<'dashboard' | 'telegram' | 'codex'>('dashboard')
   const [campaignGroupId, setCampaignGroupId] = useState('next-launch')
@@ -980,18 +982,30 @@ function CommandCenterView({ data }: { data: DashboardData }) {
   const [message, setMessage] = useState<string | null>(null)
 
   const loadCommandCenter = async () => {
-    const result = await getAgentCommandCenter()
+    const [result, checklist] = await Promise.all([
+      getAgentCommandCenter(),
+      fetch('/api/system/checklist')
+        .then((response) => response.ok ? response.json() : null)
+        .catch(() => null),
+    ])
     setTasks(result.tasks)
     setAgents(result.agents)
+    setSystemChecklist(checklist as SystemChecklist | null)
   }
 
   useEffect(() => {
     let cancelled = false
-    void getAgentCommandCenter()
-      .then((result) => {
+    void Promise.all([
+      getAgentCommandCenter(),
+      fetch('/api/system/checklist')
+        .then((response) => response.ok ? response.json() : null)
+        .catch(() => null),
+    ])
+      .then(([result, checklist]) => {
         if (!cancelled) {
           setTasks(result.tasks)
           setAgents(result.agents)
+          setSystemChecklist(checklist as SystemChecklist | null)
         }
       })
       .catch(() => {
@@ -1139,11 +1153,40 @@ function CommandCenterView({ data }: { data: DashboardData }) {
                 <strong>{agent.name}</strong>
                 <p>{agent.purpose}</p>
               </div>
-              <span>{agent.requiresApproval ? 'Approval required' : 'Analysis ready'}</span>
+              <span>{agent.readinessStatus ? labelRawSetting(agent.readinessStatus) : agent.requiresApproval ? 'Approval required' : 'Analysis ready'}</span>
+              {agent.blockedReasons && agent.blockedReasons.length > 0 && (
+                <small>{agent.blockedReasons.map(labelRawSetting).join(', ')}</small>
+              )}
             </div>
           ))}
           {agents.length === 0 && <EmptyState compact />}
         </div>
+      </article>
+
+      <article className="panel">
+        <PanelHeading eyebrow="Regression Checklist" title="Completion readiness" icon={CheckCircle2} />
+        {systemChecklist ? (
+          <>
+            <div className="builder-summary command-summary">
+              <MiniMetric label="Ready" value={`${systemChecklist.summary.ready}/${systemChecklist.summary.total}`} />
+              <MiniMetric label="Partial" value={systemChecklist.summary.partial.toString()} />
+              <MiniMetric label="Needs work" value={systemChecklist.summary.needs_attention.toString()} />
+            </div>
+            <div className="task-list">
+              {systemChecklist.items.slice(0, 10).map((item) => (
+                <div className={`task-item ${item.status}`} key={item.id}>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <p>{item.evidence}</p>
+                  </div>
+                  <span>{labelRawSetting(item.status)}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <EmptyState compact />
+        )}
       </article>
 
       <article className="panel panel-wide">
@@ -1196,6 +1239,12 @@ function CommandCenterView({ data }: { data: DashboardData }) {
 }
 
 function agentStatusTone(agent: AgentSpec) {
+  if (agent.readinessStatus === 'blocked') {
+    return 'danger'
+  }
+  if (agent.readinessStatus === 'needs_data') {
+    return 'warning'
+  }
   if (agent.canExecuteLiveChanges) {
     return 'danger'
   }
@@ -1999,6 +2048,29 @@ function StrategyView() {
               <MiniMetric label="Approval mode" value={strategy.execution.requiresApproval ? 'Required' : 'Optional'} />
             </div>
           </article>
+
+          {strategy.launchPacket && (
+            <article className="panel panel-wide">
+              <PanelHeading eyebrow="Launch Packet" title="Operator-ready decision brief" icon={ListChecks} />
+              <div className="builder-summary">
+                <MiniMetric label="Decision" value={labelRawSetting(strategy.launchPacket.decision)} />
+                <MiniMetric label="Primary goal" value={labelEventName(strategy.launchPacket.primaryGoal)} />
+                <MiniMetric label="Monitor every" value={`${strategy.launchPacket.monitoringPlan.cadenceHours}h`} />
+                <MiniMetric label="Publish" value={strategy.launchPacket.approvalPlan.publishBlocked ? 'Blocked' : 'Allowed'} />
+              </div>
+              <div className="strategy-knowledge-grid">
+                <KnowledgeList title="Use placements" items={strategy.launchPacket.placementPlan.use.map(labelRawSetting)} />
+                <KnowledgeList title="Avoid / isolate" items={strategy.launchPacket.placementPlan.avoid.map(labelRawSetting)} />
+                <KnowledgeList title="Required funnel events" items={strategy.launchPacket.funnelPlan.requiredEvents.map(labelEventName)} />
+                <KnowledgeList title="Watch metrics" items={strategy.launchPacket.monitoringPlan.watchMetrics} />
+              </div>
+              <div className="proposal-checklist">
+                {strategy.launchPacket.regressionChecklist.slice(0, 6).map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+              </div>
+            </article>
+          )}
 
           <article className="panel panel-wide">
             <PanelHeading eyebrow="Budget Split" title="Segment allocation" icon={CircleDollarSign} />

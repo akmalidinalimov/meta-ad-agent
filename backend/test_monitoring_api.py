@@ -60,6 +60,23 @@ def test_manual_monitoring_run_stores_alert_and_sends_telegram(monkeypatch, tmp_
     assert "CPL rose" in sent[0]
 
 
+def test_monitoring_surfaces_improving_cost_opportunity(tmp_path):
+    dashboard = {
+        "campaigns": [{"id": "cmp_1", "name": "Improving VSL", "status": "active"}],
+        "metrics": [
+            {"date": "2026-05-01", "campaignId": "cmp_1", "spendUsd": 120, "clicks": 200, "leads": 40, "telegramSubscribers": 20},
+            {"date": "2026-05-02", "campaignId": "cmp_1", "spendUsd": 100, "clicks": 240, "leads": 80, "telegramSubscribers": 48},
+        ],
+    }
+
+    result = run_monitoring_check(dashboard, storage_dir=tmp_path / "storage")
+
+    assert result["opportunities"]
+    assert result["opportunities"][0]["severity"] == "info"
+    assert "CPL improved" in result["opportunities"][0]["title"]
+    assert "20%" in result["opportunities"][0]["recommendedActions"][0]
+
+
 def test_monitoring_alerts_endpoint_returns_empty_list_before_run(monkeypatch, tmp_path):
     bind_tmp_monitoring(monkeypatch, tmp_path)
     client = TestClient(app)

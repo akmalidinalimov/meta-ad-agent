@@ -26,6 +26,11 @@ def test_build_campaign_creation_approval_creates_paused_api_payloads():
     assert len(request["after"]["adsets"]) == 2
     assert all(adset["status"] == "PAUSED" for adset in request["after"]["adsets"])
     assert all(adset["targeting"]["publisher_platforms"] == ["instagram"] for adset in request["after"]["adsets"])
+    assert request["operationPreview"]["publishBlocked"] is True
+    assert request["operationPreview"]["liveSpendRisk"] == "none_while_paused"
+    assert request["operationPreview"]["steps"][0].startswith("Create PAUSED campaign")
+    assert request["executionReadiness"]["canExecuteNow"] is False
+    assert "approval" in request["executionReadiness"]["blockedBy"]
 
 
 def test_campaign_creation_approval_fails_budget_guardrail_when_total_budget_is_too_high():

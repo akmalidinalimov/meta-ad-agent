@@ -430,6 +430,71 @@ export interface LaunchStrategy {
     recommendations: Array<{ area?: string; title?: string; reason?: string }>
   }
   assumptions: string[]
+  launchPacket?: {
+    decision: string
+    primaryGoal: string
+    audiencePlan: Array<{
+      segmentId: string
+      segmentName: string
+      hypothesis: string
+      ageRange: string
+      gender: string
+      locations: string[]
+      interests: string[]
+      scaleCondition: string
+    }>
+    creativePlan: Array<{
+      segmentId: string
+      segmentName: string
+      angles: string[]
+      replicate: string
+      avoid: string
+    }>
+    placementPlan: {
+      use: string[]
+      avoid: string[]
+      rule: string
+    }
+    funnelPlan: {
+      readiness: string
+      requiredEvents: string[]
+      risks: string[]
+    }
+    experimentPlan: LaunchStrategy['testMatrix']
+    monitoringPlan: {
+      cadenceHours: number
+      watchMetrics: string[]
+      approvalRule: string
+    }
+    approvalPlan: {
+      required: boolean
+      actions: ApprovalAction[]
+      publishBlocked: boolean
+    }
+    regressionChecklist: string[]
+  }
+}
+
+export interface SystemChecklist {
+  generatedAt: string
+  summary: {
+    total: number
+    ready: number
+    partial: number
+    needs_attention: number
+  }
+  items: Array<{
+    id: string
+    title: string
+    status: 'ready' | 'partial' | 'needs_attention' | string
+    evidence: string
+  }>
+  nextRecommendedTask: {
+    id: string
+    title: string
+    status: string
+    evidence: string
+  }
 }
 
 export interface DraftCampaignProposal {
@@ -555,6 +620,9 @@ export interface AgentSpec {
   tools: string[]
   canExecuteLiveChanges: boolean
   requiresApproval: boolean
+  readinessStatus?: 'ready' | 'needs_data' | 'blocked' | string
+  blockedReasons?: string[]
+  lastVerifiedBy?: string
 }
 
 export interface AgentTask {

@@ -60,6 +60,7 @@ from .playbook_store import load_playbooks, save_playbook
 from .settings_audit import build_settings_audit
 from .snapshot_store import build_snapshot_payload, list_snapshots, save_snapshot
 from .strategy_generator import generate_launch_strategy
+from .system_checklist import build_system_checklist
 from .telegram_commands import normalize_telegram_command
 from .telegram_outbound import send_approval_notification, send_telegram_message_sync
 
@@ -717,15 +718,44 @@ def build_meta_action_writer(config: Any) -> Any:
     return MetaActionWriter()
 
 
+def agent_status_payload(agent: dict[str, Any], knowledge: dict[str, Any] | None, live_writes_enabled: bool) -> dict[str, Any]:
+    agent_id = str(agent.get("id") or "")
+    blocked_reasons = []
+    if agent_id in {"audit", "audience", "creative", "placement", "funnel", "monitoring", "experiment"} and not knowledge:
+        blocked_reasons.append("knowledge_base_missing")
+    if agent_id in {"execution", "browser_operator"} and not live_writes_enabled:
+        blocked_reasons.append("live_writes_disabled")
+    if agent_id == "browser_operator":
+        blocked_reasons.append("browser_fallback_requires_specific_approved_action")
+    readiness = "blocked" if blocked_reasons and agent_id in {"execution", "browser_operator"} else "needs_data" if blocked_reasons else "ready"
+    return {
+        **agent,
+        "readinessStatus": readiness,
+        "blockedReasons": blocked_reasons,
+        "lastVerifiedBy": "automated_backend_tests",
+    }
+
+
 @app.get("/api/agents")
 def agents() -> dict[str, Any]:
     live_writes_enabled = os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true"
+    knowledge = load_knowledge_base()
     return {
-        "agents": list(agent_registry().values()),
+        "agents": [agent_status_payload(agent, knowledge, live_writes_enabled) for agent in agent_registry().values()],
         "executionEnabled": live_writes_enabled,
         "approvalRequiredForLiveChanges": True,
         "liveWriteScope": "paused_campaign_and_adset_creation_only" if live_writes_enabled else "disabled",
     }
+
+
+@app.get("/api/system/checklist")
+def system_checklist() -> dict[str, Any]:
+    return build_system_checklist(
+        agents=list(agent_registry().values()),
+        knowledge=load_knowledge_base(),
+        approvals=list_approval_requests(),
+        monitoring_runs=list_monitoring_runs(),
+    )
 
 
 @app.get("/api/crm/bitrix/status")
