@@ -23,6 +23,7 @@ from .approval_store import (
     update_approval_request,
 )
 from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, fetch_bitrix_statuses, get_bitrix_config
+from .campaign_watch import build_campaign_watch
 from .chatplace_events import normalize_chatplace_event
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
 from .funnel_events import build_funnel_summary, save_funnel_event
@@ -1201,6 +1202,12 @@ def dashboard() -> dict[str, Any]:
         "experiments": experiments,
         "trackingHealth": tracking_health,
         "monitoringAlerts": list_monitoring_alerts(),
+        "campaignWatch": build_campaign_watch(
+            {
+                "campaigns": campaigns,
+                "metrics": metrics,
+            }
+        ),
         "approvalActions": approval_actions,
         "glossary": glossary,
         "dataSource": {
@@ -1450,6 +1457,12 @@ def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
         "experiments": experiments_real,
         "trackingHealth": tracking_real,
         "monitoringAlerts": list_monitoring_alerts(),
+        "campaignWatch": build_campaign_watch(
+            {
+                "campaigns": campaigns_real or campaigns,
+                "metrics": metrics_real or metrics,
+            }
+        ),
         "approvalActions": actions_real,
         "glossary": glossary,
         "dataSource": {

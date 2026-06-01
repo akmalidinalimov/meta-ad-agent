@@ -212,10 +212,34 @@ export interface MonitoringAlert {
   campaignName?: string
   severity: 'low' | 'medium' | 'high'
   title: string
+  whyItMatters?: string
   metricDeltas?: Record<string, number | string>
   recommendedActions: string[]
   createdAt: string
   status: 'open' | 'acknowledged' | 'resolved'
+}
+
+export interface CampaignWatchItem {
+  campaignId: string
+  campaignName: string
+  status: string
+  currentDate: string
+  previousDate?: string | null
+  daysObserved: number
+  spendUsd: number
+  clicks: number
+  leads: number
+  telegramStarts: number
+  cpc: number
+  cpl: number
+  leadRatePercent: number
+  telegramStartRatePercent: number
+  previousCpl: number
+  previousLeadRatePercent: number
+  decision: string
+  reason: string
+  tone: Tone
+  nextActions: string[]
 }
 
 export interface ExperimentRecommendation {
@@ -274,6 +298,7 @@ export interface DashboardData {
   experiments: ExperimentRecommendation[]
   trackingHealth: TrackingHealthItem[]
   monitoringAlerts?: MonitoringAlert[]
+  campaignWatch?: CampaignWatchItem[]
   approvalActions: ApprovalAction[]
   glossary: MetricGlossaryItem[]
   dataSource?: {

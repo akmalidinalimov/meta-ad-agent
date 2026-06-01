@@ -1491,6 +1491,100 @@
   text-transform: capitalize;
 }
 
+.campaign-watch-list {
+  display: grid;
+  gap: 12px;
+}
+
+.campaign-watch-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(360px, 1.2fr) minmax(260px, 0.9fr);
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.campaign-watch-card.good {
+  border-color: #b9e8d9;
+  background: #eefbf6;
+}
+
+.campaign-watch-card.warning {
+  border-color: #f6d58b;
+  background: #fff9e8;
+}
+
+.campaign-watch-card.danger {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.campaign-watch-card small {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.campaign-watch-card strong {
+  display: block;
+  margin-top: 4px;
+  color: #172033;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.campaign-watch-card p {
+  margin: 6px 0 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.campaign-watch-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.campaign-watch-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.campaign-watch-actions em {
+  justify-self: start;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #0f766e;
+  background: #e7f8f1;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.campaign-watch-card.warning .campaign-watch-actions em {
+  color: #b45309;
+  background: #fff6db;
+}
+
+.campaign-watch-card.danger .campaign-watch-actions em {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.campaign-watch-actions ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .settings-table {
   display: grid;
   gap: 0;
@@ -1710,6 +1804,14 @@
   .settings-row span:nth-child(n + 4) {
     display: none;
   }
+
+  .campaign-watch-card {
+    grid-template-columns: 1fr;
+  }
+
+  .campaign-watch-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -1765,11 +1867,16 @@
   .action-item,
   .task-item,
   .campaign-map-row,
+  .campaign-watch-card,
   .telegram-command-grid,
   .metric-list > div {
     grid-template-columns: 1fr;
     flex-direction: column;
     gap: 6px;
+  }
+
+  .campaign-watch-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .chart-box {

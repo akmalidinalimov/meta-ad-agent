@@ -70,6 +70,7 @@ import type {
   CampaignPlaybook,
   CampaignPlaybookSegment,
   ApprovalRequest,
+  CampaignWatchItem,
   Creative,
   DashboardData,
   DashboardFilters,
@@ -2063,10 +2064,53 @@ function TrackingView({ data }: { data: DashboardData }) {
 function AlertsView({ data }: { data: DashboardData }) {
   return (
     <section className="bottom-grid">
+      <CampaignWatchPanel items={data.campaignWatch ?? []} />
       <MonitoringAlertsPanel data={data} />
       <TopProblemsPanel data={data} />
       <InsightsPanel data={data} />
     </section>
+  )
+}
+
+function CampaignWatchPanel({ items }: { items: CampaignWatchItem[] }) {
+  return (
+    <article className="panel panel-wide">
+      <PanelHeading eyebrow="New Campaign Watch" title="Current campaign decisions" icon={Gauge} />
+      {items.length === 0 ? (
+        <EmptyState
+          compact
+          title="No current campaigns to watch"
+          body="Sync recent Meta data or refresh the dashboard after a new campaign is created."
+        />
+      ) : (
+        <div className="campaign-watch-list">
+          {items.slice(0, 6).map((item) => (
+            <div className={`campaign-watch-card ${item.tone}`} key={item.campaignId}>
+              <div>
+                <small>{item.currentDate} | {item.status} | {item.daysObserved} observed days</small>
+                <strong>{item.campaignName}</strong>
+                <p>{item.reason}</p>
+              </div>
+              <div className="campaign-watch-metrics">
+                <MiniMetric label="Spend" value={formatCurrency(item.spendUsd)} />
+                <MiniMetric label="CPC" value={formatCurrency(item.cpc)} />
+                <MiniMetric label="CPL" value={item.cpl > 0 ? formatCurrency(item.cpl) : '-'} />
+                <MiniMetric label="Lead rate" value={`${item.leadRatePercent.toFixed(1)}%`} />
+                <MiniMetric label="START rate" value={`${item.telegramStartRatePercent.toFixed(1)}%`} />
+              </div>
+              <div className="campaign-watch-actions">
+                <em>{item.decision}</em>
+                <ul>
+                  {item.nextActions.slice(0, 3).map((action) => (
+                    <li key={action}>{action}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </article>
   )
 }
 
@@ -2090,6 +2134,7 @@ function MonitoringAlertsPanel({ data }: { data: DashboardData }) {
               <AlertTriangle size={18} />
               <div>
                 <strong>{alert.title}</strong>
+                {alert.whyItMatters ? <p>{alert.whyItMatters}</p> : null}
                 <p>{alert.recommendedActions.slice(0, 2).join(' ')}</p>
               </div>
             </div>
@@ -2503,12 +2548,22 @@ function Score({ label, value, tone }: { label: string; value: number; tone: Ton
   )
 }
 
-function EmptyState({ compact = false, onReset }: { compact?: boolean; onReset?: () => void }) {
+function EmptyState({
+  compact = false,
+  title = 'No matching data',
+  body = 'Adjust filters to restore the current dashboard view.',
+  onReset,
+}: {
+  compact?: boolean
+  title?: string
+  body?: string
+  onReset?: () => void
+}) {
   return (
     <div className={compact ? 'empty-state compact' : 'empty-state'}>
       <AlertTriangle size={22} />
-      <strong>No matching data</strong>
-      <p>Adjust filters to restore the current dashboard view.</p>
+      <strong>{title}</strong>
+      <p>{body}</p>
       {onReset && (
         <button className="sync-button" type="button" onClick={onReset}>
           Reset filters

@@ -14,6 +14,8 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await expect(page.getByPlaceholder(/which creative should we scale/i)).toBeVisible();
 
   await page.getByRole('button', { name: /alerts/i }).click();
+  await expect(page.getByText(/new campaign watch/i)).toBeVisible();
+  await expect(page.getByText(/current campaign decisions/i)).toBeVisible();
   await expect(page.getByText(/latest campaign health warnings/i)).toBeVisible();
 
   await page.getByRole('button', { name: /refresh data/i }).click();
