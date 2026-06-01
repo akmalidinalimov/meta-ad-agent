@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
 from .api_models import (
     AgentTaskRequest,
     ApprovalChangesRequest,
@@ -21,7 +19,6 @@ from .api_models import (
     ChatResponse,
     DraftCampaignProposalRequest,
     FunnelEventRequest,
-    MetaSyncRequest,
     ScheduledMonitoringRequest,
     StrategyRequest,
     TelegramTestMessageRequest,
@@ -55,6 +52,8 @@ from .demo_dashboard import (
     tracking_health,
 )
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
+from .routers import meta as meta_router
+from .routers.meta import meta_status
 from .dashboard_service import (
     answer_audiences,
     answer_creatives,
@@ -78,8 +77,8 @@ from .dashboard_service import (
 )
 from .draft_campaign_proposal import build_draft_campaign_proposal
 from .funnel_events import build_funnel_summary, save_funnel_event
-from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base, save_knowledge_base
-from .llm_reasoner import generate_chat_answer, generate_llm_summary
+from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base
+from .llm_reasoner import generate_chat_answer
 from .meta_execution import (
     build_campaign_creation_approval,
     execute_campaign_creation_approval,
@@ -89,30 +88,17 @@ from .meta_execution import (
 from .monitoring_runner import ALERTS_PATH, list_monitoring_alerts, run_monitoring_check
 from .monitoring_scheduler import list_monitoring_runs, run_scheduled_monitoring
 from .meta_client import (
-    MetaApiError,
-    get_ad_account_summary,
-    get_ad_sets,
-    get_ads,
     create_ad_set as meta_create_ad_set,
     create_campaign as meta_create_campaign,
-    get_campaigns,
-    get_insights,
     get_meta_config,
-    get_token_permissions,
-    get_video_source,
-    mask_token,
     update_ad as meta_update_ad,
     update_ad_set as meta_update_ad_set,
     update_campaign as meta_update_campaign,
 )
 from .playbook_store import load_playbooks, save_playbook
-from .settings_audit import build_settings_audit
-from .snapshot_store import build_snapshot_payload, list_snapshots, save_snapshot
 from .strategy_generator import generate_launch_strategy
 from .telegram_commands import normalize_telegram_command
 from .telegram_outbound import send_approval_notification, send_telegram_message_sync
-
-SYNC_END_DATE = date.today()
 
 app = FastAPI(title="Meta Ad Agent API")
 
@@ -138,170 +124,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(meta_router.router)
 
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/api/meta/status")
-async def meta_status() -> dict[str, Any]:
-    config = get_meta_config()
-    result: dict[str, Any] = {
-        "configured": config.is_configured,
-        "apiVersion": config.api_version,
-        "appId": config.app_id,
-        "adAccountId": config.ad_account_id,
-        "businessId": config.business_id,
-        "pixelConfigured": bool(config.pixel_id),
-        "tokenConfigured": bool(config.access_token),
-        "tokenPreview": mask_token(config.access_token),
-        "connected": False,
-        "account": None,
-        "error": None,
-    }
-
-    if not config.is_configured:
-        result["error"] = "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to .env."
-        return result
-
-    try:
-        result["account"] = await get_ad_account_summary(config)
-        result["connected"] = True
-    except MetaApiError as error:
-        result["error"] = str(error)
-
-    return result
-
-
-@app.get("/api/meta/campaigns")
-async def meta_campaigns() -> dict[str, Any]:
-    config = get_meta_config()
-
-    if not config.is_configured:
-        return {
-            "configured": False,
-            "campaigns": [],
-            "error": "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to .env.",
-        }
-
-    try:
-        return {
-            "configured": True,
-            "campaigns": await get_campaigns(config),
-            "error": None,
-        }
-    except MetaApiError as error:
-        return {
-            "configured": True,
-            "campaigns": [],
-            "error": str(error),
-        }
-
-
-@app.get("/api/meta/permissions")
-async def meta_permissions() -> dict[str, Any]:
-    config = get_meta_config()
-    if not config.is_configured:
-        return {"configured": False, "permissions": [], "error": "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to .env."}
-    try:
-        return {"configured": True, "permissions": await get_token_permissions(config), "error": None}
-    except MetaApiError as error:
-        return {"configured": True, "permissions": [], "error": str(error)}
-
-
-@app.get("/api/meta/video/{video_id}")
-async def meta_video(video_id: str) -> dict[str, Any]:
-    config = get_meta_config()
-    if not config.is_configured:
-        return {"ok": False, "videoUrl": None, "posterUrl": None, "error": "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to .env."}
-
-    try:
-        payload = await get_video_source(config, video_id)
-        thumbnails = payload.get("thumbnails", {}).get("data", [])
-        poster = payload.get("picture") or (thumbnails[0].get("uri") if thumbnails else None)
-        return {
-            "ok": True,
-            "videoUrl": payload.get("source"),
-            "posterUrl": poster,
-            "permalinkUrl": payload.get("permalink_url"),
-            "error": None,
-        }
-    except MetaApiError as error:
-        return {"ok": False, "videoUrl": None, "posterUrl": None, "error": str(error)}
-
-
-@app.post("/api/meta/sync")
-async def meta_sync(request: MetaSyncRequest | None = None) -> dict[str, Any]:
-    config = get_meta_config()
-    if not config.is_configured:
-        return {"ok": False, "error": "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to .env."}
-
-    days = normalize_sync_days(request.days if request else 90)
-
-    try:
-        raw = {
-            "account": await get_ad_account_summary(config),
-            "campaigns": await safe_list("campaigns", get_campaigns(config)),
-            "adsets": await safe_list("adsets", get_ad_sets(config)),
-            "ads": await safe_list("ads", get_ads(config)),
-            "permissions": await safe_list("permissions", get_token_permissions(config)),
-            "insights": {
-                "base": await safe_chunked_insights(config, "insights_base", None, days=days),
-                "age_gender": await safe_chunked_insights(config, "insights_age_gender", ["age", "gender"], days=days),
-                "country": await safe_chunked_insights(config, "insights_country", ["country"], days=days),
-                "region": await safe_chunked_insights(config, "insights_region", ["region"], days=days),
-                "placement": await safe_chunked_insights(config, "insights_placement", ["publisher_platform", "platform_position"], days=days),
-            },
-        }
-        analysis_preview = build_meta_analysis(raw)["analysis"]
-        llm_summary = await generate_llm_summary({
-            "summary": analysis_preview["summary"],
-            "topCampaigns": analysis_preview["topCampaigns"][:5],
-            "topAds": analysis_preview["topAds"][:5],
-            "audience": {
-                "ageGender": analysis_preview["audience"]["ageGender"][:8],
-                "countries": analysis_preview["audience"]["countries"][:8],
-                "regions": analysis_preview["audience"]["regions"][:8],
-                "interests": analysis_preview["audience"]["interests"][:8],
-            },
-            "placements": analysis_preview["placements"][:8],
-            "recommendations": analysis_preview["recommendations"],
-            "lessons": analysis_preview["lessons"],
-        })
-        knowledge = build_meta_analysis(raw, llm_summary=llm_summary)
-        snapshot = save_snapshot(build_snapshot_payload(
-            raw=raw,
-            analysis=knowledge["analysis"],
-            account_id=config.ad_account_id,
-            days=days,
-        ))
-        knowledge["snapshot"] = snapshot
-        save_knowledge_base(knowledge)
-        return {
-            "ok": True,
-            "snapshot": snapshot,
-            "rawCounts": knowledge["analysis"]["rawCounts"],
-            "summary": knowledge["analysis"]["summary"],
-            "recommendations": knowledge["analysis"]["recommendations"],
-            "llmEnabled": bool(llm_summary and not llm_summary.startswith("LLM summary unavailable")),
-        }
-    except MetaApiError as error:
-        return {"ok": False, "error": str(error)}
-
-
-@app.get("/api/meta/snapshots")
-def meta_snapshots() -> dict[str, Any]:
-    return {"snapshots": list_snapshots()}
-
-
-@app.get("/api/meta/settings-audit")
-def meta_settings_audit() -> dict[str, Any]:
-    knowledge = load_knowledge_base()
-    if not knowledge:
-        return {"available": False, "error": "No Meta sync has been saved yet.", "audit": None}
-    return {"available": True, "audit": build_settings_audit(knowledge.get("raw", {}))}
 
 
 @app.get("/api/playbooks")
@@ -963,70 +791,6 @@ def sync_task_with_approval(
     if extra_patch:
         patch.update(extra_patch)
     return update_agent_task_by_approval(approval_id, patch)
-
-
-async def safe_insights(config: Any, breakdowns: list[str]) -> list[dict[str, Any]]:
-    try:
-        return await get_insights(config, breakdowns=breakdowns)
-    except MetaApiError as error:
-        return [{"sync_error": str(error), "breakdowns": ",".join(breakdowns)}]
-
-
-async def safe_chunked_insights(
-    config: Any,
-    name: str,
-    breakdowns: list[str] | None,
-    *,
-    days: int = 90,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-
-    for current, chunk_end in build_sync_windows(days=days, end_date=SYNC_END_DATE):
-        try:
-            rows.extend(await get_insights(config, breakdowns=breakdowns, since=current.isoformat(), until=chunk_end.isoformat()))
-        except MetaApiError as error:
-            errors.append({
-                "sync_error": str(error),
-                "source": name,
-                "since": current.isoformat(),
-                "until": chunk_end.isoformat(),
-            })
-
-    return rows or errors
-
-
-def normalize_sync_days(days: int) -> int:
-    if days <= 0:
-        return 90
-    return min(days, 186)
-
-
-def build_sync_windows(*, days: int, end_date: date, chunk_days: int = 7) -> list[tuple[date, date]]:
-    days = normalize_sync_days(days)
-    start = end_date - timedelta(days=days - 1)
-    windows: list[tuple[date, date]] = []
-    current = start
-    while current <= end_date:
-        chunk_end = min(current + timedelta(days=chunk_days - 1), end_date)
-        windows.append((current, chunk_end))
-        current = chunk_end + timedelta(days=1)
-    return windows
-
-
-async def safe_list(name: str, awaitable: Any) -> list[dict[str, Any]]:
-    try:
-        return await awaitable
-    except MetaApiError as error:
-        return [{"sync_error": str(error), "source": name}]
-
-
-@app.get("/api/knowledge-base")
-def knowledge_base() -> dict[str, Any]:
-    knowledge = load_knowledge_base()
-    if not knowledge:
-        return {"available": False, "error": "No Meta sync has been saved yet."}
-    return {"available": True, "knowledge": knowledge}
 
 
 @app.post("/api/funnel/events")
