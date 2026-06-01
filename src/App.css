@@ -960,6 +960,10 @@
   align-self: start;
 }
 
+.detail-layout > .detail-panel {
+  grid-column: span 2;
+}
+
 .creative-preview {
   display: grid;
   min-height: 172px;
@@ -1059,6 +1063,70 @@
 .analysis-block {
   padding: 12px 0;
   border-top: 1px solid #eef2f7;
+}
+
+.creative-decision {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #d9e1eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.creative-decision__summary p,
+.creative-next-action p {
+  margin: 4px 0 0;
+  color: #334155;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.creative-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.creative-metric-strip span {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.creative-metric-strip small,
+.creative-decision-grid span {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.creative-metric-strip strong,
+.creative-decision-grid strong,
+.creative-next-action strong,
+.creative-decision__summary strong {
+  color: #172033;
+}
+
+.creative-decision-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.creative-decision-grid > div {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.creative-decision-grid span {
+  display: block;
+  padding-left: 10px;
+  border-left: 3px solid #9fd9cf;
+  line-height: 1.35;
 }
 
 .scene-list {
@@ -1939,6 +2007,10 @@
   }
 
   .panel-wide {
+    grid-column: span 1;
+  }
+
+  .detail-layout > .detail-panel {
     grid-column: span 1;
   }
 

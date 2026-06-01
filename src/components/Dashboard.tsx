@@ -46,6 +46,7 @@ import { MediaThumb } from './dashboard/shared/MediaThumb'
 import { PanelHeading } from './dashboard/shared/PanelHeading'
 import {
   deriveCreativeScores,
+  deriveCreativeDecisionInsight,
   deriveFunnel,
   derivePlacementScores,
   deriveRankingRows,
@@ -138,7 +139,7 @@ const defaultFilters: DashboardFilters = {
 
 export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardProps) {
   const [activeView, setActiveView] = useState<ViewId>('overview')
-  const [selectedCreativeId, setSelectedCreativeId] = useState(data.creatives[0]?.id ?? '')
+  const [selectedCreativeId, setSelectedCreativeId] = useState('')
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -186,7 +187,10 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
     () => (filters.placement === 'all' && data.dataSource?.kind === 'meta' ? data.placements : derivePlacementScores(filteredMetrics)),
     [data.dataSource?.kind, data.placements, filters.placement, filteredMetrics],
   )
-  const selectedCreative = filteredCreatives.find((creative) => creative.id === selectedCreativeId) ?? filteredCreatives[0]
+  const selectedCreative =
+    filteredCreatives.find((creative) => creative.id === selectedCreativeId) ??
+    filteredCreatives.find((creative) => creative.id === creativeScores[0]?.id) ??
+    filteredCreatives[0]
 
   const hasData = filteredMetrics.length > 0
   const dataSourceTone = data.dataSource?.kind === 'meta' ? 'good' : 'warning'
@@ -854,6 +858,14 @@ function CreativesView({
 }) {
   const analysis = data.creativeAnalyses.find((item) => item.creativeId === selectedCreative?.id)
   const score = creativeScores.find((item) => item.id === selectedCreative?.id)
+  const decisionInsight = selectedCreative
+    ? deriveCreativeDecisionInsight({
+        creativeId: selectedCreative.id,
+        metrics: data.metrics,
+        adSets: data.adSets,
+        score,
+      })
+    : null
 
   return (
     <section className="detail-layout">
@@ -890,6 +902,7 @@ function CreativesView({
               <strong>Why it did not convert</strong>
               <p>{analysis?.whyItDidNotConvert ?? 'Purchase tracking is missing or too sparse, so conversion quality needs downstream validation.'}</p>
             </div>
+            {decisionInsight && <CreativeDecisionPanel insight={decisionInsight} />}
             <div className="scene-list">
               {(analysis?.sceneNotes ?? [
                 'Use Gemini/video analysis next to inspect hook, pacing, offer clarity, and visual pattern.',
@@ -904,6 +917,53 @@ function CreativesView({
         )}
       </article>
     </section>
+  )
+}
+
+function CreativeDecisionPanel({ insight }: { insight: ReturnType<typeof deriveCreativeDecisionInsight> }) {
+  return (
+    <div className="creative-decision">
+      <div className="creative-decision__summary">
+        <strong>Specialist read</strong>
+        <p>{insight.diagnosis}</p>
+      </div>
+      <div className="creative-metric-strip">
+        <span>
+          <small>CPC</small>
+          <strong>{formatCurrency(insight.cpc)}</strong>
+        </span>
+        <span>
+          <small>CPL</small>
+          <strong>{insight.cpl ? formatCurrency(insight.cpl) : '—'}</strong>
+        </span>
+        <span>
+          <small>Lead rate</small>
+          <strong>{formatRate(insight.leadRatePercent)}</strong>
+        </span>
+        <span>
+          <small>Visit rate</small>
+          <strong>{formatRate(insight.landingVisitRatePercent)}</strong>
+        </span>
+      </div>
+      <div className="creative-decision-grid">
+        <div>
+          <strong>Replicate signals</strong>
+          {insight.replicateSignals.map((signal) => (
+            <span key={signal}>{signal}</span>
+          ))}
+        </div>
+        <div>
+          <strong>Watch risks</strong>
+          {(insight.risks.length ? insight.risks : ['No major risk detected from the filtered metric window.']).map((risk) => (
+            <span key={risk}>{risk}</span>
+          ))}
+        </div>
+      </div>
+      <div className="creative-next-action">
+        <strong>Next action</strong>
+        <p>{insight.nextAction}</p>
+      </div>
+    </div>
   )
 }
 
