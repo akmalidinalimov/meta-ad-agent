@@ -1,8 +1,16 @@
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.agent_task_store as agent_task_store
+import backend.approval_store as approval_store
+import backend.monitoring_runner as monitoring_runner
+import backend.monitoring_scheduler as monitoring_scheduler
+import backend.telegram_outbound as telegram_outbound
 from backend.agent_task_store import create_agent_task, list_agent_tasks, update_agent_task
 from backend.app import app
+import backend.task_service as task_service_mod
+import backend.routers.approvals as approvals_router_mod
+import backend.routers.tasks as tasks_router_mod
+import backend.telegram_service as telegram_service_mod
 from backend.approval_store import (
     approve_request,
     create_approval_request,
@@ -17,22 +25,20 @@ def bind_tmp_command_store(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
     sent = []
     monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "1001")
-    monkeypatch.setattr(app_module, "create_agent_task", lambda task: create_agent_task(task, storage_dir=storage_dir))
-    monkeypatch.setattr(app_module, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
+    monkeypatch.setattr(agent_task_store, "create_agent_task", lambda task: create_agent_task(task, storage_dir=storage_dir))
+    monkeypatch.setattr(tasks_router_mod, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
+    monkeypatch.setattr(telegram_service_mod, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
+    monkeypatch.setattr(task_service_mod, "update_agent_task", lambda task_id, patch: update_agent_task(task_id, patch, storage_dir=storage_dir))
+    monkeypatch.setattr(approval_store, "create_approval_request", lambda request: create_approval_request(request, storage_dir=storage_dir))
+    monkeypatch.setattr(approvals_router_mod, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
+    monkeypatch.setattr(telegram_service_mod, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
     monkeypatch.setattr(
-        app_module,
-        "update_agent_task",
-        lambda task_id, patch: update_agent_task(task_id, patch, storage_dir=storage_dir),
-    )
-    monkeypatch.setattr(app_module, "create_approval_request", lambda request: create_approval_request(request, storage_dir=storage_dir))
-    monkeypatch.setattr(app_module, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
-    monkeypatch.setattr(
-        app_module,
+        approval_store,
         "approve_request",
         lambda approval_id, *, approved_by: approve_request(approval_id, approved_by=approved_by, storage_dir=storage_dir),
     )
     monkeypatch.setattr(
-        app_module,
+        approval_store,
         "reject_request",
         lambda approval_id, *, rejected_by, reason: reject_request(
             approval_id,
@@ -42,7 +48,7 @@ def bind_tmp_command_store(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        app_module,
+        approval_store,
         "request_changes",
         lambda approval_id, *, requested_by, note: request_changes(
             approval_id,
@@ -52,7 +58,7 @@ def bind_tmp_command_store(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        app_module,
+        telegram_outbound,
         "send_telegram_message_sync",
         lambda text, **kwargs: sent.append((text, kwargs)) or {"ok": True, "mock": True},
     )
@@ -147,8 +153,8 @@ def test_telegram_status_command_replies_without_creating_task(monkeypatch, tmp_
 def test_telegram_attention_question_replies_with_monitoring_context(monkeypatch, tmp_path):
     _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
     monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
-    monkeypatch.setattr(app_module, "list_monitoring_alerts", lambda: [{"title": "Lead rate dropped", "severity": "medium"}])
-    monkeypatch.setattr(app_module, "list_monitoring_runs", lambda: [{"status": "completed", "finishedAt": "2026-06-01T10:00:00Z", "alertsCreated": 1}])
+    monkeypatch.setattr(monitoring_runner, "list_monitoring_alerts", lambda: [{"title": "Lead rate dropped", "severity": "medium"}])
+    monkeypatch.setattr(monitoring_scheduler, "list_monitoring_runs", lambda: [{"status": "completed", "finishedAt": "2026-06-01T10:00:00Z", "alertsCreated": 1}])
     client = TestClient(app)
 
     response = client.post(

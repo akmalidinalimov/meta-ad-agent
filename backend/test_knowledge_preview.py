@@ -1,4 +1,4 @@
-from backend.app import knowledge_chat_preview
+from backend.dashboard_service import knowledge_chat_preview
 
 
 def test_knowledge_chat_preview_uses_snapshot_days_instead_of_hardcoded_90_day_label():

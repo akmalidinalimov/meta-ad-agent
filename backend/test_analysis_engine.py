@@ -1,4 +1,4 @@
-from backend.app import map_creative, map_metric_row
+from backend.dashboard_service import map_creative, map_metric_row
 
 
 def test_map_creative_preserves_meta_attribution_and_media():

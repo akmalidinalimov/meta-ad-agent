@@ -1,40 +1,36 @@
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.agent_task_store as agent_task_store
+import backend.approval_store as approval_store
+import backend.telegram_outbound as telegram_outbound
 from backend.agent_task_store import create_agent_task, list_agent_tasks, update_agent_task
 from backend.app import app
+import backend.task_service as task_service_mod
+import backend.routers.approvals as approvals_router_mod
+import backend.routers.tasks as tasks_router_mod
+import backend.telegram_service as telegram_service_mod
 from backend.approval_store import create_approval_request, list_approval_requests
 
 
 def bind_tmp_task_and_approval_store(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
     monkeypatch.setattr(
-        app_module,
+        agent_task_store,
         "create_agent_task",
         lambda task: create_agent_task(task, storage_dir=storage_dir),
     )
+    monkeypatch.setattr(tasks_router_mod, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
+    monkeypatch.setattr(telegram_service_mod, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
+    monkeypatch.setattr(task_service_mod, "update_agent_task", lambda task_id, patch: update_agent_task(task_id, patch, storage_dir=storage_dir))
     monkeypatch.setattr(
-        app_module,
-        "list_agent_tasks",
-        lambda: list_agent_tasks(storage_dir=storage_dir),
-    )
-    monkeypatch.setattr(
-        app_module,
-        "update_agent_task",
-        lambda task_id, patch: update_agent_task(task_id, patch, storage_dir=storage_dir),
-    )
-    monkeypatch.setattr(
-        app_module,
+        approval_store,
         "create_approval_request",
         lambda request: create_approval_request(request, storage_dir=storage_dir),
     )
+    monkeypatch.setattr(approvals_router_mod, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
+    monkeypatch.setattr(telegram_service_mod, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
     monkeypatch.setattr(
-        app_module,
-        "list_approval_requests",
-        lambda: list_approval_requests(storage_dir=storage_dir),
-    )
-    monkeypatch.setattr(
-        app_module,
+        telegram_outbound,
         "send_approval_notification",
         lambda approval: {"ok": True, "approvalId": approval["id"]},
     )
