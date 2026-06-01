@@ -34,7 +34,6 @@ from .approval_store import (
     request_changes,
     update_approval_request,
 )
-from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, fetch_bitrix_statuses, get_bitrix_config
 from .campaign_watch import build_campaign_watch
 from .chatplace_events import normalize_chatplace_event
 from .demo_dashboard import (
@@ -51,7 +50,7 @@ from .demo_dashboard import (
     metrics,
     tracking_health,
 )
-from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
+from .routers import crm as crm_router
 from .routers import funnel as funnel_router
 from .routers import meta as meta_router
 from .routers import planning as planning_router
@@ -129,6 +128,7 @@ app.add_middleware(
 app.include_router(meta_router.router)
 app.include_router(planning_router.router)
 app.include_router(funnel_router.router)
+app.include_router(crm_router.router)
 
 
 @app.get("/api/health")
@@ -292,57 +292,6 @@ def agents() -> dict[str, Any]:
         "approvalRequiredForLiveChanges": True,
         "liveWriteScope": "paused_campaign_and_adset_creation_only" if live_writes_enabled else "disabled",
     }
-
-
-@app.get("/api/crm/bitrix/status")
-def bitrix_status() -> dict[str, Any]:
-    config = get_bitrix_config()
-    return {
-        "configured": config.is_configured,
-        "message": "Bitrix24 webhook URL configured." if config.is_configured else "Add BITRIX24_WEBHOOK_URL or BITRIX24_PORTAL_URL, BITRIX24_USER_ID, and BITRIX24_WEBHOOK_KEY.",
-    }
-
-
-@app.post("/api/crm/bitrix/import")
-async def bitrix_import() -> dict[str, Any]:
-    config = get_bitrix_config()
-    if not config.is_configured:
-        raise HTTPException(status_code=400, detail="Bitrix24 webhook URL is not configured.")
-    try:
-        leads = await fetch_bitrix_leads(transport=build_bitrix_transport(config))
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=f"Bitrix24 import failed: {exc}") from exc
-    saved = save_crm_leads(leads, storage_dir=CRM_STORAGE_DIR)
-    return {
-        "ok": True,
-        "imported": len(saved),
-        "leads": saved,
-    }
-
-
-@app.get("/api/crm/bitrix/stages")
-async def bitrix_stages(entity_id: str = "STATUS") -> dict[str, Any]:
-    config = get_bitrix_config()
-    if not config.is_configured:
-        raise HTTPException(status_code=400, detail="Bitrix24 webhook URL is not configured.")
-    try:
-        stages = await fetch_bitrix_statuses(transport=build_bitrix_transport(config), entity_id=entity_id)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=f"Bitrix24 stage discovery failed: {exc}") from exc
-    return {
-        "ok": True,
-        "entityId": entity_id,
-        "stages": stages,
-    }
-
-
-@app.get("/api/crm/leads")
-def crm_leads() -> dict[str, Any]:
-    return {"leads": list_crm_leads(storage_dir=CRM_STORAGE_DIR)}
-
-
-def build_bitrix_transport(config: Any) -> Any:
-    return HttpBitrixTransport(config)
 
 
 @app.get("/api/tasks")
