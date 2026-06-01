@@ -21,7 +21,7 @@ async def generate_llm_summary(analysis_preview: dict[str, Any]) -> str | None:
     prompt = {
         "role": "user",
         "content": (
-            "You are a senior Meta ads strategist for online AI courses. Analyze this 90-day ad account summary. "
+            "You are a senior Meta ads strategist for online AI courses. Analyze this Meta ad account summary. "
             "Explain what worked, what did not, recommended audiences, age/gender, country vs region strategy, "
             "placements, interests, creative lessons, and next experiments. Be specific and concise.\n\n"
             f"{json.dumps(analysis_preview, ensure_ascii=False)[:30000]}"
@@ -65,7 +65,7 @@ async def generate_chat_answer(question: str, analysis_preview: dict[str, Any]) 
                 "role": "system",
                 "content": (
                     "You are the Meta ads audit agent for an online AI course business. "
-                    "Answer from the provided saved 90-day Meta analysis as your source of truth. "
+                    "Answer from the provided saved Meta analysis as your source of truth. "
                     "Be specific, numerical, and conversion-focused. Show formulas when the user asks about calculations. "
                     "For Pixel, visit rate, and landing-page lead rate, use the tracking object and mention whether landing visits are true Pixel landing_page_view events or estimates from link clicks/clicks. "
                     "If landing visits are higher than clicks, explain that Meta action counts are attributed events and can exceed click count because they are not always one-to-one unique click sessions. "

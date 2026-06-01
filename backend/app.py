@@ -8,10 +8,11 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
-from .agent_orchestrator import agent_registry, orchestrate_agent_chat
+from .agent_orchestrator import agent_registry, build_agent_handoffs, orchestrate_agent_chat, route_question
+from .agent_quality import evaluate_agent_response
 from .agent_task_store import create_agent_task, list_agent_tasks, update_agent_task, update_agent_task_by_approval
 from .approval_store import (
     approve_request,
@@ -90,6 +91,8 @@ class ChatResponse(BaseModel):
     suggestedQuestions: list[str]
     activeAgent: str | None = None
     routeReason: str | None = None
+    agentHandoffs: list[dict[str, Any]] = Field(default_factory=list)
+    quality: dict[str, Any] | None = None
     generatedPlaybook: dict[str, Any] | None = None
     generatedStrategy: dict[str, Any] | None = None
     generatedMetaActionPlan: dict[str, Any] | None = None
@@ -1208,6 +1211,26 @@ def dashboard_script(callback: str = "__META_AD_AGENT_DASHBOARD__") -> Response:
     )
 
 
+def specialist_chat_response(
+    question: str,
+    *,
+    answer: str,
+    sources: list[str],
+    suggestedQuestions: list[str],
+) -> ChatResponse:
+    routed = route_question(question)
+    payload: dict[str, Any] = {
+        "answer": answer,
+        "sources": sources,
+        "suggestedQuestions": suggestedQuestions,
+        "activeAgent": routed["agentId"],
+        "routeReason": routed["reason"],
+        "agentHandoffs": build_agent_handoffs(routed["agentId"]),
+    }
+    payload["quality"] = evaluate_agent_response(payload)
+    return ChatResponse(**payload)
+
+
 @app.post("/api/agent/chat", response_model=ChatResponse)
 async def agent_chat(request: ChatRequest) -> ChatResponse:
     question = request.message.strip()
@@ -1252,7 +1275,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         except Exception:
             llm_answer = None
         if llm_answer and not llm_answer.startswith("LLM chat unavailable"):
-            return ChatResponse(
+            return specialist_chat_response(
+                question,
                 answer=llm_answer,
                 sources=["storage/meta_knowledge_base.json", "openai"],
                 suggestedQuestions=[
@@ -1263,7 +1287,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
             )
         kb_answer = answer_from_knowledge_base(lower, knowledge)
         if kb_answer:
-            return ChatResponse(
+            return specialist_chat_response(
+                question,
                 answer=kb_answer,
                 sources=["storage/meta_knowledge_base.json"],
                 suggestedQuestions=[
@@ -1889,12 +1914,12 @@ def answer_from_knowledge_base(lower_question: str, knowledge: dict[str, Any]) -
         interests = first_eligible_answer(analysis.get("audience", {}).get("interests", []), min_spend)
         if not best:
             return (
-                "The saved 90-day age/gender slice does not have enough spend per segment to recommend a reliable age/gender target yet. "
+                "The saved Meta age/gender slice does not have enough spend per segment to recommend a reliable age/gender target yet. "
                 f"The strongest interest cluster with meaningful spend is {interests['label'] if interests else 'not enough interest data'}. "
                 "For now, keep age/gender broader and let creative plus conversion quality guide narrowing."
             )
         return (
-            f"From the saved 90-day Meta analysis, the best-ranked age/gender segment is {best['label']}. "
+            f"From the saved Meta analysis, the best-ranked age/gender segment is {best['label']}. "
             f"{best.get('spend', 0):,.2f} USD spend, {best.get('leads', 0):,.0f} leads, "
             f"{best.get('purchases', 0):,.0f} purchases, quality score {best.get('qualityScore', 0)}. "
             f"For interests, the strongest cluster is {interests['label'] if interests else 'not enough interest data'}. "
@@ -1914,7 +1939,7 @@ def answer_from_knowledge_base(lower_question: str, knowledge: dict[str, Any]) -
     if any(word in lower_question for word in ["creative", "ad", "video", "worked", "didn't", "did not"]):
         top_ad = first(analysis.get("topAds", []))
         return (
-            f"Top ad from the saved 90-day analysis is {top_ad['label'] if top_ad else 'not enough data'}. "
+            f"Top ad from the saved Meta analysis is {top_ad['label'] if top_ad else 'not enough data'}. "
             f"It produced {top_ad.get('leads', 0) if top_ad else 0:,.0f} leads and "
             f"{top_ad.get('purchases', 0) if top_ad else 0:,.0f} purchases. "
             "For creative decisions, compare high attention against downstream quality; cheap clicks alone are not enough."
@@ -1938,10 +1963,12 @@ def knowledge_chat_preview(knowledge: dict[str, Any]) -> dict[str, Any]:
     analysis = knowledge.get("analysis", {})
     summary = analysis.get("summary", {})
     tracking = tracking_calculations_from_knowledge(knowledge)
+    days = knowledge.get("snapshot", {}).get("days") or 90
     return {
-        "role": "canonical_90_day_meta_ads_knowledge_base",
+        "role": "canonical_meta_ads_knowledge_base",
+        "analysisWindowDays": days,
         "instructions": [
-            "Use this as the source of truth for the user's Meta ads account.",
+            f"Use this {days}-day analysis as the source of truth for the user's Meta ads account.",
             "Reason across campaigns, ad sets, ads, audiences, placements, geos, interests, and funnel metrics.",
             "When asked how a metric is calculated, show the formula and plug in the actual saved numbers.",
             "Do not say there is not enough age/gender spend merely because a global minimum spend threshold is high; compare meaningful segments and state limitations.",

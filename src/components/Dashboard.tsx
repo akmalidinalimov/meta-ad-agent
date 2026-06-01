@@ -208,6 +208,8 @@ export function Dashboard({ data }: DashboardProps) {
           suggestedQuestions: response.suggestedQuestions,
           activeAgent: response.activeAgent ?? undefined,
           routeReason: response.routeReason ?? undefined,
+          agentHandoffs: response.agentHandoffs,
+          quality: response.quality ?? undefined,
         },
       ])
     } catch {
@@ -321,6 +323,19 @@ interface ChatMessage {
   suggestedQuestions?: string[]
   activeAgent?: string
   routeReason?: string
+  agentHandoffs?: Array<{
+    fromAgent: string
+    toAgent: string
+    reason: string
+    inputsNeeded: string[]
+    expectedOutput: string
+    confidence: string
+  }>
+  quality?: {
+    score: number
+    status: string
+    issues: string[]
+  }
 }
 
 function makeMessageId() {
@@ -523,6 +538,12 @@ function AgentChatPanel({
           <div className={`chat-message ${message.role}`} key={message.id}>
             <p>{message.content}</p>
             {message.activeAgent && <small>Agent: {labelRawSetting(message.activeAgent)}{message.routeReason ? ` · ${message.routeReason}` : ''}</small>}
+            {message.quality && <small>Quality: {message.quality.score}/100 · {labelRawSetting(message.quality.status)}</small>}
+            {message.agentHandoffs && message.agentHandoffs.length > 0 && (
+              <small>
+                Handoff: {message.agentHandoffs.slice(0, 2).map((handoff) => `${labelRawSetting(handoff.fromAgent)} → ${labelRawSetting(handoff.toAgent)}`).join(', ')}
+              </small>
+            )}
             {message.sources && message.sources.length > 0 && (
               <small>Sources: {message.sources.join(', ')}</small>
             )}

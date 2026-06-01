@@ -4,6 +4,19 @@ export interface AgentChatResponse {
   suggestedQuestions: string[]
   activeAgent?: string | null
   routeReason?: string | null
+  agentHandoffs?: Array<{
+    fromAgent: string
+    toAgent: string
+    reason: string
+    inputsNeeded: string[]
+    expectedOutput: string
+    confidence: string
+  }>
+  quality?: {
+    score: number
+    status: 'usable' | 'needs_refinement' | 'blocked' | string
+    issues: string[]
+  } | null
   generatedPlaybook?: unknown
   generatedStrategy?: unknown
 }
