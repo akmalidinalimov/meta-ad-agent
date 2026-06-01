@@ -77,9 +77,10 @@ def audience_answer(campaign: dict[str, str], rows: list[dict[str, Any]]) -> str
     best = ranked[0] if ranked else None
     recommendation = ""
     if best:
+        diagnosis = audience_diagnosis(best)
         recommendation = (
             f"\n\nRecommendation: use {best['label']} as the first scale candidate because it has the strongest cost-per-lead "
-            f"inside this campaign. Treat this as website-registration quality only until Telegram START and CRM purchase data are connected."
+            f"inside this campaign. {diagnosis} Treat this as website-registration quality only until Telegram START and CRM purchase data are connected."
         )
     return (
         f"Campaign-specific audience ranking for {campaign['name']}:\n"
@@ -188,6 +189,17 @@ def creative_diagnosis(item: dict[str, Any]) -> str:
     if item.get("clicks", 0) < 50:
         return "Insufficient data: keep in controlled rotation before judging."
     return "Review candidate: compare lead quality against Telegram/CRM outcomes."
+
+
+def audience_diagnosis(item: dict[str, Any]) -> str:
+    label = str(item.get("label", "")).lower()
+    if item.get("purchases", 0) > 0:
+        return "It has purchase proof, so it can become a cautious scale candidate."
+    if any(word in label for word in ["business", "marketing", "smm", "ai", "job", "work"]):
+        return "It matches higher purchasing-power hypotheses, but still needs Telegram/CRM validation."
+    if item.get("leads", 0) >= 100:
+        return "It is a lead-volume winner, but purchasing power is not proven."
+    return "It needs more controlled spend before a strong audience decision."
 
 
 def normalize(value: str) -> str:

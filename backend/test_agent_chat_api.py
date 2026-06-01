@@ -80,7 +80,82 @@ def test_agent_chat_answers_campaign_specific_audience_from_raw_knowledge(monkey
     assert payload["activeAgent"] == "audience"
     assert "TOF - UZB - 18 - 45 - ALL - AD+ [AI]" in payload["answer"]
     assert "$0.10" in payload["answer"]
+    assert "Telegram START and CRM purchase data" in payload["answer"]
     assert "campaign_specific_analysis" in payload["sources"]
+
+
+def test_agent_chat_uses_audience_specialist_ranking_from_knowledge_base(monkeypatch):
+    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        app_module,
+        "load_knowledge_base",
+        lambda: {
+            "raw": {
+                "campaigns": [{"id": "cmp_1", "name": "General campaign"}],
+                "insights": {
+                    "base": [
+                        {
+                            "campaign_id": "cmp_1",
+                            "adset_id": "as_business",
+                            "adset_name": "TOF - UZB - 25 - 44 - ALL - AD+ [BUSINESS]",
+                            "spend": "120",
+                            "clicks": "1200",
+                            "actions": [{"action_type": "lead", "value": "600"}],
+                        },
+                        {
+                            "campaign_id": "cmp_1",
+                            "adset_id": "as_broad",
+                            "adset_name": "TOF - UZB - 18 - 45 - ALL - AD+ [BROAD]",
+                            "spend": "100",
+                            "clicks": "900",
+                            "actions": [{"action_type": "lead", "value": "250"}],
+                        },
+                    ]
+                },
+            },
+            "analysis": {
+                "summary": {"spend": 220, "clicks": 2100, "leads": 850},
+                "audience": {
+                    "ageGender": [
+                        {
+                            "label": "25-34 / female",
+                            "spend": 90,
+                            "clicks": 1000,
+                            "leads": 500,
+                            "purchases": 0,
+                            "cpc": 0.09,
+                            "cpl": 0.18,
+                            "leadRateFromClick": 50,
+                        }
+                    ],
+                    "interests": [
+                        {
+                            "label": "Business",
+                            "spend": 120,
+                            "clicks": 1200,
+                            "leads": 600,
+                            "purchases": 0,
+                            "cpc": 0.1,
+                            "cpl": 0.2,
+                            "leadRateFromClick": 50,
+                        }
+                    ],
+                },
+            },
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/agent/chat", json={"message": "Which audience and interests should we target next?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["activeAgent"] == "audience"
+    assert "Audience specialist ranking" in payload["answer"]
+    assert "TOF - UZB - 25 - 44 - ALL - AD+ [BUSINESS]" in payload["answer"]
+    assert "Top interest clusters" in payload["answer"]
+    assert "Business" in payload["answer"]
+    assert "Telegram START quality, CRM stages, and sales capacity" in payload["answer"]
 
 
 def test_agent_chat_answers_campaign_specific_creatives_with_quality_warning(monkeypatch):
