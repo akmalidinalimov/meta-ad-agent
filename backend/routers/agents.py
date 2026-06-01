@@ -15,6 +15,7 @@ from ..agent_orchestrator import (
 )
 from ..agent_quality import evaluate_agent_response
 from ..api_models import ChatRequest, ChatResponse
+from ..campaign_analysis import campaign_analysis_from_question
 from ..dashboard_service import (
     answer_audiences,
     answer_creatives,
@@ -91,6 +92,21 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
                 orchestrated["generatedStrategy"]["playbookId"] = saved_playbook["id"]
             orchestrated["answer"] += "\n\nI saved this as a draft playbook in the dashboard. It is still not executed in Meta Ads."
         return ChatResponse(**orchestrated)
+
+    # When the operator names a specific campaign, answer with that campaign's real
+    # ranked ad sets / creatives / placements instead of the generic account answer.
+    campaign_specific = campaign_analysis_from_question(knowledge, question, focus=route_question(question)["agentId"])
+    if campaign_specific:
+        return specialist_chat_response(
+            question,
+            answer=campaign_specific["answer"],
+            sources=["storage/meta_knowledge_base.json", "campaign_analysis"],
+            suggestedQuestions=[
+                "Which creative should we scale from this campaign?",
+                "Which placement had the best lead rate?",
+                "What are the limitations of this analysis?",
+            ],
+        )
 
     wants_tracking_answer = any(word in lower for word in ["pixel", "tracking", "visit", "landing", "lead rate", "funnel"])
     wants_connection_status = any(word in lower for word in ["token", "meta api", "account id", "ad account", "api status"])
