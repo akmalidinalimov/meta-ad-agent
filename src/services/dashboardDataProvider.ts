@@ -17,7 +17,7 @@ export const apiDashboardDataProvider: DashboardDataProvider = {
       return getDashboardDataFromScript()
     }
 
-    const response = await fetch('/api/dashboard')
+    const response = await fetch(apiUrl('/api/dashboard'))
 
     if (!response.ok) {
       throw new Error(`Dashboard API failed with ${response.status}`)
@@ -51,7 +51,7 @@ function getDashboardDataFromScript() {
       resolve(payload)
     }
 
-    script.src = `/api/dashboard.js?callback=${encodeURIComponent(callbackName)}`
+    script.src = `${apiUrl('/api/dashboard.js')}?callback=${encodeURIComponent(callbackName)}`
     script.async = true
     script.onerror = () => {
       window.clearTimeout(timeoutId)
@@ -71,4 +71,17 @@ export const dashboardDataProvider: DashboardDataProvider = {
       return mockDashboardDataProvider.getDashboardData()
     }
   },
+}
+
+function apiUrl(path: string) {
+  const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined
+  if (configuredBaseUrl) {
+    return `${configuredBaseUrl.replace(/\/$/, '')}${path}`
+  }
+
+  if (typeof window !== 'undefined' && ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
+    return `http://127.0.0.1:8000${path}`
+  }
+
+  return path
 }

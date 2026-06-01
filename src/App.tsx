@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
 import { dashboardDataProvider, mockDashboardDataProvider } from './services/dashboardDataProvider'
 import type { DashboardData } from './types/marketing'
 import './App.css'
 
-const LOAD_TIMEOUT_MS = 12000
+const LOAD_TIMEOUT_MS = 30000
 
 async function getDashboardDataWithTimeout() {
   let timeoutId: ReturnType<typeof setTimeout> | undefined
@@ -28,6 +28,21 @@ async function getDashboardDataWithTimeout() {
 
 function App() {
   const [data, setData] = useState<DashboardData | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const refreshDashboardData = useCallback(async () => {
+    setIsRefreshing(true)
+    try {
+      const nextData = await getDashboardDataWithTimeout()
+      setData(nextData)
+      return nextData
+    } catch (error) {
+      console.error('Dashboard data refresh failed. Keeping current dashboard data.', error)
+      throw error
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -56,7 +71,14 @@ function App() {
     )
   }
 
-  return <Dashboard data={data} key={`${data.dataSource?.kind ?? 'local'}-${data.dataSource?.generatedAt ?? 'initial'}`} />
+  return (
+    <Dashboard
+      data={data}
+      isRefreshing={isRefreshing}
+      onRefresh={refreshDashboardData}
+      key={`${data.dataSource?.kind ?? 'local'}-${data.dataSource?.generatedAt ?? 'initial'}`}
+    />
+  )
 }
 
 export default App

@@ -181,8 +181,11 @@ export interface RankingRow {
   leads: number
   telegramSubscribers: number
   purchases: number
+  cpc: number
   cpl: number
   costPerTelegramStart: number
+  leadRatePercent: number
+  telegramStartRatePercent: number
   buyerRate: number
   qualityScore: number
   recommendedAction: string

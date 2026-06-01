@@ -12,6 +12,13 @@
   margin-bottom: 18px;
 }
 
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .eyebrow {
   margin: 0 0 6px;
   color: #64748b;
@@ -546,10 +553,10 @@
 .ranking-head,
 .ranking-row {
   display: grid;
-  grid-template-columns: 58px minmax(220px, 1fr) 92px 82px 92px 78px 82px 130px;
+  grid-template-columns: 58px minmax(220px, 1fr) 92px 72px 72px 82px 82px 74px 78px 82px 130px;
   gap: 12px;
   align-items: center;
-  min-width: 860px;
+  min-width: 1120px;
 }
 
 .event-steps-grid {
@@ -1712,6 +1719,10 @@
 
   .topbar {
     display: grid;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
   }
 
   .topbar h1 {

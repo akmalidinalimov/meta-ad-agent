@@ -119,6 +119,8 @@ type ViewId = (typeof navItems)[number]['id']
 
 interface DashboardProps {
   data: DashboardData
+  isRefreshing?: boolean
+  onRefresh?: () => Promise<DashboardData>
 }
 
 const defaultFilters: DashboardFilters = {
@@ -131,7 +133,7 @@ const defaultFilters: DashboardFilters = {
   objective: 'all',
 }
 
-export function Dashboard({ data }: DashboardProps) {
+export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardProps) {
   const [activeView, setActiveView] = useState<ViewId>('overview')
   const [selectedCreativeId, setSelectedCreativeId] = useState(data.creatives[0]?.id ?? '')
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
@@ -242,9 +244,17 @@ export function Dashboard({ data }: DashboardProps) {
           <p className="eyebrow">Meta Ad Agent</p>
           <h1>Campaign Audit Dashboard</h1>
         </div>
-        <div className={`status-pill ${dataSourceTone}`}>
-          {data.dataSource?.kind === 'meta' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-          {data.dataSource?.label ?? 'Dashboard data loaded'}
+        <div className="topbar-actions">
+          <div className={`status-pill ${dataSourceTone}`}>
+            {data.dataSource?.kind === 'meta' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            {data.dataSource?.label ?? 'Dashboard data loaded'}
+          </div>
+          {onRefresh && (
+            <button className="sync-button secondary" type="button" onClick={() => void onRefresh()} disabled={isRefreshing}>
+              <RefreshCcw size={16} />
+              {isRefreshing ? 'Refreshing...' : 'Refresh data'}
+            </button>
+          )}
         </div>
       </header>
 
@@ -300,7 +310,7 @@ export function Dashboard({ data }: DashboardProps) {
           {activeView === 'settingsAudit' && <SettingsAuditView />}
           {activeView === 'tracking' && <TrackingView data={data} />}
           {activeView === 'alerts' && <AlertsView data={data} />}
-          {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} />}
+          {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} onDashboardRefresh={onRefresh} />}
         </>
       )}
 
@@ -1190,8 +1200,11 @@ function RankingTable({ rows }: { rows: RankingRow[] }) {
         <span>Rank</span>
         <span>Name</span>
         <span>Spend</span>
+        <span>CPC</span>
+        <span>CPL</span>
+        <span>Lead rate</span>
+        <span>START rate</span>
         <span>Leads</span>
-        <span>Bot starts</span>
         <span>Buyers</span>
         <span>Quality</span>
         <span>Action</span>
@@ -1201,8 +1214,11 @@ function RankingTable({ rows }: { rows: RankingRow[] }) {
           <span>#{row.rank}</span>
           <strong title={row.name}>{row.name}</strong>
           <span>{formatCurrency(row.spendUsd)}</span>
+          <span>{formatCurrency(row.cpc)}</span>
+          <span>{row.cpl ? formatCurrency(row.cpl) : '—'}</span>
+          <span>{row.leadRatePercent.toFixed(1)}%</span>
+          <span>{row.telegramStartRatePercent.toFixed(1)}%</span>
           <span>{formatNumber(row.leads)}</span>
-          <span>{formatNumber(row.telegramSubscribers)}</span>
           <span>{formatNumber(row.purchases)}</span>
           <em className={row.tone}>{row.qualityScore}</em>
           <small>{row.recommendedAction}</small>
@@ -2084,7 +2100,15 @@ function MonitoringAlertsPanel({ data }: { data: DashboardData }) {
   )
 }
 
-function SettingsView({ data, metaStatus }: { data: DashboardData; metaStatus: MetaStatus | null }) {
+function SettingsView({
+  data,
+  metaStatus,
+  onDashboardRefresh,
+}: {
+  data: DashboardData
+  metaStatus: MetaStatus | null
+  onDashboardRefresh?: () => Promise<DashboardData>
+}) {
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [syncDays, setSyncDays] = useState<90 | 180>(90)
@@ -2138,8 +2162,15 @@ function SettingsView({ data, metaStatus }: { data: DashboardData; metaStatus: M
       if (result.snapshot) {
         setSnapshots((current) => [result.snapshot as MetaSnapshot, ...current.filter((item) => item.id !== result.snapshot?.id)])
       }
-      setSyncMessage(result.llmEnabled ? 'Sync complete. LLM analysis saved.' : 'Sync complete. Rule-based analysis saved.')
-      window.setTimeout(() => window.location.reload(), 900)
+      setSyncMessage(
+        result.llmEnabled
+          ? 'Sync complete. LLM analysis saved. Refreshing dashboard data...'
+          : 'Sync complete. Rule-based analysis saved. Refreshing dashboard data...',
+      )
+      if (onDashboardRefresh) {
+        await onDashboardRefresh()
+      }
+      setSyncMessage(result.llmEnabled ? 'Sync complete. Dashboard is updated.' : 'Sync complete. Dashboard is updated.')
     } catch {
       setSyncMessage('Could not reach the backend sync endpoint.')
     } finally {

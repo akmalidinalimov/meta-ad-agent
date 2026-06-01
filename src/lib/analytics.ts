@@ -279,6 +279,7 @@ export function deriveRankingRows(
       const leads = sumBy(rows, (row) => row.leads)
       const telegramSubscribers = sumBy(rows, (row) => row.telegramSubscribers)
       const purchases = sumBy(rows, (row) => row.purchases)
+      const cpc = clicks === 0 ? 0 : spendUsd / clicks
       const cpl = leads === 0 ? 0 : spendUsd / leads
       const costPerTelegramStart = telegramSubscribers === 0 ? 0 : spendUsd / telegramSubscribers
       const buyerRate = leads === 0 ? 0 : purchases / leads
@@ -305,8 +306,11 @@ export function deriveRankingRows(
         leads,
         telegramSubscribers,
         purchases,
+        cpc,
         cpl,
         costPerTelegramStart,
+        leadRatePercent: leadRate * 100,
+        telegramStartRatePercent: telegramRate * 100,
         buyerRate,
         qualityScore,
         recommendedAction,

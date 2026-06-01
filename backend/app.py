@@ -26,7 +26,7 @@ from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, fetch_bitrix
 from .chatplace_events import normalize_chatplace_event
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
 from .funnel_events import build_funnel_summary, save_funnel_event
-from .knowledge_base import load_knowledge_base, save_knowledge_base
+from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
 from .meta_execution import (
     build_campaign_creation_approval,
@@ -34,7 +34,7 @@ from .meta_execution import (
     execute_meta_action_approval,
     payload_for_meta_action,
 )
-from .monitoring_runner import list_monitoring_alerts, run_monitoring_check
+from .monitoring_runner import ALERTS_PATH, list_monitoring_alerts, run_monitoring_check
 from .meta_client import (
     MetaApiError,
     get_ad_account_summary,
@@ -62,6 +62,11 @@ from .telegram_outbound import send_approval_notification, send_telegram_message
 SYNC_END_DATE = date.today()
 
 app = FastAPI(title="Meta Ad Agent API")
+
+DASHBOARD_CACHE: dict[str, Any] = {
+    "key": None,
+    "payload": None,
+}
 
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -1170,7 +1175,14 @@ def funnel_event_summary() -> dict[str, Any]:
 def dashboard() -> dict[str, Any]:
     knowledge = load_knowledge_base()
     if knowledge:
-        return dashboard_from_knowledge_base(knowledge)
+        cache_key = dashboard_cache_key()
+        if DASHBOARD_CACHE["key"] == cache_key and DASHBOARD_CACHE["payload"]:
+            return DASHBOARD_CACHE["payload"]
+
+        payload = dashboard_from_knowledge_base(knowledge)
+        DASHBOARD_CACHE["key"] = cache_key
+        DASHBOARD_CACHE["payload"] = payload
+        return payload
 
     return {
         "campaigns": campaigns,
@@ -1198,6 +1210,17 @@ def dashboard() -> dict[str, Any]:
             "syncErrors": [],
         },
     }
+
+
+def dashboard_cache_key() -> tuple[int | None, int | None]:
+    return (file_mtime_ns(KNOWLEDGE_BASE_PATH), file_mtime_ns(ALERTS_PATH))
+
+
+def file_mtime_ns(path: Any) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
 
 
 @app.get("/api/dashboard.js")

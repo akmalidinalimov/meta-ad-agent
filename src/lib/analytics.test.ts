@@ -65,6 +65,10 @@ describe('deriveRankingRows', () => {
 
     expect(rows[0].id).toBe('campaign_quality')
     expect(rows[0].rank).toBe(1)
+    expect(rows[0].cpc).toBeCloseTo(1)
+    expect(rows[0].cpl).toBeCloseTo(2.5)
+    expect(rows[0].leadRatePercent).toBeCloseTo(40)
+    expect(rows[0].telegramStartRatePercent).toBeCloseTo(30)
   })
 })
 
