@@ -272,3 +272,99 @@ def test_agent_chat_uses_creative_specialist_ranking_from_knowledge_base(monkeyp
     assert "thumbnail and video ID available" in payload["answer"]
     assert "Traffic magnet to audit" in payload["answer"]
     assert "Avoid scaling blindly" in payload["answer"]
+
+
+def test_agent_chat_uses_placement_specialist_ranking_from_knowledge_base(monkeypatch):
+    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        app_module,
+        "load_knowledge_base",
+        lambda: {
+            "analysis": {
+                "summary": {"spend": 300, "clicks": 3000, "leads": 1200},
+                "placements": [
+                    {
+                        "label": "instagram / reels",
+                        "spend": 180,
+                        "clicks": 2200,
+                        "leads": 950,
+                        "purchases": 0,
+                        "cpc": 0.0818,
+                        "cpl": 0.1895,
+                        "leadRateFromClick": 43.2,
+                        "qualityScore": 94,
+                    },
+                    {
+                        "label": "facebook / feed",
+                        "spend": 120,
+                        "clicks": 800,
+                        "leads": 250,
+                        "purchases": 0,
+                        "cpc": 0.15,
+                        "cpl": 0.48,
+                        "leadRateFromClick": 31.25,
+                        "qualityScore": 68,
+                    },
+                ],
+            }
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/agent/chat", json={"message": "Which placements should we use or avoid?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["activeAgent"] == "placement"
+    assert "Placement specialist ranking" in payload["answer"]
+    assert "instagram / reels" in payload["answer"]
+    assert "facebook / feed" in payload["answer"]
+    assert "separate Instagram placements from Facebook tests" in payload["answer"]
+    assert "Telegram START and CRM quality" in payload["answer"]
+
+
+def test_agent_chat_uses_funnel_specialist_diagnosis_from_knowledge_base(monkeypatch):
+    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        app_module,
+        "load_knowledge_base",
+        lambda: {
+            "raw": {
+                "insights": {
+                    "base": [
+                        {
+                            "spend": "100",
+                            "clicks": "1000",
+                            "actions": [
+                                {"action_type": "landing_page_view", "value": "620"},
+                                {"action_type": "lead", "value": "310"},
+                            ],
+                        }
+                    ]
+                }
+            },
+            "analysis": {
+                "summary": {
+                    "spend": 100,
+                    "clicks": 1000,
+                    "leads": 310,
+                    "purchases": 0,
+                    "cpc": 0.1,
+                    "cpl": 0.3226,
+                    "leadRateFromClick": 31,
+                }
+            },
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/agent/chat", json={"message": "Where is the biggest funnel leak?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["activeAgent"] == "funnel"
+    assert "Funnel specialist diagnosis" in payload["answer"]
+    assert "landing visit rate 62.0%" in payload["answer"]
+    assert "landing lead rate 50.0%" in payload["answer"]
+    assert "Telegram START rate" in payload["answer"]
+    assert "CRM purchase data" in payload["answer"]

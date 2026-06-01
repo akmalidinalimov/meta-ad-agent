@@ -2094,17 +2094,13 @@ def answer_from_knowledge_base(lower_question: str, knowledge: dict[str, Any]) -
         return answer_audiences_from_knowledge_base(knowledge)
 
     if any(word in lower_question for word in ["placement", "facebook", "instagram", "reels", "feed"]):
-        eligible = [item for item in analysis.get("placements", []) if item.get("spend", 0) >= min_spend]
-        placement = first(eligible)
-        weak = last(eligible)
-        return (
-            f"Best-ranked placement with meaningful spend is {placement['label'] if placement else 'not enough placement data'}. "
-            f"Weakest among meaningful-spend placements is {weak['label'] if weak else 'not enough placement data'}. "
-            "I would separate placement tests rather than mixing everything blindly: scale high-quality placements and keep weak placements for retargeting only."
-        )
+        return answer_placements_from_knowledge_base(knowledge)
 
     if any(word in lower_question for word in ["creative", "video", "hook", "thumbnail", "viral", "worked", "didn't", "did not"]):
         return answer_creatives_from_knowledge_base(knowledge)
+
+    if any(word in lower_question for word in ["funnel", "telegram", "landing", "lead rate", "visit", "leak", "crm", "bot"]):
+        return answer_funnel_from_knowledge_base(knowledge)
 
     if any(word in lower_question for word in ["summary", "learn", "lesson", "analysis", "recommend"]):
         llm = analysis.get("llmSummary")
@@ -2356,6 +2352,112 @@ def audience_diagnosis(item: dict[str, Any]) -> str:
             return "Qualified-lead candidate: validate Telegram/CRM quality before scaling."
         return "Lead-volume candidate: check purchasing power before scaling."
     return "Learning candidate: keep broad until more downstream quality data arrives."
+
+
+def answer_placements_from_knowledge_base(knowledge: dict[str, Any]) -> str:
+    analysis = knowledge.get("analysis", {})
+    min_spend = max(5, analysis.get("summary", {}).get("spend", 0) * 0.02)
+    placements = [
+        item
+        for item in analysis.get("placements", [])
+        if as_float(item.get("spend")) >= min_spend or as_float(item.get("clicks")) >= 500 or as_float(item.get("leads")) >= 100
+    ]
+    if not placements:
+        return (
+            "Placement specialist ranking: not enough placement breakdown data yet. "
+            "Refresh Meta insights with publisher_platform and platform_position breakdowns before deciding where to scale or cut."
+        )
+
+    ranked = sorted(placements, key=placement_sort_key)
+    weak = max(ranked, key=placement_waste_key)
+    instagram = [item for item in ranked if "instagram" in str(item.get("label", "")).lower()]
+    facebook = [item for item in ranked if "facebook" in str(item.get("label", "")).lower()]
+    top_lines = [
+        f"{index}. {item['label']}: {placement_metric_sentence(item)}. {placement_diagnosis(item)}"
+        for index, item in enumerate(ranked[:6], start=1)
+    ]
+
+    return (
+        "Placement specialist ranking from the saved Meta knowledge base:\n"
+        + "\n".join(top_lines)
+        + f"\n\nScale hypothesis: {ranked[0]['label']} has the strongest placement signal by CPL, lead rate, and volume."
+        + f"\nPlacement to avoid or isolate: {weak['label']} because it shows weaker cost/quality economics relative to the account."
+        + (
+            f"\nInstagram vs Facebook read: Instagram best candidate is {instagram[0]['label'] if instagram else 'not enough Instagram data'}; "
+            f"Facebook best candidate is {facebook[0]['label'] if facebook else 'not enough Facebook data'}."
+        )
+        + "\nRecommendation: separate Instagram placements from Facebook tests, especially in Uzbekistan, so cheap Facebook traffic does not hide weak downstream quality. "
+        "Scale only after Telegram START and CRM quality confirm that registrations are turning into reachable, qualified leads."
+    )
+
+
+def placement_sort_key(item: dict[str, Any]) -> tuple[float, float, float]:
+    cpl = as_float(item.get("cpl"))
+    lead_rate = as_float(item.get("leadRateFromClick"))
+    leads = as_float(item.get("leads"))
+    return (cpl if cpl else 999999, -lead_rate, -leads)
+
+
+def placement_waste_key(item: dict[str, Any]) -> tuple[float, float, float]:
+    cpl = as_float(item.get("cpl"))
+    spend = as_float(item.get("spend"))
+    leads = as_float(item.get("leads"))
+    return (cpl if cpl else 999999, spend, -leads)
+
+
+def placement_metric_sentence(item: dict[str, Any]) -> str:
+    return (
+        f"${as_float(item.get('spend')):,.2f} spend, {as_float(item.get('clicks')):,.0f} clicks, "
+        f"{as_float(item.get('leads')):,.0f} leads, {as_float(item.get('purchases')):,.0f} purchases, "
+        f"CPC ${as_float(item.get('cpc')):.4f}, CPL ${as_float(item.get('cpl')):.2f}, "
+        f"lead rate {as_float(item.get('leadRateFromClick')):.1f}%"
+    )
+
+
+def placement_diagnosis(item: dict[str, Any]) -> str:
+    label = str(item.get("label", "")).lower()
+    purchases = as_float(item.get("purchases"))
+    leads = as_float(item.get("leads"))
+    if purchases > 0:
+        return "Scale candidate: has downstream purchase proof."
+    if "instagram" in label and leads >= 100:
+        return "Priority test: matches the known Uzbekistan Instagram behavior, but still needs Telegram/CRM validation."
+    if "facebook" in label:
+        return "Isolation candidate: keep separate or retarget-only until buyer quality is proven."
+    return "Controlled test candidate: judge by Telegram START and CRM quality, not clicks alone."
+
+
+def answer_funnel_from_knowledge_base(knowledge: dict[str, Any]) -> str:
+    tracking = tracking_calculations_from_knowledge(knowledge)
+    clicks = as_float(tracking.get("clicks"))
+    visits = as_float(tracking.get("estimatedLandingPageVisits"))
+    leads = as_float(tracking.get("leads"))
+    purchases = as_float(tracking.get("purchases"))
+    visit_rate = as_float(tracking.get("visitRatePercent"))
+    landing_lead_rate = as_float(tracking.get("landingPageLeadRatePercent"))
+    purchase_rate = as_float(tracking.get("purchaseRateFromLandingVisitPercent"))
+    leak = funnel_leak_label(visit_rate, landing_lead_rate, purchases, visits)
+
+    return (
+        "Funnel specialist diagnosis from the saved Meta knowledge base:\n"
+        f"1. Ad click to landing page: {clicks:,.0f} clicks -> {visits:,.0f} landing visits, landing visit rate {visit_rate:.1f}%.\n"
+        f"2. Landing page to registration: {visits:,.0f} landing visits -> {leads:,.0f} leads, landing lead rate {landing_lead_rate:.1f}%.\n"
+        f"3. Landing page to purchase: {purchases:,.0f} purchases, purchase rate from landing visit {purchase_rate:.1f}%.\n"
+        f"Biggest current leak: {leak}. "
+        "Telegram START rate is not fully attributable until each bot deep link sends visitor_id and telegram_user_id back to the tracker. "
+        "CRM purchase data is also required before the agent can confidently choose scale winners. "
+        "Recommendation: watch landing visit rate, landing lead rate, Telegram START rate, and CRM qualified/paid stages together before increasing budgets."
+    )
+
+
+def funnel_leak_label(visit_rate: float, landing_lead_rate: float, purchases: float, visits: float) -> str:
+    if visit_rate < 70:
+        return "click-to-landing-page handoff, likely page speed, redirect, or intent mismatch"
+    if landing_lead_rate < 35:
+        return "landing-page-to-lead conversion, likely promise/CTA/VSL-bot expectation mismatch"
+    if visits > 0 and purchases == 0:
+        return "post-lead quality, because registrations exist but CRM purchases are not attributed"
+    return "downstream Telegram/CRM quality; keep monitoring because top-of-funnel rates look usable"
 
 
 def answer_creatives_from_knowledge_base(knowledge: dict[str, Any]) -> str:
