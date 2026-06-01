@@ -8,9 +8,25 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
+from .api_models import (
+    AgentTaskRequest,
+    ApprovalChangesRequest,
+    ApprovalDecisionRequest,
+    ApprovalExecutionRequest,
+    ApprovalRejectRequest,
+    CampaignExecutionPlanRequest,
+    CampaignPlaybookRequest,
+    ChatRequest,
+    ChatResponse,
+    DraftCampaignProposalRequest,
+    FunnelEventRequest,
+    MetaSyncRequest,
+    ScheduledMonitoringRequest,
+    StrategyRequest,
+    TelegramTestMessageRequest,
+)
 from .agent_orchestrator import agent_registry, build_agent_handoffs, orchestrate_agent_chat, route_question
 from .agent_quality import evaluate_agent_response
 from .agent_task_store import create_agent_task, list_agent_tasks, update_agent_task, update_agent_task_by_approval
@@ -87,86 +103,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-class ChatRequest(BaseModel):
-    message: str
-
-
-class ChatResponse(BaseModel):
-    answer: str
-    sources: list[str]
-    suggestedQuestions: list[str]
-    activeAgent: str | None = None
-    routeReason: str | None = None
-    agentHandoffs: list[dict[str, Any]] = Field(default_factory=list)
-    agentDecision: dict[str, Any] | None = None
-    quality: dict[str, Any] | None = None
-    generatedPlaybook: dict[str, Any] | None = None
-    generatedStrategy: dict[str, Any] | None = None
-    generatedMetaActionPlan: dict[str, Any] | None = None
-    generatedApprovalRequest: dict[str, Any] | None = None
-
-
-class MetaSyncRequest(BaseModel):
-    days: int = 90
-
-
-class CampaignPlaybookRequest(BaseModel):
-    playbook: dict[str, Any]
-
-
-class StrategyRequest(BaseModel):
-    playbook: dict[str, Any] | None = None
-
-
-class CampaignExecutionPlanRequest(BaseModel):
-    playbook: dict[str, Any] | None = None
-    reason: str | None = None
-
-
-class DraftCampaignProposalRequest(BaseModel):
-    playbook: dict[str, Any] | None = None
-    accountId: str | None = None
-
-
-class ApprovalDecisionRequest(BaseModel):
-    approvedBy: str = "akmal"
-
-
-class ApprovalRejectRequest(BaseModel):
-    rejectedBy: str = "akmal"
-    reason: str = ""
-
-
-class ApprovalChangesRequest(BaseModel):
-    requestedBy: str = "akmal"
-    note: str = ""
-
-
-class ApprovalExecutionRequest(BaseModel):
-    dryRun: bool = True
-    confirmLive: bool = False
-
-
-class ScheduledMonitoringRequest(BaseModel):
-    force: bool = False
-
-
-class FunnelEventRequest(BaseModel):
-    event: dict[str, Any]
-
-
-class TelegramTestMessageRequest(BaseModel):
-    message: str = "Agent approval test"
-
-
-class AgentTaskRequest(BaseModel):
-    source: str = "dashboard"
-    command: str
-    campaignGroupId: str | None = None
-    segmentIds: list[str] = []
-    prepareApproval: bool = False
 
 
 campaigns = [
