@@ -180,17 +180,21 @@ export function deriveCreativeScores(
     const clicks = sumBy(rows, (row) => row.clicks)
     const leads = sumBy(rows, (row) => row.leads)
     const buyers = sumBy(rows, (row) => row.purchases)
+    const spendUsd = sumBy(rows, (row) => row.spendUsd)
     const leadRate = clicks === 0 ? 0 : Math.min(1, leads / clicks)
 
-    return { creative, analysis, clicks, leads, buyers, leadRate }
+    return { creative, analysis, clicks, leads, buyers, spendUsd, leadRate }
   })
 
   const maxClicks = Math.max(1, ...rawScores.map((score) => score.clicks))
   const maxLeads = Math.max(1, ...rawScores.map((score) => score.leads))
   const maxBuyers = Math.max(1, ...rawScores.map((score) => score.buyers))
+  // Best (lowest) CPL among creatives that actually produced leads, for normalization.
+  const cplValues = rawScores.filter((s) => s.leads > 0).map((s) => s.spendUsd / s.leads)
+  const bestCpl = cplValues.length ? Math.min(...cplValues) : 0
 
   return rawScores
-    .map(({ creative, analysis, clicks, leads, buyers, leadRate }) => {
+    .map(({ creative, analysis, clicks, leads, buyers, spendUsd, leadRate }) => {
       const viral = analysis?.viralScore ?? Math.round((clicks / maxClicks) * 100)
       const intent = analysis?.buyerIntentScore ?? Math.round(leadRate * 100)
       const leadVolumeScore = Math.round((leads / maxLeads) * 100)
@@ -207,20 +211,49 @@ export function deriveCreativeScores(
                 4,
             )
 
+      const cpl = leads === 0 ? 0 : spendUsd / leads
+      const leadRatePercent = Math.round(leadRate * 1000) / 10
+      // Spend/sample confidence: enough clicks AND spend to trust the numbers.
+      const spendConfidence: CreativeScore['spendConfidence'] =
+        clicks >= 500 && spendUsd >= 50 ? 'high' : clicks >= 100 && spendUsd >= 10 ? 'medium' : 'low'
+      const lowSample = clicks < 100 || spendUsd < 5
+      // Viral/intent mismatch: attention without buyer intent is a quality risk.
+      const mismatch = Math.max(0, viral - intent)
+
+      // Composite rank: reward leads, lead rate, cheap CPL, sample confidence and
+      // buyer intent; penalize viral/intent mismatch and thin samples.
+      const cplScore = bestCpl > 0 && cpl > 0 ? Math.round(Math.min(1, bestCpl / cpl) * 100) : 0
+      const confidenceScore = spendConfidence === 'high' ? 100 : spendConfidence === 'medium' ? 60 : 20
+      const rankScore = Math.round(
+        quality * 0.34 +
+          intent * 0.18 +
+          leadVolumeScore * 0.16 +
+          leadRatePercent * 0.12 +
+          cplScore * 0.1 +
+          confidenceScore * 0.1 -
+          mismatch * 0.4 -
+          (lowSample ? 12 : 0),
+      )
+
       const action =
         analysis?.recommendedAction ??
-        (buyers > 0
-          ? 'Scale'
-          : leads >= maxLeads * 0.5
-            ? 'Audit quality'
-            : leadRate >= 0.7
-              ? 'Test follow-up'
-              : 'Review')
+        (lowSample
+          ? 'Gather data'
+          : buyers > 0
+            ? 'Scale'
+            : mismatch >= 40
+              ? 'Fix intent'
+              : leads >= maxLeads * 0.5
+                ? 'Audit quality'
+                : leadRate >= 0.7
+                  ? 'Test follow-up'
+                  : 'Review')
       const tone: CreativeScore['tone'] = quality >= 70 ? 'good' : quality >= 45 ? 'warning' : 'danger'
 
       return {
         id: creative.id,
         rank: 0,
+        rankScore,
         name: creative.name,
         type: creative.theme,
         format: creative.format,
@@ -230,6 +263,12 @@ export function deriveCreativeScores(
         clicks,
         leads,
         buyers,
+        spendUsd,
+        cpl,
+        leadRate: leadRatePercent,
+        spendConfidence,
+        lowSample,
+        mismatch,
         viral,
         intent,
         courseFit,
@@ -238,8 +277,12 @@ export function deriveCreativeScores(
         tone,
       }
     })
-    .sort((a, b) => b.quality - a.quality || b.buyers - a.buyers || b.leads - a.leads || b.clicks - a.clicks)
-    .map((score, index) => ({ ...score, rank: index + 1 }))
+    .sort((a, b) => b.rankScore - a.rankScore || b.leads - a.leads || a.cpl - b.cpl || b.clicks - a.clicks)
+    .map((score, index) => {
+      const result: CreativeScore = { ...score, rank: index + 1 }
+      delete (result as { rankScore?: number }).rankScore
+      return result
+    })
 }
 
 export function derivePlacementScores(metrics: DailyAdMetric[]): PlacementScore[] {

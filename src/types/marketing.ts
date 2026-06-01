@@ -157,6 +157,12 @@ export interface CreativeScore {
   clicks: number
   leads: number
   buyers: number
+  spendUsd: number
+  cpl: number
+  leadRate: number
+  spendConfidence: 'high' | 'medium' | 'low'
+  lowSample: boolean
+  mismatch: number
   viral: number
   intent: number
   courseFit: number

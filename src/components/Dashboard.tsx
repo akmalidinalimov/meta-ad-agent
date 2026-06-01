@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   ListChecks,
   MousePointerClick,
+  Play,
   RadioTower,
   RefreshCcw,
   Settings,
@@ -743,35 +744,97 @@ function CreativeTable({
       <div className="table-head">
         <span>Rank</span>
         <span>Creative</span>
-        <span>Clicks</span>
         <span>Leads</span>
-        <span>Buyers</span>
-        <span>Viral</span>
+        <span>CPL</span>
+        <span>Lead rate</span>
+        <span>Confidence</span>
         <span>Intent</span>
         <span>Quality</span>
         <span>Action</span>
+        <span>Watch</span>
       </div>
-      {creativeScores.map((creative) => (
-        <button className="table-row" type="button" onClick={() => onSelect?.(creative.id)} key={creative.id}>
-          <span>#{creative.rank}</span>
-          <div className="creative-cell">
-            <MediaThumb assetUrl={creative.assetUrl} videoUrl={creative.videoUrl} videoId={creative.videoId} format={creative.format} />
-            <div>
-              <strong>{creative.name}</strong>
-              <small>{creative.type} / {creative.format}</small>
+      {creativeScores.map((creative) => {
+        const interactive = Boolean(onSelect)
+        return (
+          <div
+            className="table-row"
+            key={creative.id}
+            role={interactive ? 'button' : undefined}
+            tabIndex={interactive ? 0 : undefined}
+            onClick={interactive ? () => onSelect?.(creative.id) : undefined}
+            onKeyDown={
+              interactive
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      onSelect?.(creative.id)
+                    }
+                  }
+                : undefined
+            }
+          >
+            <span>#{creative.rank}</span>
+            <div className="creative-cell">
+              <MediaThumb assetUrl={creative.assetUrl} videoUrl={creative.videoUrl} videoId={creative.videoId} format={creative.format} />
+              <div>
+                <strong>{creative.name}</strong>
+                <small>
+                  {creative.type} / {creative.format}
+                  {creative.lowSample && <span className="creative-flag low-sample">Low sample</span>}
+                  {creative.mismatch >= 40 && <span className="creative-flag mismatch">Viral≫intent</span>}
+                </small>
+              </div>
             </div>
+            <span>{formatNumber(creative.leads)}</span>
+            <span>{creative.cpl > 0 ? `$${creative.cpl.toFixed(2)}` : '—'}</span>
+            <span>{creative.leadRate.toFixed(1)}%</span>
+            <span className={`confidence ${creative.spendConfidence}`}>{creative.spendConfidence}</span>
+            <span>{creative.intent}</span>
+            <span>{creative.quality}</span>
+            <em className={creative.tone}>{creative.action}</em>
+            <WatchAction creative={creative} onSelect={onSelect} />
           </div>
-          <span>{formatNumber(creative.clicks)}</span>
-          <span>{formatNumber(creative.leads)}</span>
-          <span>{creative.buyers}</span>
-          <span>{creative.viral}</span>
-          <span>{creative.intent}</span>
-          <span>{creative.quality}</span>
-          <em className={creative.tone}>{creative.action}</em>
-        </button>
-      ))}
+        )
+      })}
     </div>
   )
+}
+
+function WatchAction({
+  creative,
+  onSelect,
+}: {
+  creative: ReturnType<typeof deriveCreativeScores>[number]
+  onSelect?: (id: string) => void
+}) {
+  if (creative.videoUrl) {
+    return (
+      <a
+        className="watch-action"
+        href={creative.videoUrl}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <Play size={13} /> Watch
+      </a>
+    )
+  }
+  if (creative.videoId && onSelect) {
+    return (
+      <button
+        type="button"
+        className="watch-action"
+        onClick={(event) => {
+          event.stopPropagation()
+          onSelect(creative.id)
+        }}
+      >
+        <Play size={13} /> Load
+      </button>
+    )
+  }
+  return <span className="watch-action disabled">—</span>
 }
 
 function PlacementPanel({ placements }: { placements: ReturnType<typeof derivePlacementScores> }) {

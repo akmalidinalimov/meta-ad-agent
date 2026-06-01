@@ -205,6 +205,58 @@ describe('deriveCreativeScores', () => {
     expect(scores[1].id).toBe('creative_b')
     expect(scores[1].rank).toBe(2)
   })
+
+  it('computes spend, CPL, lead rate, confidence, and viral/intent mismatch', () => {
+    const scores = deriveCreativeScores(metrics, creatives, analyses)
+    const a = scores.find((score) => score.id === 'creative_a')!
+    const b = scores.find((score) => score.id === 'creative_b')!
+
+    expect(a.spendUsd).toBe(100)
+    expect(a.cpl).toBeCloseTo(100 / 120, 4)
+    expect(a.leadRate).toBeCloseTo(24, 1)
+    expect(a.spendConfidence).toBe('high')
+    expect(a.lowSample).toBe(false)
+    expect(a.mismatch).toBe(0) // viral 55 < intent 88
+    expect(b.mismatch).toBe(73) // viral 98 - intent 25
+  })
+
+  it('flags low-sample creatives and keeps them out of the top rank', () => {
+    const thin: Creative = {
+      id: 'creative_c',
+      adId: 'ad_c',
+      name: 'Thin test',
+      format: 'video',
+      theme: 'test',
+      hookType: 'x',
+      primaryPersona: 'y',
+      cta: 'z',
+    }
+    const thinMetric: DailyAdMetric = {
+      date: '2026-05-20',
+      campaignId: 'campaign_1',
+      adSetId: 'adset_3',
+      adId: 'ad_c',
+      creativeId: 'creative_c',
+      placement: 'instagram_reels',
+      spendUsd: 2,
+      impressions: 300,
+      clicks: 20,
+      landingPageViews: 15,
+      leads: 9,
+      telegramSubscribers: 3,
+      webinarAttendees: 1,
+      purchases: 0,
+      purchaseRevenueUsd: 0,
+    }
+
+    const scores = deriveCreativeScores([...metrics, thinMetric], [...creatives, thin], analyses)
+    const thinScore = scores.find((score) => score.id === 'creative_c')!
+
+    expect(thinScore.lowSample).toBe(true)
+    expect(thinScore.spendConfidence).toBe('low')
+    expect(thinScore.action).toBe('Gather data')
+    expect(scores[0].id).not.toBe('creative_c')
+  })
 })
 
 describe('dashboard filtering', () => {

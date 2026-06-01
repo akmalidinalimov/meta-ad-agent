@@ -619,10 +619,77 @@
 .table-head,
 .table-row {
   display: grid;
-  grid-template-columns: minmax(54px, 0.35fr) minmax(210px, 1.6fr) repeat(6, minmax(70px, 0.6fr)) minmax(120px, 0.8fr);
+  grid-template-columns: minmax(48px, 0.3fr) minmax(200px, 1.7fr) repeat(5, minmax(66px, 0.55fr)) minmax(96px, 0.7fr) minmax(74px, 0.55fr);
   gap: 12px;
   align-items: center;
-  min-width: 990px;
+  min-width: 1040px;
+}
+
+.creative-flag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.creative-flag.low-sample {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.creative-flag.mismatch {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.confidence {
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.confidence.high {
+  color: #047857;
+}
+
+.confidence.medium {
+  color: #a16207;
+}
+
+.confidence.low {
+  color: #b91c1c;
+}
+
+.watch-action {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  justify-self: start;
+  padding: 5px 9px;
+  border: 1px solid #c7d2e0;
+  border-radius: 8px;
+  color: #1f3a5f;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.watch-action:hover {
+  border-color: #94a3b8;
+  background: #eef2f7;
+}
+
+.watch-action.disabled {
+  padding: 0;
+  border: 0;
+  color: #94a3b8;
+  background: transparent;
+  cursor: default;
 }
 
 .table-head {
