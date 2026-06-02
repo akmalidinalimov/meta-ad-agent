@@ -24,8 +24,10 @@ def test_run_strategy_council_builds_multi_round_agent_session():
     assert len(session["agents"]) >= 9
     assert len(session["rounds"]) == 3
     assert len(session["events"]) >= 10
-    assert session["averageScoreOutOf10"] >= 9.5
-    assert session["quality"]["score"] >= 95
+    # Scores are now evidence-based (vary with real data), not a constant ~9.5.
+    assert 0 < session["averageScoreOutOf10"] <= 10
+    assert 0 < session["quality"]["score"] <= 100
+    assert len({score["scoreOutOf10"] for score in session["scores"]}) > 1
     assert "audienceDecision" in session["finalPlan"]
     assert "creativeDecision" in session["finalPlan"]
     assert "placementDecision" in session["finalPlan"]
@@ -46,7 +48,7 @@ def test_agent_council_api_returns_visualizable_session(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["council"]["averageScoreOutOf10"] >= 9.5
+    assert 0 < payload["council"]["averageScoreOutOf10"] <= 10
     assert payload["council"]["events"][0].keys() >= {"fromAgent", "toAgent", "question", "answer"}
 
 
@@ -63,6 +65,6 @@ def test_agent_chat_attaches_council_for_multi_agent_strategy_request(monkeypatc
     assert response.status_code == 200
     payload = response.json()
     assert payload["activeAgent"] == "orchestrator"
-    assert payload["agentCouncil"]["averageScoreOutOf10"] >= 9.5
+    assert 0 < payload["agentCouncil"]["averageScoreOutOf10"] <= 10
     assert "Strategy Council" in payload["answer"]
     assert payload["agentDecision"]["approvalRequired"] is True

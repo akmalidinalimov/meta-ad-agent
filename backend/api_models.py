@@ -26,6 +26,7 @@ class ChatResponse(BaseModel):
     agentDecision: dict[str, Any] | None = None
     quality: dict[str, Any] | None = None
     agentCouncil: dict[str, Any] | None = None
+    proactiveInsights: list[dict[str, Any]] | None = None
     generatedPlaybook: dict[str, Any] | None = None
     generatedStrategy: dict[str, Any] | None = None
     generatedMetaActionPlan: dict[str, Any] | None = None

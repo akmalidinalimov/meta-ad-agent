@@ -34,13 +34,51 @@ from ..dashboard_service import (
     knowledge_chat_preview,
 )
 from ..knowledge_base import load_knowledge_base
-from ..llm_reasoner import generate_chat_answer
+from ..llm_reasoner import generate_chat_answer, refine_text
 from ..monitoring_scheduler import list_monitoring_runs
 from ..playbook_store import load_playbooks, save_playbook
+from ..proactive_insights import build_proactive_insights
 from ..system_checklist import build_system_checklist
 from .meta import meta_status
 
 router = APIRouter()
+
+_PROACTIVE_MARKERS = (
+    "what should i do",
+    "what should we do",
+    "what should we improve",
+    "what can we improve",
+    "find improvements",
+    "biggest opportunities",
+    "proactive insight",
+    "proactive recommendation",
+    "what are the opportunities",
+    "where are we wasting",
+)
+
+
+def is_proactive_request(lower_question: str) -> bool:
+    return any(marker in lower_question for marker in _PROACTIVE_MARKERS)
+
+
+def format_proactive_insights(insights: list[dict[str, Any]]) -> str:
+    if not insights:
+        return (
+            "No high-priority issues stand out in the saved data right now. "
+            "Sync fresh Meta data, then ask again and I will flag creative fatigue, placement waste, and funnel leaks proactively."
+        )
+    lines = ["Proactive recommendations from your saved Meta data (highest priority first):", ""]
+    for insight in insights[:6]:
+        lines.append(f"- [{insight['priority']}] ({insight['agent']}) {insight['title']}: {insight['detail']}")
+        lines.append(f"  Suggested action: {insight['suggestedAction']}")
+    lines.append("")
+    lines.append("These are recommendations only — I will not change anything in Meta without approval.")
+    return "\n".join(lines)
+
+
+@router.get("/api/agent/insights")
+def agent_insights() -> dict[str, Any]:
+    return {"insights": build_proactive_insights(load_knowledge_base())}
 
 
 def agent_status_payload(agent: dict[str, Any], knowledge: dict[str, Any] | None, live_writes_enabled: bool) -> dict[str, Any]:
@@ -159,7 +197,11 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
     knowledge = load_knowledge_base()
     if should_run_strategy_council(question):
         council = run_strategy_council(question, knowledge=knowledge, playbooks=load_playbooks())
-        answer = format_council_answer(council)
+        answer = await refine_text(
+            format_council_answer(council),
+            instruction="Sharpen this Meta strategy-council summary into a decisive, approval-safe recommendation. Keep every number and named entity.",
+            context=council.get("finalPlan"),
+        )
         return specialist_chat_response(
             question,
             answer=answer,
@@ -175,6 +217,26 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
                 "generatedStrategy": council.get("generatedStrategy"),
             },
         )
+
+    if is_proactive_request(lower) and knowledge:
+        insights = build_proactive_insights(knowledge)
+        answer = await refine_text(
+            format_proactive_insights(insights),
+            instruction="Rewrite these proactive Meta ad recommendations to be concise and decisive. Keep every number, agent, and the approval-safety note.",
+            context=insights,
+        )
+        return specialist_chat_response(
+            question,
+            answer=answer,
+            sources=["proactive_insights", "storage/meta_knowledge_base.json"],
+            suggestedQuestions=[
+                "Turn the top recommendation into an experiment.",
+                "Which placement is wasting budget?",
+                "What tracking is missing before we scale?",
+            ],
+            extra={"proactiveInsights": insights},
+        )
+
     orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks())
     if orchestrated:
         generated_playbook = orchestrated.get("generatedPlaybook")
