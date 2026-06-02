@@ -661,6 +661,91 @@ export interface AgentTask {
   history: Array<{ status: string; at: string }>
 }
 
+export interface AgentCouncilSession {
+  id: string
+  status: string
+  question: string
+  createdAt: string
+  agents: Array<{
+    id: string
+    name: string
+    role: string
+    state: string
+    requiresApproval: boolean
+  }>
+  rounds: Array<{
+    id: string
+    title: string
+    purpose: string
+    events: AgentCouncilEvent[]
+  }>
+  events: AgentCouncilEvent[]
+  scores: Array<{
+    agentId: string
+    scoreOutOf10: number
+    reason: string
+  }>
+  averageScoreOutOf10: number
+  quality: {
+    score: number
+    status: string
+    issues: string[]
+  }
+  finalPlan: {
+    summary: string
+    campaignNamingRule: string
+    audienceDecision: {
+      primary: string
+      segments: Array<{
+        name: string
+        budgetUsd: number
+        interests: string[]
+        locations: string[]
+        confidence: string
+      }>
+    }
+    creativeDecision: {
+      topCreative: string
+      topCreativePool: string[]
+      rule: string
+    }
+    placementDecision: {
+      primary: string
+      rule: string
+    }
+    funnelDecision: {
+      requiredEvents: string[]
+      rule: string
+    }
+    experimentDecision: LaunchStrategy['testMatrix']
+    monitoringDecision: {
+      cadenceHours: number
+      watchMetrics: string[]
+      rule: string
+    }
+    executionDecision: {
+      canCreatePausedDraft: boolean
+      canPublish: boolean
+      approvalRequired: boolean
+    }
+  }
+  approvalRequired: boolean
+  executionSafety: {
+    publishBlocked: boolean
+    liveSpendAllowed: boolean
+    rule: string
+  }
+}
+
+export interface AgentCouncilEvent {
+  id: string
+  fromAgent: string
+  toAgent: string
+  question: string
+  answer: string
+  state: string
+}
+
 export interface MetaSettingsAudit {
   summary: {
     campaigns: number

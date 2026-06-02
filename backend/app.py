@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
-from .agent_orchestrator import agent_registry, build_agent_handoffs, orchestrate_agent_chat, route_question
+from .agent_council import run_strategy_council, should_run_strategy_council
+from .agent_orchestrator import agent_registry, build_agent_decision, build_agent_handoffs, orchestrate_agent_chat, route_question
 from .agent_quality import evaluate_agent_response
 from .agent_task_store import create_agent_task, list_agent_tasks, update_agent_task, update_agent_task_by_approval
 from .approval_store import (
@@ -104,6 +105,7 @@ class ChatResponse(BaseModel):
     agentHandoffs: list[dict[str, Any]] = Field(default_factory=list)
     agentDecision: dict[str, Any] | None = None
     quality: dict[str, Any] | None = None
+    agentCouncil: dict[str, Any] | None = None
     generatedPlaybook: dict[str, Any] | None = None
     generatedStrategy: dict[str, Any] | None = None
     generatedMetaActionPlan: dict[str, Any] | None = None
@@ -169,6 +171,10 @@ class AgentTaskRequest(BaseModel):
     campaignGroupId: str | None = None
     segmentIds: list[str] = []
     prepareApproval: bool = False
+
+
+class CouncilRequest(BaseModel):
+    message: str
 
 
 campaigns = [
@@ -746,6 +752,16 @@ def agents() -> dict[str, Any]:
         "approvalRequiredForLiveChanges": True,
         "liveWriteScope": "paused_campaign_and_adset_creation_only" if live_writes_enabled else "disabled",
     }
+
+
+@app.post("/api/agent/council")
+def agent_council(request: CouncilRequest) -> dict[str, Any]:
+    council = run_strategy_council(
+        request.message.strip() or "Run strategy council for the next Meta campaign.",
+        knowledge=load_knowledge_base(),
+        playbooks=load_playbooks(),
+    )
+    return {"ok": True, "council": council}
 
 
 @app.get("/api/system/checklist")
@@ -1393,6 +1409,7 @@ def specialist_chat_response(
     answer: str,
     sources: list[str],
     suggestedQuestions: list[str],
+    extra: dict[str, Any] | None = None,
 ) -> ChatResponse:
     routed = route_question(question)
     payload: dict[str, Any] = {
@@ -1403,8 +1420,33 @@ def specialist_chat_response(
         "routeReason": routed["reason"],
         "agentHandoffs": build_agent_handoffs(routed["agentId"]),
     }
+    payload["agentDecision"] = build_agent_decision(routed, payload)
     payload["quality"] = evaluate_agent_response(payload)
+    if extra:
+        payload.update(extra)
     return ChatResponse(**payload)
+
+
+def format_council_answer(council: dict[str, Any]) -> str:
+    final_plan = council.get("finalPlan", {})
+    audience = final_plan.get("audienceDecision", {})
+    creative = final_plan.get("creativeDecision", {})
+    placement = final_plan.get("placementDecision", {})
+    execution = final_plan.get("executionDecision", {})
+    return "\n".join(
+        [
+            "Strategy Council completed. The agents talked through initial recommendations, challenged each other, and produced one approval-safe campaign plan.",
+            "",
+            f"Council quality: {council.get('averageScoreOutOf10', 0)}/10 across {len(council.get('agents', []))} agents and {len(council.get('events', []))} agent-to-agent exchanges.",
+            "",
+            f"Audience: start with {audience.get('primary', 'the strongest validated audience evidence')} and validate every segment against Telegram START and CRM quality.",
+            f"Creative: use {creative.get('topCreative', 'the top historical VSL creative')} first, but qualify buyer intent earlier with proof and course value.",
+            f"Placement: use {placement.get('primary', 'Instagram Reels/Stories/Feed')} as the primary hypothesis and isolate weak cheap placements.",
+            f"Execution: paused draft creation is {bool(execution.get('canCreatePausedDraft', True))}; publishing is blocked until approval.",
+            "",
+            "I will not publish or activate spend from this council plan. The next safe action is a paused campaign draft or approval request.",
+        ]
+    )
 
 
 @app.post("/api/agent/chat", response_model=ChatResponse)
@@ -1422,6 +1464,24 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
     dashboard_data = dashboard()
     meta = await meta_status()
     knowledge = load_knowledge_base()
+    if should_run_strategy_council(question):
+        council = run_strategy_council(question, knowledge=knowledge, playbooks=load_playbooks())
+        answer = format_council_answer(council)
+        return specialist_chat_response(
+            question,
+            answer=answer,
+            sources=["agent_council", "strategy_generator", "storage/meta_knowledge_base.json", "docs/AGENT_OPERATING_POLICY.md"],
+            suggestedQuestions=[
+                "Create the paused campaign draft from this council plan.",
+                "Which council agent had the weakest assumption?",
+                "What should the next critique round challenge?",
+            ],
+            extra={
+                "agentCouncil": council,
+                "generatedPlaybook": council.get("generatedPlaybook"),
+                "generatedStrategy": council.get("generatedStrategy"),
+            },
+        )
     orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks())
     if orchestrated:
         generated_playbook = orchestrated.get("generatedPlaybook")

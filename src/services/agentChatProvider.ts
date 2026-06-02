@@ -1,3 +1,5 @@
+import type { AgentCouncilSession } from '../types/marketing'
+
 export interface AgentChatResponse {
   answer: string
   sources: string[]
@@ -19,6 +21,7 @@ export interface AgentChatResponse {
   } | null
   generatedPlaybook?: unknown
   generatedStrategy?: unknown
+  agentCouncil?: AgentCouncilSession | null
 }
 
 export async function askAgent(message: string): Promise<AgentChatResponse> {
@@ -35,4 +38,25 @@ export async function askAgent(message: string): Promise<AgentChatResponse> {
   }
 
   return (await response.json()) as AgentChatResponse
+}
+
+export async function runAgentCouncil(message: string): Promise<AgentCouncilSession> {
+  const response = await fetch('/api/agent/council', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Agent council API failed with ${response.status}`)
+  }
+
+  const payload = (await response.json()) as { ok?: boolean; council?: AgentCouncilSession }
+  if (!payload.ok || !payload.council) {
+    throw new Error('Agent council API did not return a council session')
+  }
+
+  return payload.council
 }

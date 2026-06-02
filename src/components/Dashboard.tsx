@@ -63,11 +63,12 @@ import {
   parseCsvList,
   summarizePlaybookReadiness,
 } from '../lib/playbookBuilder'
-import { askAgent } from '../services/agentChatProvider'
+import { askAgent, runAgentCouncil } from '../services/agentChatProvider'
 import { createAgentTask, getAgentCommandCenter } from '../services/agentTaskProvider'
 import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
 import type {
   AgentSpec,
+  AgentCouncilSession,
   AgentTask,
   CampaignPlaybook,
   CampaignPlaybookSegment,
@@ -106,6 +107,7 @@ const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'commandCenter', label: 'Command Center', icon: Bot },
+  { id: 'agentOffice', label: 'Agent Office', icon: Users },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
   { id: 'creatives', label: 'Creatives', icon: Film },
   { id: 'funnel', label: 'Funnel', icon: MousePointerClick },
@@ -153,6 +155,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
   const [chatInput, setChatInput] = useState('')
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [filters, setFilters] = useState<DashboardFilters>(defaultFilters)
+  const [latestCouncil, setLatestCouncil] = useState<AgentCouncilSession | null>(null)
 
   const filteredMetrics = useMemo(() => {
     const window = getDateWindow(filters.dateRange, getDashboardAnchorDate(data))
@@ -208,6 +211,9 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
 
     try {
       const response = await askAgent(cleanMessage)
+      if (response.agentCouncil) {
+        setLatestCouncil(response.agentCouncil)
+      }
       setChatMessages((current) => [
         ...current,
         {
@@ -220,6 +226,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
           routeReason: response.routeReason ?? undefined,
           agentHandoffs: response.agentHandoffs,
           quality: response.quality ?? undefined,
+          agentCouncil: response.agentCouncil ?? undefined,
         },
       ])
     } catch {
@@ -300,6 +307,9 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
             />
           )}
           {activeView === 'commandCenter' && <CommandCenterView data={data} />}
+          {activeView === 'agentOffice' && (
+            <AgentOfficeView latestCouncil={latestCouncil} onCouncilReady={setLatestCouncil} />
+          )}
           {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
           {activeView === 'creatives' && (
             <CreativesView
@@ -354,6 +364,7 @@ interface ChatMessage {
     status: string
     issues: string[]
   }
+  agentCouncil?: AgentCouncilSession | null
 }
 
 function makeMessageId() {
@@ -557,6 +568,11 @@ function AgentChatPanel({
             <p>{message.content}</p>
             {message.activeAgent && <small>Agent: {labelRawSetting(message.activeAgent)}{message.routeReason ? ` · ${message.routeReason}` : ''}</small>}
             {message.quality && <small>Quality: {message.quality.score}/100 · {labelRawSetting(message.quality.status)}</small>}
+            {message.agentCouncil && (
+              <small>
+                Council: {message.agentCouncil.events.length} exchanges · {message.agentCouncil.averageScoreOutOf10.toFixed(1)}/10
+              </small>
+            )}
             {message.agentHandoffs && message.agentHandoffs.length > 0 && (
               <small>
                 Handoff: {message.agentHandoffs.slice(0, 2).map((handoff) => `${labelRawSetting(handoff.fromAgent)} → ${labelRawSetting(handoff.toAgent)}`).join(', ')}
@@ -1236,6 +1252,247 @@ function CommandCenterView({ data }: { data: DashboardData }) {
       </article>
     </section>
   )
+}
+
+function AgentOfficeView({
+  latestCouncil,
+  onCouncilReady,
+}: {
+  latestCouncil: AgentCouncilSession | null
+  onCouncilReady: (council: AgentCouncilSession) => void
+}) {
+  const [command, setCommand] = useState(
+    'Run strategy council: agents talk to each other, challenge weak assumptions, and create the best paused VSL campaign plan from the last 180 days.',
+  )
+  const [isRunning, setIsRunning] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const agents = latestCouncil?.agents ?? fallbackCouncilAgents()
+  const recentEvents = latestCouncil?.events.slice(-6) ?? []
+  const activeAgentIds = new Set(
+    latestCouncil
+      ? latestCouncil.events.slice(-3).flatMap((event) => [event.fromAgent, event.toAgent])
+      : ['orchestrator'],
+  )
+
+  const startCouncil = async () => {
+    if (!command.trim() || isRunning) {
+      return
+    }
+
+    setIsRunning(true)
+    setMessage('Running the strategy council...')
+    try {
+      const council = await runAgentCouncil(command)
+      onCouncilReady(council)
+      setMessage('Council session generated. Review the plan before creating any paused campaign draft.')
+    } catch {
+      setMessage('Could not run the council endpoint. Make sure the backend is running on port 8000.')
+    } finally {
+      setIsRunning(false)
+    }
+  }
+
+  return (
+    <section className="agent-office-view">
+      <article className="panel panel-wide agent-office-brief">
+        <PanelHeading eyebrow="Agent Office" title="Multi-agent strategy council" icon={Users} />
+        <div className="agent-office-controls">
+          <label>
+            <span>Council task</span>
+            <textarea value={command} onChange={(event) => setCommand(event.target.value)} />
+          </label>
+          <div className="agent-office-actions">
+            <button className="sync-button" type="button" onClick={startCouncil} disabled={isRunning || !command.trim()}>
+              <Bot size={16} />
+              {isRunning ? 'Agents debating...' : 'Run council'}
+            </button>
+            {message && <small className="sync-message">{message}</small>}
+          </div>
+        </div>
+        <div className="builder-summary command-summary">
+          <MiniMetric label="Agents" value={agents.length.toString()} />
+          <MiniMetric label="Rounds" value={(latestCouncil?.rounds.length ?? 0).toString()} />
+          <MiniMetric label="Exchanges" value={(latestCouncil?.events.length ?? 0).toString()} />
+          <MiniMetric
+            label="Quality"
+            value={latestCouncil ? `${latestCouncil.averageScoreOutOf10.toFixed(1)}/10` : 'Waiting'}
+          />
+        </div>
+      </article>
+
+      <article className="panel panel-wide agent-office-map-panel">
+        <PanelHeading eyebrow="2D Office" title="Who is talking to whom" icon={Bot} />
+        <div className="agent-office-map">
+          {agents.map((agent) => {
+            const isActive = activeAgentIds.has(agent.id)
+            return (
+              <div
+                className={`agent-desk ${agent.id === 'orchestrator' ? 'orchestrator' : ''} ${isActive ? 'active' : ''}`}
+                key={agent.id}
+              >
+                <div className="agent-avatar">
+                  <Bot size={18} />
+                </div>
+                <div>
+                  <strong>{agent.name}</strong>
+                  <span>{agent.role}</span>
+                  <small>{labelRawSetting(agent.state)} · {councilScoreForAgent(latestCouncil, agent.id)}</small>
+                </div>
+              </div>
+            )
+          })}
+          <div className="agent-office-table">
+            <strong>Strategy table</strong>
+            <span>Orchestrator coordinates critique rounds before any execution.</span>
+          </div>
+        </div>
+      </article>
+
+      <article className="panel">
+        <PanelHeading eyebrow="Live Handoffs" title="Recent agent exchanges" icon={RadioTower} />
+        <div className="council-event-list">
+          {recentEvents.length > 0 ? (
+            recentEvents.map((event) => <CouncilEventCard event={event} key={event.id} />)
+          ) : (
+            <EmptyState compact />
+          )}
+        </div>
+      </article>
+
+      <article className="panel">
+        <PanelHeading eyebrow="Agent Scores" title="Council quality checks" icon={Gauge} />
+        <div className="agent-score-list">
+          {latestCouncil?.scores.length ? (
+            latestCouncil.scores.map((score) => (
+              <div className="agent-score-row" key={score.agentId}>
+                <strong>{labelRawSetting(score.agentId)}</strong>
+                <span>{score.scoreOutOf10.toFixed(1)}/10</span>
+                <p>{score.reason}</p>
+              </div>
+            ))
+          ) : (
+            <EmptyState compact />
+          )}
+        </div>
+      </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Critique Rounds" title="How the plan improved" icon={ListChecks} />
+        <div className="council-round-grid">
+          {latestCouncil?.rounds.length ? (
+            latestCouncil.rounds.map((round) => (
+              <div className="council-round" key={round.id}>
+                <strong>{round.title}</strong>
+                <p>{round.purpose}</p>
+                <small>{round.events.length} exchanges</small>
+                {round.events.slice(0, 3).map((event) => (
+                  <span key={event.id}>{labelRawSetting(event.fromAgent)} asked {labelRawSetting(event.toAgent)}</span>
+                ))}
+              </div>
+            ))
+          ) : (
+            <EmptyState compact />
+          )}
+        </div>
+      </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Final Plan" title="Council output before approval" icon={ClipboardCheck} />
+        {latestCouncil ? <CouncilFinalPlan council={latestCouncil} /> : <EmptyState compact />}
+      </article>
+    </section>
+  )
+}
+
+function CouncilEventCard({ event }: { event: AgentCouncilSession['events'][number] }) {
+  return (
+    <div className="council-event">
+      <div className="council-event-flow">
+        <span>{labelRawSetting(event.fromAgent)}</span>
+        <i />
+        <span>{labelRawSetting(event.toAgent)}</span>
+      </div>
+      <strong>{event.question}</strong>
+      <p>{event.answer}</p>
+      <small>{labelRawSetting(event.state)}</small>
+    </div>
+  )
+}
+
+function CouncilFinalPlan({ council }: { council: AgentCouncilSession }) {
+  const finalPlan = council.finalPlan
+  return (
+    <div className="council-final-plan">
+      <div className="council-plan-summary">
+        <strong>{finalPlan.summary}</strong>
+        <p>{finalPlan.campaignNamingRule}</p>
+      </div>
+      <div className="council-plan-grid">
+        <div>
+          <span>Audience</span>
+          <strong>{finalPlan.audienceDecision.primary}</strong>
+          {finalPlan.audienceDecision.segments.slice(0, 4).map((segment) => (
+            <small key={segment.name}>
+              {segment.name}: {formatCurrency(segment.budgetUsd)}/day · {segment.locations.join(', ')}
+            </small>
+          ))}
+        </div>
+        <div>
+          <span>Creative</span>
+          <strong>{finalPlan.creativeDecision.topCreative}</strong>
+          <small>{finalPlan.creativeDecision.rule}</small>
+          <small>{finalPlan.creativeDecision.topCreativePool.join(', ')}</small>
+        </div>
+        <div>
+          <span>Placement</span>
+          <strong>{finalPlan.placementDecision.primary}</strong>
+          <small>{finalPlan.placementDecision.rule}</small>
+        </div>
+        <div>
+          <span>Funnel</span>
+          <strong>{finalPlan.funnelDecision.requiredEvents.join(', ')}</strong>
+          <small>{finalPlan.funnelDecision.rule}</small>
+        </div>
+        <div>
+          <span>Monitoring</span>
+          <strong>Every {finalPlan.monitoringDecision.cadenceHours} hours</strong>
+          <small>{finalPlan.monitoringDecision.watchMetrics.join(', ')}</small>
+          <small>{finalPlan.monitoringDecision.rule}</small>
+        </div>
+        <div>
+          <span>Safety</span>
+          <strong>{finalPlan.executionDecision.canCreatePausedDraft ? 'Paused draft allowed' : 'Draft blocked'}</strong>
+          <small>Publish: {finalPlan.executionDecision.canPublish ? 'allowed' : 'blocked'}</small>
+          <small>Approval: {finalPlan.executionDecision.approvalRequired ? 'required' : 'not required'}</small>
+        </div>
+      </div>
+      <div className="council-experiment-list">
+        {finalPlan.experimentDecision.map((experiment) => (
+          <div key={`${experiment.day}-${experiment.test}`}>
+            <strong>{experiment.day}</strong>
+            <span>{experiment.test}</span>
+            <small>{experiment.decisionMetric}: {experiment.action}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function councilScoreForAgent(council: AgentCouncilSession | null, agentId: string) {
+  const score = council?.scores.find((item) => item.agentId === agentId)
+  return score ? `${score.scoreOutOf10.toFixed(1)}/10` : 'not scored'
+}
+
+function fallbackCouncilAgents(): AgentCouncilSession['agents'] {
+  return [
+    { id: 'orchestrator', name: 'Orchestrator', role: 'routes work and asks follow-up questions', state: 'waiting', requiresApproval: true },
+    { id: 'audit', name: 'Performance Auditor', role: 'checks 180-day evidence', state: 'waiting', requiresApproval: false },
+    { id: 'audience', name: 'Audience Specialist', role: 'ranks interests, age, gender, geo', state: 'waiting', requiresApproval: false },
+    { id: 'creative', name: 'Creative Analyst', role: 'ranks videos and hooks', state: 'waiting', requiresApproval: false },
+    { id: 'placement', name: 'Placement Optimizer', role: 'guards Instagram placement mix', state: 'waiting', requiresApproval: false },
+    { id: 'execution', name: 'Execution Agent', role: 'creates paused drafts only', state: 'waiting', requiresApproval: true },
+  ]
 }
 
 function agentStatusTone(agent: AgentSpec) {

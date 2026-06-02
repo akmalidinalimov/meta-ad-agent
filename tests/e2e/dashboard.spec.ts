@@ -54,6 +54,14 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await expect(page.getByText(/completion readiness/i)).toBeVisible();
   await expect(page.getByText(/agent availability/i)).toBeVisible();
 
+  await page.getByRole('button', { name: /agent office/i }).click();
+  await expect(page.getByText(/multi-agent strategy council/i)).toBeVisible();
+  await expect(page.getByText(/who is talking to whom/i)).toBeVisible();
+  await page.getByRole('button', { name: /run council/i }).click();
+  await expect(page.getByText(/council session generated/i)).toBeVisible();
+  await expect(page.getByText(/paused draft allowed/i)).toBeVisible();
+  await expect(page.getByText(/recent agent exchanges/i)).toBeVisible();
+
   await page.getByRole('button', { name: /creatives/i }).click();
   await expect(page.getByText(/creative performance and quality/i)).toBeVisible();
   await expect(page.locator('.creative-thumb.has-video').first()).toBeVisible();

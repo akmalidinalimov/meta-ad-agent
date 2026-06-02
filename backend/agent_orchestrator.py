@@ -136,6 +136,8 @@ def agent_registry() -> dict[str, dict[str, Any]]:
 
 def route_question(question: str) -> dict[str, Any]:
     lower = question.lower()
+    if any(phrase in lower for phrase in ["strategy council", "agent council", "agents talk", "talk to each other", "critique each other"]):
+        return route("orchestrator", "Strategy council request should be coordinated by the orchestrator.")
     if any(word in lower for word in ["sub-agent", "subagent", "agent role", "orchestrator", "specialist"]):
         return route("orchestrator", "Agent architecture/status question.")
     if ("meta ai" in lower or "ads manager ai" in lower) and any(
