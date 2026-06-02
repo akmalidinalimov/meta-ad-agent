@@ -7,22 +7,22 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
   await expect(page.getByRole('heading', { name: /campaign audit dashboard/i })).toBeVisible();
-  await expect(page.getByRole('button', { name: /overview/i })).toBeVisible();
+  const nav = page.locator('.app-nav');
+  await expect(nav.getByRole('button', { name: /overview/i })).toBeVisible();
+  await expect(nav.getByRole('button', { name: /command center/i })).toBeVisible();
+  await expect(nav.getByRole('button', { name: /rankings/i })).toBeVisible();
+  await expect(nav.getByRole('button', { name: /settings/i })).toBeVisible();
+  await expect(nav.getByRole('button')).toHaveCount(4);
+  await expect(nav.getByRole('button', { name: /creatives/i })).toHaveCount(0);
+  await expect(nav.getByRole('button', { name: /funnel/i })).toHaveCount(0);
+  await expect(nav.getByRole('button', { name: /agent office/i })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /refresh data/i })).toBeVisible();
-  await expect(page.getByRole('button', { name: /creatives/i })).toBeVisible();
+  await expect(page.getByText(/action needed|watch closely|healthy/i)).toBeVisible();
+  await expect(page.getByText(/decision rankings/i)).toBeVisible();
+  await expect(page.getByText(/best current levers/i)).toBeVisible();
   await expect(page.getByText(/what needs attention now/i)).toBeVisible();
   await expect(page.getByText(/operator priority queue/i)).toBeVisible();
-  await expect(page.getByText(/ask about your ads/i)).toBeVisible();
-  await expect(page.getByPlaceholder(/which creative should we scale/i)).toBeVisible();
 
-  await page.getByRole('button', { name: /alerts/i }).click();
-  await expect(page.getByText(/new campaign watch/i)).toBeVisible();
-  await expect(page.getByText(/current campaign decisions/i)).toBeVisible();
-  await expect(page.getByText(/latest campaign health warnings/i)).toBeVisible();
-
-  await page.getByRole('button', { name: /strategy/i }).click();
-  await expect(page.getByRole('button', { name: /generate draft proposal/i })).toBeVisible();
-  await expect(page.getByText(/review-only draft proposal/i)).toBeVisible();
   const strategyResponse = await page.request.post('http://127.0.0.1:8000/api/strategy/generate', {
     data: {
       playbook: {
@@ -49,12 +49,11 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   expect(strategyPayload.strategy.launchPacket.decision).toBe('approval_required');
   expect(strategyPayload.strategy.launchPacket.monitoringPlan.cadenceHours).toBe(4);
 
-  await page.getByRole('button', { name: /command center/i }).click();
-  await expect(page.getByText(/regression checklist/i)).toBeVisible();
-  await expect(page.getByText(/completion readiness/i)).toBeVisible();
+  await nav.getByRole('button', { name: /command center/i }).click();
+  await expect(page.getByText(/tell the agent what outcome you want/i)).toBeVisible();
+  await expect(page.getByText(/ask about your ads/i)).toBeVisible();
+  await expect(page.getByPlaceholder(/which creative should we scale/i)).toBeVisible();
   await expect(page.getByText(/agent availability/i)).toBeVisible();
-
-  await page.getByRole('button', { name: /agent office/i }).click();
   await expect(page.getByText(/multi-agent strategy council/i)).toBeVisible();
   await expect(page.getByText(/watch agents debate the campaign/i)).toBeVisible();
   await expect(page.getByText(/what is happening now/i)).toBeVisible();
@@ -85,14 +84,18 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await page.getByRole('button', { name: 'Implemented', exact: true }).click();
   await expect(page.locator('.implementation-result')).toContainText(/paused campaign approval created/i);
   await expect(page.getByText(/cannot publish or spend/i)).toBeVisible();
+  await expect(page.getByText(/edit campaign playbook and task metadata/i)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Creatives', exact: true }).click();
-  await expect(page.getByText(/creative performance and quality/i)).toBeVisible();
-  await expect(page.locator('.creative-thumb.has-video').first()).toBeVisible();
-  await expect(page.locator('.creative-thumb img').first()).toBeVisible();
-  await expect(page.getByText(/specialist read/i)).toBeVisible();
-  await expect(page.getByText(/replicate signals/i)).toBeVisible();
-  await expect(page.getByText(/next action/i)).toBeVisible();
+  await nav.getByRole('button', { name: /rankings/i }).click();
+  await expect(page.getByText(/campaign ranking/i)).toBeVisible();
+  await expect(page.getByText(/creative ranking/i)).toBeVisible();
+  await expect(page.getByText(/audience \/ ad set ranking/i)).toBeVisible();
+  await expect(page.getByText(/placement ranking/i)).toBeVisible();
+
+  await nav.getByRole('button', { name: /settings/i }).click();
+  await expect(page.getByText(/marketing api status/i)).toBeVisible();
+  await expect(page.getByText(/tracking diagnostics/i)).toBeVisible();
+  await expect(page.getByText(/meta settings audit/i)).toBeVisible();
 
   await page.getByRole('button', { name: /refresh data/i }).click();
   await expect(page.getByRole('heading', { name: /campaign audit dashboard/i })).toBeVisible();
