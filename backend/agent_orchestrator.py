@@ -121,76 +121,13 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
 }
 
 SPECIALIST_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "audience": ("audience", "target", "interest", "age", "gender", "country", "region", "city", "tashkent"),
+    "audience": ("audience", "audiences", "target", "interest", "interests", "age", "gender", "country", "region", "city", "tashkent"),
     "creative": ("creative", "creatives", "video", "hook", "thumbnail", "viral", "visual"),
-    "placement": ("placement", "facebook", "instagram", "reels", "stories", "feed", "threads"),
+    "placement": ("placement", "placements", "facebook", "instagram", "reels", "stories", "feed", "threads"),
     "funnel": ("funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"),
     "monitoring": ("monitor", "alert", "trend", "rising", "improving", "getting expensive"),
     "experiment": ("experiment", "test", "ab test", "a/b", "scale rule", "stop rule"),
 }
-
-# Live Meta-change requests that must route to the Execution Agent (approval gated).
-# Note: campaign-creation intent is detected first, so a phrase like
-# "create a paused campaign plan" is NOT pulled here by the word "pause".
-EXECUTION_KEYWORDS: tuple[str, ...] = (
-    "execute",
-    "change budget",
-    "browser",
-    "go to meta",
-    "pause",
-    "publish",
-    "upload creative",
-    "rename",
-    "turn off",
-    "turn on",
-    "duplicate",
-)
-
-# Verbs that signal "build me a campaign/plan" rather than "analyze an existing one".
-# A bare campaign *name* (e.g. "... - VSL 2 - ...") must never be read as a creation
-# request, so we require an explicit creation verb sitting next to a campaign noun.
-_CAMPAIGN_CREATION_RE = re.compile(
-    r"\b(?:create|build|prepare|draft|set\s?up|launch|relaunch)\b[^.?!]*?"
-    r"\b(?:campaign|playbook|vsl|segment|plan|funnel build)\b",
-    flags=re.IGNORECASE,
-)
-_CAMPAIGN_CREATION_PHRASES: tuple[str, ...] = (
-    "new campaign",
-    "campaign plan",
-    "campaign builder",
-    "build a plan",
-    "build me a plan",
-)
-
-
-def _matches_keyword(text: str, keyword: str) -> bool:
-    """Whole-word (plural-tolerant) keyword match.
-
-    Plain substring matching is too greedy for routing: "performed" contains the
-    funnel keyword "form", "fastest" contains the experiment keyword "test", and
-    "paused" contains the execution keyword "pause". We require word boundaries on
-    both sides while still allowing a trailing plural "s" (so "placements" still
-    matches "placement").
-    """
-
-    return re.search(rf"(?<!\w){re.escape(keyword)}(?:s)?(?!\w)", text) is not None
-
-
-def matches_any_keyword(text: str, keywords: tuple[str, ...] | list[str]) -> bool:
-    return any(_matches_keyword(text, keyword) for keyword in keywords)
-
-
-def is_campaign_creation_request(question: str) -> bool:
-    """Return True only for "create/build/prepare a campaign or plan" intent.
-
-    Analysis questions that merely name a campaign (which can contain tokens like
-    "VSL 2") must return False so they route to the analysis specialists.
-    """
-
-    lower = question.lower()
-    if any(phrase in lower for phrase in _CAMPAIGN_CREATION_PHRASES):
-        return True
-    return bool(_CAMPAIGN_CREATION_RE.search(question))
 
 
 def agent_registry() -> dict[str, dict[str, Any]]:
@@ -199,6 +136,8 @@ def agent_registry() -> dict[str, dict[str, Any]]:
 
 def route_question(question: str) -> dict[str, Any]:
     lower = question.lower()
+    if any(phrase in lower for phrase in ["strategy council", "agent council", "agents talk", "talk to each other", "critique each other"]):
+        return route("orchestrator", "Strategy council request should be coordinated by the orchestrator.")
     if any(word in lower for word in ["sub-agent", "subagent", "agent role", "orchestrator", "specialist"]):
         return route("orchestrator", "Agent architecture/status question.")
     if ("meta ai" in lower or "ads manager ai" in lower) and any(
@@ -207,25 +146,103 @@ def route_question(question: str) -> dict[str, Any]:
         return route("meta_ai_strategist", "Captured Meta AI evidence should be converted into Meta-side strategy.")
     if any(word in lower for word in ["meta ai", "ads manager ai", "analyze button", "opportunity score", "opportunity-score"]):
         return route("meta_ai_advisor", "Meta AI Analyze request should be captured read-only and validated against business data.")
-    if is_campaign_creation_request(question):
+    if is_campaign_creation_request(lower):
         return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
-    if matches_any_keyword(lower, EXECUTION_KEYWORDS):
+    if has_execution_intent(lower):
         return route("execution", "Live Meta change request requires approval and API-first execution policy.")
+    if len(detect_involved_agents(question)) >= 3:
+        return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
+    if is_monitoring_request(lower):
+        return route("monitoring", "Monitoring question needs trend detection and alert rules.")
+    if is_experiment_request(lower):
+        return route("experiment", "Experiment question needs hypothesis, variable, metric, and guardrail design.")
     if len(detect_involved_agents(question)) >= 2:
         return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
-    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["creative"]):
+    if is_campaign_analysis_request(lower):
+        if matches_any_keyword(lower, ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
+            return route("creative", "Campaign-specific creative analysis should rank actual ads before planning.")
+        if matches_any_keyword(lower, ["placement", "placements", "facebook", "instagram", "reels", "stories", "feed", "threads"]):
+            return route("placement", "Campaign-specific placement analysis should inspect delivery quality before planning.")
+        if matches_any_keyword(lower, ["audience", "audiences", "target", "interest", "interests", "age", "gender", "country", "region", "city", "tashkent"]):
+            return route("audience", "Campaign-specific audience analysis should rank actual ad sets before planning.")
+    if matches_any_keyword(lower, ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
         return route("creative", "Creative question needs hook, asset, and buyer-intent analysis.")
-    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["audience"]):
+    if matches_any_keyword(lower, ["audience", "audiences", "target", "interest", "interests", "age", "gender", "country", "region", "city", "tashkent"]):
         return route("audience", "Audience question needs targeting and purchasing-power reasoning.")
-    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["placement"]):
+    if matches_any_keyword(lower, ["placement", "placements", "facebook", "instagram", "reels", "stories", "feed", "threads"]):
         return route("placement", "Placement question needs platform and position-level quality checks.")
-    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["funnel"]):
+    if matches_any_keyword(lower, ["funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"]):
         return route("funnel", "Funnel question needs event tracking and attribution reasoning.")
-    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["monitoring"]):
+    if is_monitoring_request(lower):
         return route("monitoring", "Monitoring question needs trend detection and alert rules.")
-    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["experiment"]):
+    if is_experiment_request(lower):
         return route("experiment", "Experiment question needs hypothesis, variable, metric, and guardrail design.")
     return route("audit", "Default to audit agent for historical performance and lessons.")
+
+
+def is_campaign_creation_request(lower_question: str) -> bool:
+    creation_phrases = (
+        "setup",
+        "set up",
+        "create campaign",
+        "create a campaign",
+        "build campaign",
+        "build a campaign",
+        "launch campaign",
+        "launch a campaign",
+        "new campaign",
+        "campaign plan",
+        "paused campaign",
+        "prepare campaign",
+        "prepare a campaign",
+        "create a plan",
+        "create plan",
+        "build recommendation",
+        "campaign recommendation",
+    )
+    return any(phrase in lower_question for phrase in creation_phrases) or ("vsl" in lower_question and "plan" in lower_question)
+
+
+def has_execution_intent(lower_question: str) -> bool:
+    negative_execution = (
+        "do not execute",
+        "don't execute",
+        "not execute",
+        "without executing",
+        "before execution",
+        "until approved",
+    )
+    if any(phrase in lower_question for phrase in negative_execution) and (is_campaign_creation_request(lower_question) or "plan" in lower_question):
+        return False
+    return any(word in lower_question for word in ["execute", "change budget", "browser", "go to meta", "pause", "publish", "upload creative", "rename", "turn off", "turn on", "duplicate"])
+
+
+def is_monitoring_request(lower_question: str) -> bool:
+    return any(word in lower_question for word in ["monitor", "monitoring", "alert", "every four hours", "trend", "rising", "improving", "getting expensive"])
+
+
+def is_experiment_request(lower_question: str) -> bool:
+    return any(word in lower_question for word in ["experiment", "test", "ab test", "a/b", "scale rule", "stop rule"])
+
+
+def is_campaign_analysis_request(lower_question: str) -> bool:
+    analysis_words = (
+        "which",
+        "what",
+        "why",
+        "rank",
+        "analyze",
+        "analyse",
+        "audit",
+        "compare",
+        "worked",
+        "scale",
+        "avoid",
+        "cheapest",
+        "best",
+        "top",
+    )
+    return any(word in lower_question for word in analysis_words)
 
 
 def orchestrate_agent_chat(
@@ -320,7 +337,7 @@ def orchestrate_agent_chat(
             ],
         )
 
-    if routed["agentId"] == "orchestrator" and is_campaign_creation_request(question):
+    if routed["agentId"] == "orchestrator" and any(word in lower for word in ["setup", "set up", "create campaign", "launch", "campaign plan", "vsl"]):
         if can_build_playbook_from_chat(question):
             playbook = build_playbook_from_chat(question, knowledge=knowledge)
             strategy = generate_launch_strategy(playbook, knowledge)
@@ -502,7 +519,7 @@ def should_prepare_meta_action(question: str, routed: dict[str, Any], plan: dict
     lower = question.lower()
     if "meta ai" in lower or "ads manager ai" in lower:
         return False
-    if routed["agentId"] == "orchestrator" and is_campaign_creation_request(question):
+    if routed["agentId"] == "orchestrator" and is_campaign_creation_request(lower):
         return False
     if plan["intent"] in {"rename", "pause", "enable"}:
         return True
@@ -574,6 +591,17 @@ def detect_involved_agents(question: str) -> list[str]:
         for agent, keywords in SPECIALIST_KEYWORDS.items()
         if matches_any_keyword(lower, keywords)
     ]
+
+
+def matches_any_keyword(lower_question: str, keywords: tuple[str, ...] | list[str]) -> bool:
+    return any(matches_keyword(lower_question, keyword) for keyword in keywords)
+
+
+def matches_keyword(lower_question: str, keyword: str) -> bool:
+    if " " in keyword or "/" in keyword or "+" in keyword or "-" in keyword:
+        return keyword in lower_question
+    # Plural-tolerant whole-word match so "creatives"/"placements" match "creative"/"placement".
+    return bool(re.search(rf"\b{re.escape(keyword)}(?:s)?\b", lower_question))
 
 
 def build_agent_handoffs(agent_id: str) -> list[dict[str, Any]]:

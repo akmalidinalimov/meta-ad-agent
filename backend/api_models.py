@@ -25,6 +25,7 @@ class ChatResponse(BaseModel):
     agentHandoffs: list[dict[str, Any]] = Field(default_factory=list)
     agentDecision: dict[str, Any] | None = None
     quality: dict[str, Any] | None = None
+    agentCouncil: dict[str, Any] | None = None
     generatedPlaybook: dict[str, Any] | None = None
     generatedStrategy: dict[str, Any] | None = None
     generatedMetaActionPlan: dict[str, Any] | None = None
@@ -90,6 +91,10 @@ class AgentTaskRequest(BaseModel):
     campaignGroupId: str | None = None
     segmentIds: list[str] = []
     prepareApproval: bool = False
+
+
+class CouncilRequest(BaseModel):
+    message: str
 
 
 class MetaAiCaptureRequest(BaseModel):

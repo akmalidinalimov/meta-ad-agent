@@ -118,4 +118,4 @@ def test_agent_chat_answers_with_campaign_specific_metrics(monkeypatch):
     assert payload["activeAgent"] == "audience"
     assert CAMPAIGN_NAME in payload["answer"]
     assert "[AI]" in payload["answer"]
-    assert "campaign_analysis" in payload["sources"]
+    assert "campaign_specific_analysis" in payload["sources"]

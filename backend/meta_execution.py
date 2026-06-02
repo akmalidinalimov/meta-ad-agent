@@ -16,7 +16,7 @@ def build_campaign_creation_approval(
     adsets = [build_adset_payload(segment, playbook) for segment in playbook.get("segments", [])]
     checks = guardrail_checks(playbook, adsets)
     guardrail_result = rollup_guardrail(checks)
-    return {
+    approval = {
         "id": f"approval_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
         "actionType": "create_paused_campaign_structure",
         "target": {"level": "ad_account", "id": account_id, "name": account_id},
@@ -32,6 +32,9 @@ def build_campaign_creation_approval(
         "status": "blocked" if guardrail_result == "fail" else "needs_review",
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
+    approval["operationPreview"] = build_operation_preview(campaign, adsets)
+    approval["executionReadiness"] = build_execution_readiness(approval)
+    return approval
 
 
 def build_campaign_payload(playbook: dict[str, Any]) -> dict[str, Any]:
@@ -41,6 +44,37 @@ def build_campaign_payload(playbook: dict[str, Any]) -> dict[str, Any]:
         "status": "PAUSED",
         "special_ad_categories": [],
         "buying_type": "AUCTION",
+    }
+
+
+def build_operation_preview(campaign: dict[str, Any], adsets: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "publishBlocked": True,
+        "liveSpendRisk": "none_while_paused",
+        "steps": [
+            f"Create PAUSED campaign: {campaign.get('name')}",
+            *[f"Create PAUSED ad set: {adset.get('name')} with ${float(adset.get('daily_budget', 0)) / 100:,.2f}/day" for adset in adsets],
+            "Stop before ads/publishing until the human approves the exact next action.",
+        ],
+        "safetyNotes": [
+            "All generated Meta objects must remain PAUSED.",
+            "No publish or active status is allowed in this approval packet.",
+            "Live writes remain disabled unless configuration and final confirmation both allow them.",
+        ],
+    }
+
+
+def build_execution_readiness(approval: dict[str, Any]) -> dict[str, Any]:
+    blocked_by = []
+    if approval.get("status") != "approved":
+        blocked_by.append("approval")
+    if approval.get("guardrailResult") == "fail":
+        blocked_by.append("guardrail")
+    blocked_by.append("live_write_configuration")
+    return {
+        "canExecuteNow": False,
+        "blockedBy": blocked_by,
+        "nextSafeStep": "Review and approve the packet, then run dry-run execution before any live Meta write.",
     }
 
 

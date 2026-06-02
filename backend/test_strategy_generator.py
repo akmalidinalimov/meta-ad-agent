@@ -132,3 +132,19 @@ def test_generate_launch_strategy_filters_non_instagram_noise_from_primary_place
 
     assert "threads" not in strategy["summary"].lower()
     assert strategy["knowledgeUsed"]["bestPlacements"][0] == "instagram / reels"
+
+
+def test_generate_launch_strategy_includes_complete_launch_packet():
+    strategy = generate_launch_strategy(sample_playbook(), sample_knowledge())
+    packet = strategy["launchPacket"]
+
+    assert packet["decision"] == "approval_required"
+    assert packet["primaryGoal"] == "telegram_start"
+    assert len(packet["audiencePlan"]) == 2
+    assert packet["creativePlan"][0]["segmentName"] == "AI income"
+    assert "instagram_reels" in packet["placementPlan"]["use"]
+    assert "facebook_feed" in packet["placementPlan"]["avoid"]
+    assert "landing_page_view" in packet["funnelPlan"]["requiredEvents"]
+    assert packet["monitoringPlan"]["cadenceHours"] == 4
+    assert packet["approvalPlan"]["required"] is True
+    assert len(packet["regressionChecklist"]) >= 8

@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   campaignOverlapsWindow,
+  deriveCreativeDecisionInsight,
   deriveCreativeScores,
   deriveRankingRows,
   filterMetricsForDashboard,
   getCampaignOptions,
   getDateWindow,
 } from './analytics'
-import type { Campaign, Creative, CreativeAnalysis, DailyAdMetric } from '../types/marketing'
+import type { AdSet, Campaign, Creative, CreativeAnalysis, DailyAdMetric } from '../types/marketing'
 
 describe('getDateWindow', () => {
   it('builds an inclusive 30 day window anchored to the latest dashboard date', () => {
@@ -116,6 +117,8 @@ describe('deriveCreativeScores', () => {
       hookType: 'case study',
       primaryPersona: 'business owner',
       cta: 'Join webinar',
+      assetUrl: 'https://example.com/buyer-proof.jpg',
+      videoId: 'video_a',
     },
     {
       id: 'creative_b',
@@ -256,6 +259,117 @@ describe('deriveCreativeScores', () => {
     expect(thinScore.spendConfidence).toBe('low')
     expect(thinScore.action).toBe('Gather data')
     expect(scores[0].id).not.toBe('creative_c')
+  })
+  it('preserves creative thumbnail and video metadata for the dashboard table', () => {
+    const scores = deriveCreativeScores(metrics, creatives, analyses)
+
+    expect(scores[0]).toMatchObject({
+      id: 'creative_a',
+      assetUrl: 'https://example.com/buyer-proof.jpg',
+      videoId: 'video_a',
+    })
+  })
+})
+
+describe('deriveCreativeDecisionInsight', () => {
+  const adSets: AdSet[] = [
+    {
+      id: 'adset_workers',
+      campaignId: 'campaign_1',
+      name: '[AI] Full-time job / second income',
+      status: 'active',
+      ageMin: 23,
+      ageMax: 45,
+      genders: ['all'],
+      locations: ['Uzbekistan'],
+      interests: ['Artificial intelligence'],
+      placements: ['instagram_reels'],
+      optimizationGoal: 'lead',
+    },
+  ]
+
+  it('flags high-lead zero-buyer creatives as traffic magnets needing quality audit', () => {
+    const insight = deriveCreativeDecisionInsight({
+      creativeId: 'creative_b',
+      metrics: [
+        {
+          date: '2026-05-20',
+          campaignId: 'campaign_1',
+          adSetId: 'adset_workers',
+          adId: 'ad_b',
+          creativeId: 'creative_b',
+          placement: 'instagram_reels',
+          spendUsd: 120,
+          impressions: 12000,
+          clicks: 200,
+          landingPageViews: 180,
+          leads: 160,
+          telegramSubscribers: 0,
+          webinarAttendees: 0,
+          purchases: 0,
+          purchaseRevenueUsd: 0,
+        },
+      ],
+      adSets,
+      score: {
+        id: 'creative_b',
+        rank: 1,
+        name: 'Viral curiosity',
+        type: 'viral',
+        format: 'video',
+        clicks: 200,
+        leads: 160,
+        buyers: 0,
+        spendUsd: 0,
+        cpl: 0,
+        leadRate: 0,
+        spendConfidence: 'low',
+        lowSample: false,
+        mismatch: 0,
+        viral: 100,
+        intent: 80,
+        courseFit: 55,
+        quality: 58,
+        action: 'Audit quality',
+        tone: 'warning',
+      },
+    })
+
+    expect(insight.diagnosis).toMatch(/Traffic magnet/i)
+    expect(insight.nextAction).toMatch(/Audit lead quality/i)
+    expect(insight.topAudience).toBe('[AI] Full-time job / second income')
+    expect(insight.topPlacement).toBe('IG Reels')
+    expect(insight.cpl).toBeCloseTo(0.75)
+    expect(insight.risks).toContain('No attributed buyers yet, so quality must be validated with Telegram/CRM data.')
+  })
+
+  it('caps visit rate at 100 percent and flags attribution mismatches', () => {
+    const insight = deriveCreativeDecisionInsight({
+      creativeId: 'creative_b',
+      metrics: [
+        {
+          date: '2026-05-20',
+          campaignId: 'campaign_1',
+          adSetId: 'adset_workers',
+          adId: 'ad_b',
+          creativeId: 'creative_b',
+          placement: 'instagram_reels',
+          spendUsd: 20,
+          impressions: 1000,
+          clicks: 10,
+          landingPageViews: 15,
+          leads: 4,
+          telegramSubscribers: 0,
+          webinarAttendees: 0,
+          purchases: 0,
+          purchaseRevenueUsd: 0,
+        },
+      ],
+      adSets,
+    })
+
+    expect(insight.landingVisitRatePercent).toBe(100)
+    expect(insight.risks).toContain('Meta landing visits exceed clicks; verify action attribution before treating visit rate as exact.')
   })
 })
 

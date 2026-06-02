@@ -105,6 +105,27 @@ def test_paused_campaign_plan_request_builds_plan_not_execution_action():
     assert "generatedApprovalRequest" not in response
     assert "I will not execute" in response["answer"]
 
+def test_route_question_keeps_campaign_specific_analysis_with_specialist():
+    assert (
+        route_question("Which audience should we scale from DA - SHAHLOAI - VSL 2 - 26.04.2026 Y and why?")["agentId"]
+        == "audience"
+    )
+    assert (
+        route_question("Rank the creative videos from DA - SHAHLOAI - VSL 2 - 26.04.2026 Y")["agentId"]
+        == "creative"
+    )
+    assert (
+        route_question("Which placements worked for DA - SHAHLOAI - VSL 2 - 26.04.2026 Y?")["agentId"]
+        == "placement"
+    )
+
+
+def test_route_question_does_not_match_age_inside_landing_page():
+    assert (
+        route_question("Diagnose whether we lose people before landing page, Telegram START, form, or CRM purchase.")["agentId"]
+        == "funnel"
+    )
+
 
 def test_orchestrator_handles_multi_specialist_strategy_questions_with_decision_trace():
     response = orchestrate_agent_chat(

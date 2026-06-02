@@ -122,6 +122,27 @@ def evaluate_monitoring_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any
             )
         )
 
+    if previous_cpl and current_cpl and current_cpl < previous_cpl * 0.75 and current_start_rate >= previous_start_rate * 0.9:
+        alerts.append(
+            build_alert(
+                snapshot,
+                severity="info",
+                title=f"CPL improved while Telegram START quality held for {campaign_name}",
+                why_it_matters="Costs are improving without an obvious downstream quality drop. This is a candidate for cautious scaling, not an automatic budget increase.",
+                metric_deltas={
+                    "currentCpl": current_cpl,
+                    "previousCpl": previous_cpl,
+                    "currentStartRate": current_start_rate,
+                    "previousStartRate": previous_start_rate,
+                },
+                recommended_actions=[
+                    "Prepare a 20% budget scale proposal if the next monitoring window confirms the same quality.",
+                    "Check whether the improvement came from a specific creative, audience, or Instagram placement before scaling broadly.",
+                    "Keep the change approval-gated and compare CRM lead quality before increasing spend.",
+                ],
+            )
+        )
+
     return alerts
 
 

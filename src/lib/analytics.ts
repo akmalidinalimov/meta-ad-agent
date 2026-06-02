@@ -31,6 +31,24 @@ const placementLabels: Record<Placement, string> = {
   messenger: 'Messenger',
 }
 
+export interface CreativeDecisionInsight {
+  creativeId: string
+  spendUsd: number
+  clicks: number
+  leads: number
+  buyers: number
+  cpc: number
+  cpl: number
+  leadRatePercent: number
+  landingVisitRatePercent: number
+  topAudience: string
+  topPlacement: string
+  diagnosis: string
+  nextAction: string
+  replicateSignals: string[]
+  risks: string[]
+}
+
 export type DateRange = '7d' | '30d' | '90d'
 
 export function getDateWindow(range: DateRange, anchorDate: string) {
@@ -285,6 +303,93 @@ export function deriveCreativeScores(
     })
 }
 
+export function deriveCreativeDecisionInsight(args: {
+  creativeId: string
+  metrics: DailyAdMetric[]
+  adSets: AdSet[]
+  score?: CreativeScore
+}): CreativeDecisionInsight {
+  const rows = args.metrics.filter((row) => row.creativeId === args.creativeId)
+  const spendUsd = sumBy(rows, (row) => row.spendUsd)
+  const clicks = sumBy(rows, (row) => row.clicks)
+  const landingPageViews = sumBy(rows, (row) => row.landingPageViews)
+  const leads = sumBy(rows, (row) => row.leads)
+  const buyers = sumBy(rows, (row) => row.purchases)
+  const cpc = clicks === 0 ? 0 : spendUsd / clicks
+  const cpl = leads === 0 ? 0 : spendUsd / leads
+  const leadRatePercent = clicks === 0 ? 0 : (leads / clicks) * 100
+  const rawLandingVisitRatePercent = clicks === 0 ? 0 : (landingPageViews / clicks) * 100
+  const landingVisitRatePercent = Math.min(100, rawLandingVisitRatePercent)
+  const topPlacement = topMetricLabel(rows, (row) => placementLabels[row.placement], (row) => row.leads)
+  const adSetById = new Map(args.adSets.map((adSet) => [adSet.id, adSet]))
+  const topAudience = topMetricLabel(
+    rows,
+    (row) => adSetById.get(row.adSetId)?.name ?? row.adSetId,
+    (row) => row.leads,
+  )
+  const quality = args.score?.quality ?? 0
+  const intent = args.score?.intent ?? leadRatePercent
+
+  const replicateSignals = [
+    leads > 0 ? `${formatNumber(leads)} leads captured` : 'No lead volume yet',
+    clicks > 0 ? `${formatNumber(clicks)} clicks generated` : 'No click volume yet',
+    topAudience !== 'Not enough data' ? `Strongest audience: ${topAudience}` : 'Audience winner not proven yet',
+    topPlacement !== 'Not enough data' ? `Strongest placement: ${topPlacement}` : 'Placement winner not proven yet',
+  ]
+
+  const risks = [
+    buyers === 0 ? 'No attributed buyers yet, so quality must be validated with Telegram/CRM data.' : '',
+    leadRatePercent >= 70 && buyers === 0
+      ? 'Very high lead rate with no buyers can indicate curiosity traffic or low purchasing power.'
+      : '',
+    landingVisitRatePercent > 0 && landingVisitRatePercent < 70
+      ? 'Landing visit rate is weak; page speed, load quality, or click intent may be leaking traffic.'
+      : '',
+    rawLandingVisitRatePercent > 110
+      ? 'Meta landing visits exceed clicks; verify action attribution before treating visit rate as exact.'
+      : '',
+    spendUsd > 0 && leads === 0 ? 'Spend is present but lead capture is missing.' : '',
+  ].filter(Boolean)
+
+  const diagnosis =
+    buyers > 0 && quality >= 70
+      ? 'Scale candidate: this creative has downstream buyer proof and strong quality.'
+      : leads >= 100 && buyers === 0
+        ? 'Traffic magnet: this creative attracts attention and registrations, but buyer quality is unproven.'
+        : intent >= 70 && quality >= 55
+          ? 'Lead-quality candidate: keep testing, but verify payment intent before scaling.'
+          : clicks < 50
+            ? 'Insufficient data: give it controlled spend before judging the hook.'
+            : 'Review candidate: performance exists, but the creative needs clearer offer or audience matching.'
+
+  const nextAction =
+    buyers > 0 && quality >= 70
+      ? 'Replicate the hook and audience, then test one new visual variation against it.'
+      : leads >= 100 && buyers === 0
+        ? 'Audit lead quality before scaling; pair it with higher purchasing-power audiences.'
+        : clicks < 50
+          ? 'Keep it in rotation until it reaches enough clicks for a fair read.'
+          : 'Retest with stronger proof, clearer AI income outcome, or a narrower audience.'
+
+  return {
+    creativeId: args.creativeId,
+    spendUsd,
+    clicks,
+    leads,
+    buyers,
+    cpc,
+    cpl,
+    leadRatePercent,
+    landingVisitRatePercent,
+    topAudience,
+    topPlacement,
+    diagnosis,
+    nextAction,
+    replicateSignals,
+    risks,
+  }
+}
+
 export function derivePlacementScores(metrics: DailyAdMetric[]): PlacementScore[] {
   const totalSpend = sumBy(metrics, (row) => row.spendUsd)
   const byPlacement = new Map<Placement, { spend: number; buyers: number }>()
@@ -403,6 +508,17 @@ export function composeDashboardData(args: {
 
 function sumBy<T>(rows: T[], select: (row: T) => number) {
   return rows.reduce((total, row) => total + select(row), 0)
+}
+
+function topMetricLabel<T>(rows: T[], labelFor: (row: T) => string, valueFor: (row: T) => number) {
+  const totals = new Map<string, number>()
+  rows.forEach((row) => {
+    const label = labelFor(row) || 'Unknown'
+    totals.set(label, (totals.get(label) ?? 0) + valueFor(row))
+  })
+
+  const top = Array.from(totals.entries()).sort((a, b) => b[1] - a[1])[0]
+  return top && top[1] > 0 ? top[0] : 'Not enough data'
 }
 
 function formatTrendDate(date: string) {

@@ -1,4 +1,4 @@
-"""Agent registry + dashboard chat routes."""
+"""Agent registry, strategy council, system checklist, and dashboard chat routes."""
 
 from __future__ import annotations
 
@@ -7,15 +7,18 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from ..agent_council import run_strategy_council, should_run_strategy_council
 from ..agent_orchestrator import (
     agent_registry,
+    build_agent_decision,
     build_agent_handoffs,
     orchestrate_agent_chat,
     route_question,
 )
 from ..agent_quality import evaluate_agent_response
-from ..api_models import ChatRequest, ChatResponse
-from ..campaign_analysis import campaign_analysis_from_question
+from ..api_models import ChatRequest, ChatResponse, CouncilRequest
+from ..approval_store import list_approval_requests
+from ..campaign_specific_analysis import campaign_specific_answer
 from ..dashboard_service import (
     answer_audiences,
     answer_creatives,
@@ -23,6 +26,7 @@ from ..dashboard_service import (
     answer_from_knowledge_base,
     answer_funnel,
     answer_meta_status,
+    answer_monitoring,
     answer_placements,
     answer_summary,
     build_dashboard,
@@ -31,21 +35,63 @@ from ..dashboard_service import (
 )
 from ..knowledge_base import load_knowledge_base
 from ..llm_reasoner import generate_chat_answer
+from ..monitoring_scheduler import list_monitoring_runs
 from ..playbook_store import load_playbooks, save_playbook
+from ..system_checklist import build_system_checklist
 from .meta import meta_status
 
 router = APIRouter()
 
 
+def agent_status_payload(agent: dict[str, Any], knowledge: dict[str, Any] | None, live_writes_enabled: bool) -> dict[str, Any]:
+    agent_id = str(agent.get("id") or "")
+    blocked_reasons = []
+    if agent_id in {"audit", "audience", "creative", "placement", "funnel", "monitoring", "experiment"} and not knowledge:
+        blocked_reasons.append("knowledge_base_missing")
+    if agent_id in {"execution", "browser_operator"} and not live_writes_enabled:
+        blocked_reasons.append("live_writes_disabled")
+    if agent_id == "browser_operator":
+        blocked_reasons.append("browser_fallback_requires_specific_approved_action")
+    readiness = "blocked" if blocked_reasons and agent_id in {"execution", "browser_operator"} else "needs_data" if blocked_reasons else "ready"
+    return {
+        **agent,
+        "readinessStatus": readiness,
+        "blockedReasons": blocked_reasons,
+        "lastVerifiedBy": "automated_backend_tests",
+    }
+
+
 @router.get("/api/agents")
 def agents() -> dict[str, Any]:
     live_writes_enabled = os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true"
+    knowledge = load_knowledge_base()
     return {
-        "agents": list(agent_registry().values()),
+        "agents": [agent_status_payload(agent, knowledge, live_writes_enabled) for agent in agent_registry().values()],
         "executionEnabled": live_writes_enabled,
         "approvalRequiredForLiveChanges": True,
         "liveWriteScope": "paused_campaign_and_adset_creation_only" if live_writes_enabled else "disabled",
     }
+
+
+@router.post("/api/agent/council")
+def agent_council(request: CouncilRequest) -> dict[str, Any]:
+    council = run_strategy_council(
+        request.message.strip() or "Run strategy council for the next Meta campaign.",
+        knowledge=load_knowledge_base(),
+        playbooks=load_playbooks(),
+    )
+    return {"ok": True, "council": council}
+
+
+@router.get("/api/system/checklist")
+def system_checklist() -> dict[str, Any]:
+    return build_system_checklist(
+        agents=list(agent_registry().values()),
+        knowledge=load_knowledge_base(),
+        approvals=list_approval_requests(),
+        monitoring_runs=list_monitoring_runs(),
+    )
+
 
 
 def specialist_chat_response(
@@ -54,6 +100,7 @@ def specialist_chat_response(
     answer: str,
     sources: list[str],
     suggestedQuestions: list[str],
+    extra: dict[str, Any] | None = None,
 ) -> ChatResponse:
     routed = route_question(question)
     payload: dict[str, Any] = {
@@ -64,8 +111,35 @@ def specialist_chat_response(
         "routeReason": routed["reason"],
         "agentHandoffs": build_agent_handoffs(routed["agentId"]),
     }
+    payload["agentDecision"] = build_agent_decision(routed, payload)
     payload["quality"] = evaluate_agent_response(payload)
+    if extra:
+        payload.update(extra)
     return ChatResponse(**payload)
+
+
+def format_council_answer(council: dict[str, Any]) -> str:
+    final_plan = council.get("finalPlan", {})
+    audience = final_plan.get("audienceDecision", {})
+    creative = final_plan.get("creativeDecision", {})
+    placement = final_plan.get("placementDecision", {})
+    execution = final_plan.get("executionDecision", {})
+    return "\n".join(
+        [
+            "Strategy Council completed. The agents talked through initial recommendations, challenged each other, and produced one approval-safe campaign plan.",
+            "",
+            f"Council quality: {council.get('averageScoreOutOf10', 0)}/10 across {len(council.get('agents', []))} agents and {len(council.get('events', []))} agent-to-agent exchanges.",
+            "",
+            f"Audience: start with {audience.get('primary', 'the strongest validated audience evidence')} and validate every segment against Telegram START and CRM quality.",
+            f"Creative: use {creative.get('topCreative', 'the top historical VSL creative')} first, but qualify buyer intent earlier with proof and course value.",
+            f"Placement: use {placement.get('primary', 'Instagram Reels/Stories/Feed')} as the primary hypothesis and isolate weak cheap placements.",
+            f"Execution: paused draft creation is {bool(execution.get('canCreatePausedDraft', True))}; publishing is blocked until approval.",
+            "",
+            "I will not publish or activate spend from this council plan. The next safe action is a paused campaign draft or approval request.",
+        ]
+    )
+
+
 
 
 @router.post("/api/agent/chat", response_model=ChatResponse)
@@ -79,9 +153,28 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     lower = question.lower()
+    routed = route_question(question)
     dashboard_data = build_dashboard()
     meta = await meta_status()
     knowledge = load_knowledge_base()
+    if should_run_strategy_council(question):
+        council = run_strategy_council(question, knowledge=knowledge, playbooks=load_playbooks())
+        answer = format_council_answer(council)
+        return specialist_chat_response(
+            question,
+            answer=answer,
+            sources=["agent_council", "strategy_generator", "storage/meta_knowledge_base.json", "docs/AGENT_OPERATING_POLICY.md"],
+            suggestedQuestions=[
+                "Create the paused campaign draft from this council plan.",
+                "Which council agent had the weakest assumption?",
+                "What should the next critique round challenge?",
+            ],
+            extra={
+                "agentCouncil": council,
+                "generatedPlaybook": council.get("generatedPlaybook"),
+                "generatedStrategy": council.get("generatedStrategy"),
+            },
+        )
     orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks())
     if orchestrated:
         generated_playbook = orchestrated.get("generatedPlaybook")
@@ -92,21 +185,6 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
                 orchestrated["generatedStrategy"]["playbookId"] = saved_playbook["id"]
             orchestrated["answer"] += "\n\nI saved this as a draft playbook in the dashboard. It is still not executed in Meta Ads."
         return ChatResponse(**orchestrated)
-
-    # When the operator names a specific campaign, answer with that campaign's real
-    # ranked ad sets / creatives / placements instead of the generic account answer.
-    campaign_specific = campaign_analysis_from_question(knowledge, question, focus=route_question(question)["agentId"])
-    if campaign_specific:
-        return specialist_chat_response(
-            question,
-            answer=campaign_specific["answer"],
-            sources=["storage/meta_knowledge_base.json", "campaign_analysis"],
-            suggestedQuestions=[
-                "Which creative should we scale from this campaign?",
-                "Which placement had the best lead rate?",
-                "What are the limitations of this analysis?",
-            ],
-        )
 
     wants_tracking_answer = any(word in lower for word in ["pixel", "tracking", "visit", "landing", "lead rate", "funnel"])
     wants_connection_status = any(word in lower for word in ["token", "meta api", "account id", "ad account", "api status"])
@@ -121,7 +199,43 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
             ],
         )
 
+    if routed["agentId"] == "monitoring":
+        return specialist_chat_response(
+            question,
+            answer=answer_monitoring(dashboard_data),
+            sources=["monitoring", "alerts", "approvalActions"],
+            suggestedQuestions=[
+                "What should we check every four hours?",
+                "Which alert should become an experiment?",
+                "What should require approval before execution?",
+            ],
+        )
+
+    if routed["agentId"] == "experiment":
+        return specialist_chat_response(
+            question,
+            answer=answer_experiments(dashboard_data),
+            sources=["experiments", "approvalActions"],
+            suggestedQuestions=[
+                "What should the stop rule be?",
+                "What should the scale rule be?",
+                "Which variable should we test first?",
+            ],
+        )
+
     if knowledge:
+        campaign_answer = campaign_specific_answer(question, knowledge)
+        if campaign_answer:
+            return specialist_chat_response(
+                question,
+                answer=campaign_answer,
+                sources=["campaign_specific_analysis", "storage/meta_knowledge_base.json"],
+                suggestedQuestions=[
+                    "Rank creatives for this campaign.",
+                    "Which ad set should become the scale candidate?",
+                    "What tracking is missing before scaling?",
+                ],
+            )
         try:
             llm_answer = await generate_chat_answer(question, knowledge_chat_preview(knowledge))
         except Exception:
@@ -162,7 +276,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if any(word in lower for word in ["creative", "video", "hook", "viral", "convert", "conversion"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_creatives(dashboard_data),
             sources=["creativeAnalyses", "metrics"],
             suggestedQuestions=[
@@ -173,7 +288,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if any(word in lower for word in ["audience", "age", "buyer", "purchasing", "target"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_audiences(dashboard_data),
             sources=["audience", "metrics"],
             suggestedQuestions=[
@@ -184,7 +300,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if any(word in lower for word in ["placement", "facebook", "instagram", "reels", "feed"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_placements(dashboard_data),
             sources=["placements", "metrics"],
             suggestedQuestions=[
@@ -195,7 +312,8 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     if any(word in lower for word in ["funnel", "telegram", "landing", "webinar", "lead", "leak"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_funnel(dashboard_data),
             sources=["funnel", "trackingHealth"],
             suggestedQuestions=[
@@ -205,8 +323,21 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
             ],
         )
 
+    if any(word in lower for word in ["monitor", "alert", "attention", "trend", "rising", "improving", "getting expensive"]):
+        return specialist_chat_response(
+            question,
+            answer=answer_monitoring(dashboard_data),
+            sources=["monitoring", "alerts", "approvalActions"],
+            suggestedQuestions=[
+                "What should we check every four hours?",
+                "Which alert should become an experiment?",
+                "What should require approval before execution?",
+            ],
+        )
+
     if any(word in lower for word in ["experiment", "test", "budget", "scale", "pause", "recommend"]):
-        return ChatResponse(
+        return specialist_chat_response(
+            question,
             answer=answer_experiments(dashboard_data),
             sources=["experiments", "approvalActions"],
             suggestedQuestions=[

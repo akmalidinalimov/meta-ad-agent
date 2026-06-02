@@ -637,41 +637,17 @@ def answer_from_knowledge_base(lower_question: str, knowledge: dict[str, Any]) -
             "Country targeting gives Meta more learning room; region targeting is useful after a region repeatedly proves better CPL/CPA."
         )
 
-    if any(word in lower_question for word in ["age", "gender", "male", "female", "audience", "target"]):
-        best = first_eligible_answer(analysis.get("audience", {}).get("ageGender", []), min_spend)
-        interests = first_eligible_answer(analysis.get("audience", {}).get("interests", []), min_spend)
-        if not best:
-            return (
-                "The saved Meta age/gender slice does not have enough spend per segment to recommend a reliable age/gender target yet. "
-                f"The strongest interest cluster with meaningful spend is {interests['label'] if interests else 'not enough interest data'}. "
-                "For now, keep age/gender broader and let creative plus conversion quality guide narrowing."
-            )
-        return (
-            f"From the saved Meta analysis, the best-ranked age/gender segment is {best['label']}. "
-            f"{best.get('spend', 0):,.2f} USD spend, {best.get('leads', 0):,.0f} leads, "
-            f"{best.get('purchases', 0):,.0f} purchases, quality score {best.get('qualityScore', 0)}. "
-            f"For interests, the strongest cluster is {interests['label'] if interests else 'not enough interest data'}. "
-            "Use this as a test hypothesis and keep purchase/lead quality as the decision metric."
-        )
+    if any(word in lower_question for word in ["age", "gender", "male", "female", "audience", "target", "interest", "ad set", "adset"]):
+        return answer_audiences_from_knowledge_base(knowledge)
 
     if any(word in lower_question for word in ["placement", "facebook", "instagram", "reels", "feed"]):
-        eligible = [item for item in analysis.get("placements", []) if item.get("spend", 0) >= min_spend]
-        placement = first(eligible)
-        weak = last(eligible)
-        return (
-            f"Best-ranked placement with meaningful spend is {placement['label'] if placement else 'not enough placement data'}. "
-            f"Weakest among meaningful-spend placements is {weak['label'] if weak else 'not enough placement data'}. "
-            "I would separate placement tests rather than mixing everything blindly: scale high-quality placements and keep weak placements for retargeting only."
-        )
+        return answer_placements_from_knowledge_base(knowledge)
 
-    if any(word in lower_question for word in ["creative", "ad", "video", "worked", "didn't", "did not"]):
-        top_ad = first(analysis.get("topAds", []))
-        return (
-            f"Top ad from the saved Meta analysis is {top_ad['label'] if top_ad else 'not enough data'}. "
-            f"It produced {top_ad.get('leads', 0) if top_ad else 0:,.0f} leads and "
-            f"{top_ad.get('purchases', 0) if top_ad else 0:,.0f} purchases. "
-            "For creative decisions, compare high attention against downstream quality; cheap clicks alone are not enough."
-        )
+    if any(word in lower_question for word in ["creative", "video", "hook", "thumbnail", "viral", "worked", "didn't", "did not"]):
+        return answer_creatives_from_knowledge_base(knowledge)
+
+    if any(word in lower_question for word in ["funnel", "telegram", "landing", "lead rate", "visit", "leak", "crm", "bot"]):
+        return answer_funnel_from_knowledge_base(knowledge)
 
     if any(word in lower_question for word in ["summary", "learn", "lesson", "analysis", "recommend"]):
         llm = analysis.get("llmSummary")
@@ -821,7 +797,8 @@ def answer_funnel(data: dict[str, Any]) -> str:
     warning_text = " ".join(f"{item['name']} is {item['status']} at {item['matchRate']}% match." for item in warning_tracking)
     return (
         f"The weakest funnel step is {weakest['step']} at {weakest['rate']}. "
-        f"That is the first place I would diagnose before scaling spend. {warning_text}"
+        f"That is the first place I would diagnose before scaling spend. "
+        f"Watch landing visit rate, landing lead rate, Telegram START rate, and CRM quality together. {warning_text}"
     )
 
 
@@ -983,3 +960,315 @@ def money(value: float) -> str:
 
 def format_day(value: str) -> str:
     return datetime.fromisoformat(value).strftime("%b %#d")
+
+
+# --- Knowledge-base-driven specialist answers (merged from codex/meta-agent) ---
+# Rank ad sets / placements / creatives and diagnose the funnel directly from the
+# saved 180-day Meta knowledge base, with Uzbekistan purchasing-power framing.
+
+def answer_audiences_from_knowledge_base(knowledge: dict[str, Any]) -> str:
+    analysis = knowledge.get("analysis", {})
+    audience = analysis.get("audience", {})
+    min_spend = max(5, analysis.get("summary", {}).get("spend", 0) * 0.02)
+    raw_rows = valid_rows(knowledge.get("raw", {}).get("insights", {}).get("base", []))
+    adset_rankings = rank_raw_insight_rows(raw_rows, ["adset_id", "adset_name"])
+    meaningful_adsets = [item for item in adset_rankings if has_meaningful_audience_evidence(item, min_spend)]
+    top_adsets = meaningful_adsets[:5]
+    meaningful_interests = [item for item in audience.get("interests", []) if has_meaningful_audience_evidence(item, min_spend)]
+    meaningful_age_gender = [item for item in audience.get("ageGender", []) if has_meaningful_audience_evidence(item, min_spend)]
+    best_interest = first(meaningful_interests)
+    best_age_gender = first(meaningful_age_gender)
+
+    adset_lines = [
+        f"{index}. {item['label']}: {audience_metric_sentence(item)}. {audience_diagnosis(item)}"
+        for index, item in enumerate(top_adsets, start=1)
+    ]
+    interest_lines = [
+        f"{index}. {item['label']}: {audience_metric_sentence(item)}."
+        for index, item in enumerate(meaningful_interests[:5], start=1)
+    ]
+
+    return (
+        "Audience specialist ranking from the saved Meta knowledge base:\n"
+        + ("Top ad sets:\n" + "\n".join(adset_lines) if adset_lines else "Top ad sets: not enough meaningful ad set data.")
+        + "\n\nTop interest clusters:\n"
+        + ("\n".join(interest_lines) if interest_lines else "Not enough meaningful interest data.")
+        + (
+            f"\n\nBest age/gender hypothesis: {best_age_gender['label']} with {as_float(best_age_gender.get('leads')):,.0f} leads, "
+            f"CPL ${as_float(best_age_gender.get('cpl')):.2f}, lead rate {as_float(best_age_gender.get('leadRateFromClick')):.1f}%."
+            if best_age_gender
+            else "\n\nBest age/gender hypothesis: not enough meaningful age/gender data yet."
+        )
+        + (
+            f"\nBest interest hypothesis: {best_interest['label']} with {as_float(best_interest.get('leads')):,.0f} leads, "
+            f"CPL ${as_float(best_interest.get('cpl')):.2f}, lead rate {as_float(best_interest.get('leadRateFromClick')):.1f}%."
+            if best_interest
+            else "\nBest interest hypothesis: not enough meaningful interest data yet."
+        )
+        + "\nRecommendation: use the best ad set or interest as a test hypothesis, not a final buyer audience. "
+        "Because attributed purchases are missing or sparse, decide scaling with Telegram START quality, CRM stages, and sales capacity. "
+        "For higher purchasing power, prefer full-time job, business, marketing/SMM, small-business, and AI-workflow angles over broad curiosity-only audiences."
+    )
+
+
+def rank_raw_insight_rows(rows: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        label = raw_label_for(row, keys)
+        current = grouped.setdefault(
+            label,
+            {"id": str(row.get(keys[0]) or ""), "label": label, "spend": 0.0, "clicks": 0.0, "leads": 0.0, "purchases": 0.0},
+        )
+        current["spend"] += as_float(row.get("spend"))
+        current["clicks"] += as_float(row.get("clicks"))
+        current["leads"] += action_count(row, "lead") + action_count(row, "registration")
+        current["purchases"] += action_count(row, "purchase")
+    return sorted((with_audience_rates(item) for item in grouped.values()), key=audience_sort_key)
+
+
+def raw_label_for(row: dict[str, Any], keys: list[str]) -> str:
+    if keys == ["adset_id", "adset_name"]:
+        return str(row.get("adset_name") or row.get("adset_id") or "Unknown")
+    parts = [str(row.get(key) or "") for key in keys if row.get(key)]
+    return " / ".join(parts) if parts else "Unknown"
+
+
+def with_audience_rates(item: dict[str, Any]) -> dict[str, Any]:
+    clicks = as_float(item.get("clicks"))
+    leads = as_float(item.get("leads"))
+    spend = as_float(item.get("spend"))
+    return {
+        **item,
+        "cpc": spend / clicks if clicks else 0,
+        "cpl": spend / leads if leads else 0,
+        "leadRateFromClick": (leads / clicks * 100) if clicks else 0,
+    }
+
+
+def audience_sort_key(item: dict[str, Any]) -> tuple[float, float, float]:
+    cpl = as_float(item.get("cpl"))
+    leads = as_float(item.get("leads"))
+    spend = as_float(item.get("spend"))
+    return (cpl if cpl else 999999, -leads, -spend)
+
+
+def has_meaningful_audience_evidence(item: dict[str, Any], min_spend: float) -> bool:
+    return as_float(item.get("spend")) >= min_spend or as_float(item.get("clicks")) >= 500 or as_float(item.get("leads")) >= 100
+
+
+def audience_metric_sentence(item: dict[str, Any]) -> str:
+    return (
+        f"${as_float(item.get('spend')):,.2f} spend, {as_float(item.get('clicks')):,.0f} clicks, "
+        f"{as_float(item.get('leads')):,.0f} leads, {as_float(item.get('purchases')):,.0f} purchases, "
+        f"CPC ${as_float(item.get('cpc')):.4f}, CPL ${as_float(item.get('cpl')):.2f}, "
+        f"lead rate {as_float(item.get('leadRateFromClick')):.1f}%"
+    )
+
+
+def audience_diagnosis(item: dict[str, Any]) -> str:
+    leads = as_float(item.get("leads"))
+    purchases = as_float(item.get("purchases"))
+    label = str(item.get("label", "")).lower()
+    if purchases > 0:
+        return "Scale candidate: has downstream purchase proof."
+    if leads >= 100 and purchases == 0:
+        if any(word in label for word in ["business", "marketing", "smm", "ai", "work", "job"]):
+            return "Qualified-lead candidate: validate Telegram/CRM quality before scaling."
+        return "Lead-volume candidate: check purchasing power before scaling."
+    return "Learning candidate: keep broad until more downstream quality data arrives."
+
+
+def answer_placements_from_knowledge_base(knowledge: dict[str, Any]) -> str:
+    analysis = knowledge.get("analysis", {})
+    min_spend = max(5, analysis.get("summary", {}).get("spend", 0) * 0.02)
+    placements = [
+        item
+        for item in analysis.get("placements", [])
+        if as_float(item.get("spend")) >= min_spend or as_float(item.get("clicks")) >= 500 or as_float(item.get("leads")) >= 100
+    ]
+    if not placements:
+        return (
+            "Placement specialist ranking: not enough placement breakdown data yet. "
+            "Refresh Meta insights with publisher_platform and platform_position breakdowns before deciding where to scale or cut."
+        )
+
+    ranked = sorted(placements, key=placement_sort_key)
+    weak = max(ranked, key=placement_waste_key)
+    instagram = [item for item in ranked if "instagram" in str(item.get("label", "")).lower()]
+    facebook = [item for item in ranked if "facebook" in str(item.get("label", "")).lower()]
+    top_lines = [
+        f"{index}. {item['label']}: {placement_metric_sentence(item)}. {placement_diagnosis(item)}"
+        for index, item in enumerate(ranked[:6], start=1)
+    ]
+
+    return (
+        "Placement specialist ranking from the saved Meta knowledge base:\n"
+        + "\n".join(top_lines)
+        + f"\n\nScale hypothesis: {ranked[0]['label']} has the strongest placement signal by CPL, lead rate, and volume."
+        + f"\nPlacement to avoid or isolate: {weak['label']} because it shows weaker cost/quality economics relative to the account."
+        + (
+            f"\nInstagram vs Facebook read: Instagram best candidate is {instagram[0]['label'] if instagram else 'not enough Instagram data'}; "
+            f"Facebook best candidate is {facebook[0]['label'] if facebook else 'not enough Facebook data'}."
+        )
+        + "\nRecommendation: separate Instagram placements from Facebook tests, especially in Uzbekistan, so cheap Facebook traffic does not hide weak downstream quality. "
+        "Scale only after Telegram START and CRM quality confirm that registrations are turning into reachable, qualified leads."
+    )
+
+
+def placement_sort_key(item: dict[str, Any]) -> tuple[float, float, float]:
+    cpl = as_float(item.get("cpl"))
+    lead_rate = as_float(item.get("leadRateFromClick"))
+    leads = as_float(item.get("leads"))
+    return (cpl if cpl else 999999, -lead_rate, -leads)
+
+
+def placement_waste_key(item: dict[str, Any]) -> tuple[float, float, float]:
+    cpl = as_float(item.get("cpl"))
+    spend = as_float(item.get("spend"))
+    leads = as_float(item.get("leads"))
+    return (cpl if cpl else 999999, spend, -leads)
+
+
+def placement_metric_sentence(item: dict[str, Any]) -> str:
+    return (
+        f"${as_float(item.get('spend')):,.2f} spend, {as_float(item.get('clicks')):,.0f} clicks, "
+        f"{as_float(item.get('leads')):,.0f} leads, {as_float(item.get('purchases')):,.0f} purchases, "
+        f"CPC ${as_float(item.get('cpc')):.4f}, CPL ${as_float(item.get('cpl')):.2f}, "
+        f"lead rate {as_float(item.get('leadRateFromClick')):.1f}%"
+    )
+
+
+def placement_diagnosis(item: dict[str, Any]) -> str:
+    label = str(item.get("label", "")).lower()
+    purchases = as_float(item.get("purchases"))
+    leads = as_float(item.get("leads"))
+    if purchases > 0:
+        return "Scale candidate: has downstream purchase proof."
+    if "instagram" in label and leads >= 100:
+        return "Priority test: matches the known Uzbekistan Instagram behavior, but still needs Telegram/CRM validation."
+    if "facebook" in label:
+        return "Isolation candidate: keep separate or retarget-only until buyer quality is proven."
+    return "Controlled test candidate: judge by Telegram START and CRM quality, not clicks alone."
+
+
+def answer_funnel_from_knowledge_base(knowledge: dict[str, Any]) -> str:
+    tracking = tracking_calculations_from_knowledge(knowledge)
+    clicks = as_float(tracking.get("clicks"))
+    visits = as_float(tracking.get("estimatedLandingPageVisits"))
+    leads = as_float(tracking.get("leads"))
+    purchases = as_float(tracking.get("purchases"))
+    visit_rate = as_float(tracking.get("visitRatePercent"))
+    landing_lead_rate = as_float(tracking.get("landingPageLeadRatePercent"))
+    purchase_rate = as_float(tracking.get("purchaseRateFromLandingVisitPercent"))
+    leak = funnel_leak_label(visit_rate, landing_lead_rate, purchases, visits)
+
+    return (
+        "Funnel specialist diagnosis from the saved Meta knowledge base:\n"
+        f"1. Ad click to landing page: {clicks:,.0f} clicks -> {visits:,.0f} landing visits, landing visit rate {visit_rate:.1f}%.\n"
+        f"2. Landing page to registration: {visits:,.0f} landing visits -> {leads:,.0f} leads, landing lead rate {landing_lead_rate:.1f}%.\n"
+        f"3. Landing page to purchase: {purchases:,.0f} purchases, purchase rate from landing visit {purchase_rate:.1f}%.\n"
+        f"Biggest current leak: {leak}. "
+        "Telegram START rate is not fully attributable until each bot deep link sends visitor_id and telegram_user_id back to the tracker. "
+        "CRM purchase data is also required before the agent can confidently choose scale winners. "
+        "Recommendation: watch landing visit rate, landing lead rate, Telegram START rate, and CRM qualified/paid stages together before increasing budgets."
+    )
+
+
+def funnel_leak_label(visit_rate: float, landing_lead_rate: float, purchases: float, visits: float) -> str:
+    if visit_rate < 70:
+        return "click-to-landing-page handoff, likely page speed, redirect, or intent mismatch"
+    if landing_lead_rate < 35:
+        return "landing-page-to-lead conversion, likely promise/CTA/VSL-bot expectation mismatch"
+    if visits > 0 and purchases == 0:
+        return "post-lead quality, because registrations exist but CRM purchases are not attributed"
+    return "downstream Telegram/CRM quality; keep monitoring because top-of-funnel rates look usable"
+
+
+def answer_creatives_from_knowledge_base(knowledge: dict[str, Any]) -> str:
+    analysis = knowledge.get("analysis", {})
+    top_ads = analysis.get("topAds", []) or []
+    if not top_ads:
+        return "The saved knowledge base does not have creative-level Meta analysis yet. Refresh ads and insights first."
+
+    raw_ads = knowledge.get("raw", {}).get("ads", []) or []
+    ad_lookup = {str(ad.get("id")): ad for ad in raw_ads}
+    meaningful = [item for item in top_ads if has_meaningful_creative_evidence(item)]
+    ranked = meaningful or top_ads[:5]
+    top_lines = []
+    for index, item in enumerate(ranked[:5], start=1):
+        top_lines.append(f"{index}. {creative_label(item)}: {creative_metric_sentence(item)}; {creative_media_sentence(item, ad_lookup)}")
+
+    scale = first(ranked)
+    traffic_magnet = max(ranked, key=lambda item: (as_float(item.get("leads")), as_float(item.get("clicks")))) if ranked else None
+    weak_buyer = first([item for item in ranked if as_float(item.get("leads")) > 0 and as_float(item.get("purchases")) == 0])
+
+    return (
+        "Creative specialist ranking from the saved Meta knowledge base:\n"
+        + "\n".join(top_lines)
+        + (
+            f"\n\nScale candidate: {creative_label(scale)} has the strongest usable creative signal in the saved data. "
+            "Replicate the hook only if Telegram START and CRM quality are acceptable."
+            if scale
+            else "\n\nScale candidate: not enough meaningful creative data yet."
+        )
+        + (
+            f"\nTraffic magnet to audit: {creative_label(traffic_magnet)} generated "
+            f"{as_float(traffic_magnet.get('leads')):,.0f} leads from {as_float(traffic_magnet.get('clicks')):,.0f} clicks. "
+            "This can be useful for attention, but it is not a buyer-quality winner until downstream quality is proven."
+            if traffic_magnet
+            else ""
+        )
+        + (
+            f"\nAvoid scaling blindly: {creative_label(weak_buyer)} has registrations but no attributed purchases. "
+            "Use it with higher purchasing-power audiences or rework the first seconds to qualify course value."
+            if weak_buyer
+            else "\nAvoid scaling blindly: no clear zero-purchase traffic magnet was found in the meaningful creative slice."
+        )
+    )
+
+
+def has_meaningful_creative_evidence(item: dict[str, Any]) -> bool:
+    return as_float(item.get("spend")) >= 5 or as_float(item.get("clicks")) >= 50 or as_float(item.get("leads")) >= 20
+
+
+def creative_label(item: dict[str, Any] | None) -> str:
+    if not item:
+        return "not enough data"
+    keys = item.get("keys", {}) or {}
+    return str(keys.get("ad_name") or item.get("label") or keys.get("ad_id") or "Unknown creative")
+
+
+def creative_metric_sentence(item: dict[str, Any]) -> str:
+    return (
+        f"${as_float(item.get('spend')):,.2f} spend, {as_float(item.get('clicks')):,.0f} clicks, "
+        f"{as_float(item.get('leads')):,.0f} leads, {as_float(item.get('purchases')):,.0f} purchases, "
+        f"CPC ${as_float(item.get('cpc')):.4f}, CPL ${as_float(item.get('cpl')):.2f}, "
+        f"quality {as_float(item.get('qualityScore')):.1f}"
+    )
+
+
+def creative_media_sentence(item: dict[str, Any], ad_lookup: dict[str, dict[str, Any]]) -> str:
+    keys = item.get("keys", {}) or {}
+    ad_id = str(keys.get("ad_id") or "")
+    ad = ad_lookup.get(ad_id) or {}
+    raw_creative = ad.get("creative", {}) or {}
+    analysis_creative = item.get("creative", {}) or {}
+    has_thumbnail = bool(raw_creative.get("thumbnail_url") or analysis_creative.get("thumbnailUrl"))
+    has_video = bool(raw_creative.get("video_id") or analysis_creative.get("videoId"))
+    if has_thumbnail and has_video:
+        return "thumbnail and video ID available"
+    if has_thumbnail:
+        return "thumbnail available"
+    if has_video:
+        return "video ID available"
+    return "media metadata missing"
+
+
+def answer_monitoring(data: dict[str, Any]) -> str:
+    high_priority = [item for item in data["approvalActions"] if item.get("priority") == "high"]
+    first_alert = data.get("alerts", [{}])[0]
+    action_text = high_priority[0]["title"] if high_priority else first_alert.get("title", "Run the scheduled monitoring check")
+    return (
+        f"The Monitoring Agent should monitor cost and quality every four hours, then turn alerts into approval-safe recommendations. "
+        f"Current highest-priority item: {action_text}. It should not execute pauses, budget changes, or creative rotations without approval."
+    )
