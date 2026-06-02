@@ -2252,7 +2252,7 @@
 .agent-office-map {
   position: relative;
   display: block;
-  min-height: 640px;
+  min-height: 720px;
   padding: 0;
   overflow: hidden;
   border: 1px solid #cbd5e1;
@@ -2268,7 +2268,7 @@
 
 .office-floor-rug {
   position: absolute;
-  inset: 9% 10%;
+  inset: 8% 8%;
   border-radius: 8px;
   background: #d9dde4;
   box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
@@ -2280,9 +2280,9 @@
   top: 50%;
   z-index: 2;
   display: grid;
-  width: 34%;
-  min-width: 240px;
-  min-height: 210px;
+  width: 28%;
+  min-width: 220px;
+  min-height: 154px;
   place-items: center;
   padding: 18px;
   transform: translate(-50%, -50%);
@@ -2311,10 +2311,11 @@
 
 .agent-desk {
   position: absolute;
-  z-index: 3;
-  display: block;
-  width: 154px;
-  min-height: 132px;
+  z-index: 5;
+  display: grid;
+  width: 142px;
+  min-height: 118px;
+  justify-items: center;
   padding: 0;
   border: 0;
   background: transparent;
@@ -2326,104 +2327,75 @@
   animation: none;
 }
 
-.office-chair {
-  position: absolute;
-  left: 50%;
-  top: 100%;
-  width: 70px;
-  height: 34px;
-  transform: translate(-50%, -18px);
-  border-radius: 10px 10px 18px 18px;
-  background: #475569;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
-}
-
-.desk-surface {
+.agent-circle {
   position: relative;
   display: grid;
-  min-height: 108px;
-  padding: 11px;
-  border: 1px solid rgba(120, 83, 45, 0.35);
-  border-radius: 8px;
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.16), transparent 50%, rgba(0, 0, 0, 0.05)),
-    #d9a761;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
-}
-
-.agent-desk.speaker .desk-surface {
-  outline: 3px solid #1f9d8a;
-}
-
-.agent-desk.receiver .desk-surface {
-  outline: 3px solid #3b82f6;
-}
-
-.agent-desk.orchestrator .desk-surface {
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.18), transparent 50%, rgba(0, 0, 0, 0.05)),
-    #c9974f;
-}
-
-.desk-laptop {
-  width: 52px;
-  height: 34px;
-  margin: 0 auto 4px;
-  border-radius: 4px;
-  background: #334155;
-  box-shadow: inset 0 0 0 5px #64748b;
-}
-
-.desk-keyboard {
   width: 70px;
-  height: 10px;
-  margin: 0 auto 7px;
-  border-radius: 4px;
-  background: #f8fafc;
+  height: 70px;
+  place-items: center;
+  border: 4px solid #ffffff;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--agent-color);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.22);
 }
 
-.desk-status-light {
+.agent-circle i {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 10px;
-  height: 10px;
+  right: 3px;
+  bottom: 5px;
+  width: 15px;
+  height: 15px;
+  border: 3px solid #ffffff;
   border-radius: 999px;
   background: #94a3b8;
 }
 
-.agent-desk.active .desk-status-light {
-  background: #1f9d8a;
-  box-shadow: 0 0 0 6px rgba(31, 157, 138, 0.18);
+.agent-desk.active .agent-circle i {
+  background: #22c55e;
+  box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.18);
 }
 
-.agent-desk strong {
-  display: block;
+.agent-desk.speaker .agent-circle {
+  outline: 5px solid rgba(31, 157, 138, 0.34);
+}
+
+.agent-desk.receiver .agent-circle {
+  outline: 5px solid rgba(59, 130, 246, 0.34);
+}
+
+.agent-label-card {
+  display: grid;
+  justify-items: center;
+  width: 136px;
+  margin-top: 7px;
+  padding: 7px 8px;
+  border: 1px solid rgba(226, 232, 240, 0.94);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 22px rgba(15, 23, 42, 0.1);
+}
+
+.agent-label-card strong {
   overflow: hidden;
+  max-width: 120px;
   color: #172033;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.15;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agent-desk span,
-.agent-desk small {
+.agent-label-card span,
+.agent-label-card small {
   display: block;
-  overflow: hidden;
-  margin-top: 4px;
-  color: #475569;
-  font-size: 10px;
-  font-weight: 850;
-  line-height: 1.2;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-desk small {
+  margin-top: 3px;
   color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
 }
 
 .moving-agent {
@@ -2432,21 +2404,21 @@
   top: var(--to-y);
   z-index: 8;
   display: grid;
-  width: 70px;
-  height: 70px;
+  width: 62px;
+  height: 62px;
   place-items: center;
   transform: translate(-50%, -50%);
-  border: 3px solid #0f766e;
+  border: 4px solid #ffffff;
   border-radius: 999px;
   color: #ffffff;
-  background: #0f766e;
+  background: #111827;
   box-shadow: 0 18px 34px rgba(15, 118, 110, 0.3);
   animation: agentWalk 2.2s ease-in-out both;
 }
 
 .moving-agent span {
   position: absolute;
-  top: 72px;
+  top: 66px;
   left: 50%;
   min-width: 110px;
   transform: translateX(-50%);
@@ -2723,7 +2695,20 @@
   }
 
   .agent-desk {
-    width: 128px;
+    width: 112px;
+  }
+
+  .agent-circle {
+    width: 58px;
+    height: 58px;
+  }
+
+  .agent-label-card {
+    width: 108px;
+  }
+
+  .agent-label-card strong {
+    max-width: 94px;
   }
 
   .agent-office-actions {

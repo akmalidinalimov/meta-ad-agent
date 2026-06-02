@@ -1274,7 +1274,7 @@ function AgentOfficeView({
   const activeEvent = events[safeActiveEventIndex]
   const activeRound = latestCouncil?.rounds.find((round) => activeEvent && round.events.some((event) => event.id === activeEvent.id))
   const fromPosition = getAgentDeskPosition(activeEvent?.fromAgent)
-  const toPosition = getAgentDeskPosition(activeEvent?.toAgent)
+  const toPosition = getAgentApproachPosition(activeEvent?.fromAgent, activeEvent?.toAgent)
   const activeAgentIds = new Set(activeEvent ? [activeEvent.fromAgent, activeEvent.toAgent] : ['orchestrator'])
   const movingAgentName = activeEvent ? agentNameForId(agents, activeEvent.fromAgent) : 'Orchestrator'
   const progressLabel = latestCouncil
@@ -1403,24 +1403,25 @@ function AgentOfficeView({
             )}
           {agents.map((agent) => {
             const position = getAgentDeskPosition(agent.id)
+            const visual = getAgentVisual(agent.id)
             const isActive = activeAgentIds.has(agent.id)
             const isSpeaker = activeEvent?.fromAgent === agent.id
             const isReceiver = activeEvent?.toAgent === agent.id
             return (
               <div
                 className={`agent-desk ${agent.id === 'orchestrator' ? 'orchestrator' : ''} ${isActive ? 'active' : ''} ${isSpeaker ? 'speaker' : ''} ${isReceiver ? 'receiver' : ''}`}
-                style={{ left: `${position.x}%`, top: `${position.y}%` }}
+                style={{ left: `${position.x}%`, top: `${position.y}%`, '--agent-color': visual.color } as CSSProperties}
                 key={agent.id}
               >
-                <div className="office-chair" />
-                <div className="desk-surface">
-                  <div className="desk-laptop" />
-                  <div className="desk-keyboard" />
-                  <div className="desk-status-light" />
-                  <strong>{agent.name}</strong>
-                  <span>{agent.role}</span>
+                <div className="agent-circle">
+                  <Bot size={20} />
+                  <i />
                 </div>
-                <small>{labelRawSetting(agent.state)} · {councilScoreForAgent(latestCouncil, agent.id)}</small>
+                <div className="agent-label-card">
+                  <strong>{agent.name}</strong>
+                  <span>{visual.shortRole}</span>
+                  <small>{councilScoreForAgent(latestCouncil, agent.id)}</small>
+                </div>
               </div>
             )
           })}
@@ -1585,20 +1586,48 @@ function agentNameForId(agents: AgentCouncilSession['agents'], agentId?: string)
   return agents.find((agent) => agent.id === agentId)?.name ?? labelRawSetting(agentId ?? 'agent')
 }
 
+function getAgentApproachPosition(fromAgentId?: string, toAgentId?: string) {
+  const target = getAgentDeskPosition(toAgentId)
+  const source = getAgentDeskPosition(fromAgentId)
+  const deltaX = target.x - source.x
+  const deltaY = target.y - source.y
+  const distance = Math.max(Math.sqrt(deltaX * deltaX + deltaY * deltaY), 1)
+  return {
+    x: target.x - (deltaX / distance) * 9,
+    y: target.y - (deltaY / distance) * 9,
+  }
+}
+
 function getAgentDeskPosition(agentId?: string) {
   const positions: Record<string, { x: number; y: number }> = {
-    orchestrator: { x: 50, y: 12 },
-    audit: { x: 22, y: 16 },
-    meta_ai_strategist: { x: 78, y: 16 },
-    audience: { x: 16, y: 44 },
-    creative: { x: 84, y: 44 },
-    placement: { x: 22, y: 74 },
-    funnel: { x: 50, y: 82 },
-    experiment: { x: 78, y: 74 },
-    monitoring: { x: 50, y: 48 },
-    execution: { x: 50, y: 24 },
+    orchestrator: { x: 50, y: 10 },
+    audit: { x: 18, y: 18 },
+    meta_ai_strategist: { x: 82, y: 18 },
+    audience: { x: 10, y: 44 },
+    creative: { x: 90, y: 44 },
+    placement: { x: 18, y: 78 },
+    funnel: { x: 50, y: 91 },
+    experiment: { x: 82, y: 78 },
+    monitoring: { x: 34, y: 34 },
+    execution: { x: 66, y: 34 },
   }
   return positions[agentId ?? 'orchestrator'] ?? { x: 50, y: 50 }
+}
+
+function getAgentVisual(agentId: string) {
+  const visuals: Record<string, { color: string; shortRole: string }> = {
+    orchestrator: { color: '#0f766e', shortRole: 'coordinates' },
+    audit: { color: '#2563eb', shortRole: 'audits data' },
+    meta_ai_strategist: { color: '#7c3aed', shortRole: 'Meta AI read' },
+    audience: { color: '#db2777', shortRole: 'audience' },
+    creative: { color: '#ea580c', shortRole: 'creative' },
+    placement: { color: '#0891b2', shortRole: 'placements' },
+    funnel: { color: '#16a34a', shortRole: 'tracking' },
+    experiment: { color: '#ca8a04', shortRole: 'testing' },
+    monitoring: { color: '#475569', shortRole: 'monitors' },
+    execution: { color: '#dc2626', shortRole: 'paused drafts' },
+  }
+  return visuals[agentId] ?? { color: '#64748b', shortRole: labelRawSetting(agentId) }
 }
 
 function fallbackCouncilAgents(): AgentCouncilSession['agents'] {
