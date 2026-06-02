@@ -8,20 +8,16 @@ import {
   CheckCircle2,
   CircleDollarSign,
   ClipboardCheck,
-  Eye,
   Film,
-  FlaskConical,
   Gauge,
   LayoutDashboard,
   ListChecks,
   MousePointerClick,
-  Play,
   RadioTower,
   RefreshCcw,
   Settings,
   ShieldAlert,
   SlidersHorizontal,
-  Sparkles,
   Target,
   TrendingDown as TrendingDownIcon,
   TrendingUp,
@@ -45,11 +41,9 @@ import {
 } from 'recharts'
 import { ChartFrame } from './dashboard/shared/ChartFrame'
 import { MediaThumb } from './dashboard/shared/MediaThumb'
-import { MetaAiCaptureView } from './dashboard/sections/MetaAiCaptureView'
 import { PanelHeading } from './dashboard/shared/PanelHeading'
 import {
   deriveCreativeScores,
-  deriveCreativeDecisionInsight,
   deriveFunnel,
   derivePlacementScores,
   deriveRankingRows,
@@ -76,23 +70,19 @@ import type {
   CampaignPlaybook,
   CampaignPlaybookSegment,
   ApprovalRequest,
-  CampaignWatchItem,
   Creative,
   DashboardData,
   DashboardFilters,
   DashboardKpi,
   DailyAdMetric,
-  DraftCampaignProposal,
   FunnelEventSummary,
   IconName,
-  LaunchStrategy,
   MetaSnapshot,
   MetaSettingsAudit,
   Placement,
   RankingRow,
   SystemChecklist,
   TrackingHealthItem,
-  Tone,
 } from '../types/marketing'
 
 const COLORS = ['#1f9d8a', '#3b82f6', '#f59e0b', '#ef4444', '#7c3aed', '#0f766e']
@@ -110,19 +100,7 @@ const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'commandCenter', label: 'Command Center', icon: Bot },
-  { id: 'agentOffice', label: 'Agent Office', icon: Users },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
-  { id: 'creatives', label: 'Creatives', icon: Film },
-  { id: 'funnel', label: 'Funnel', icon: MousePointerClick },
-  { id: 'audiences', label: 'Audiences', icon: Users },
-  { id: 'placements', label: 'Placements', icon: RadioTower },
-  { id: 'experiments', label: 'Experiments', icon: FlaskConical },
-  { id: 'metaAi', label: 'Meta AI', icon: Sparkles },
-  { id: 'campaignBuilder', label: 'Campaign Builder', icon: ClipboardCheck },
-  { id: 'strategy', label: 'Strategy', icon: Target },
-  { id: 'settingsAudit', label: 'Settings Audit', icon: ClipboardCheck },
-  { id: 'tracking', label: 'Tracking Health', icon: ShieldAlert },
-  { id: 'alerts', label: 'Alerts', icon: AlertTriangle },
   { id: 'settings', label: 'Settings', icon: Settings },
 ] as const
 
@@ -146,7 +124,6 @@ const defaultFilters: DashboardFilters = {
 
 export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardProps) {
   const [activeView, setActiveView] = useState<ViewId>('overview')
-  const [selectedCreativeId, setSelectedCreativeId] = useState('')
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -195,11 +172,6 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
     () => (filters.placement === 'all' && data.dataSource?.kind === 'meta' ? data.placements : derivePlacementScores(filteredMetrics)),
     [data.dataSource?.kind, data.placements, filters.placement, filteredMetrics],
   )
-  const selectedCreative =
-    filteredCreatives.find((creative) => creative.id === selectedCreativeId) ??
-    filteredCreatives.find((creative) => creative.id === creativeScores[0]?.id) ??
-    filteredCreatives[0]
-
   const hasData = filteredMetrics.length > 0
   const dataSourceTone = data.dataSource?.kind === 'meta' ? 'good' : 'warning'
 
@@ -308,42 +280,25 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
               funnel={funnel}
               trend={trend}
               placements={placements}
+              metrics={filteredMetrics}
             />
           )}
-          {activeView === 'commandCenter' && <CommandCenterView data={data} />}
-          {activeView === 'agentOffice' && (
-            <AgentOfficeView latestCouncil={latestCouncil} onCouncilReady={setLatestCouncil} />
+          {activeView === 'commandCenter' && (
+            <CommandCenterView
+              data={data}
+              latestCouncil={latestCouncil}
+              onCouncilReady={setLatestCouncil}
+              chatMessages={chatMessages}
+              chatInput={chatInput}
+              isChatLoading={isChatLoading}
+              onChatInputChange={setChatInput}
+              onChatSend={sendChatMessage}
+            />
           )}
           {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
-          {activeView === 'creatives' && (
-            <CreativesView
-              data={data}
-              creativeScores={creativeScores}
-              selectedCreative={selectedCreative}
-              onSelectCreative={setSelectedCreativeId}
-            />
-          )}
-          {activeView === 'funnel' && <FunnelView funnel={funnel} trend={trend} />}
-          {activeView === 'audiences' && <AudiencesView data={data} />}
-          {activeView === 'placements' && <PlacementsView placements={placements} />}
-          {activeView === 'experiments' && <ExperimentsView data={data} />}
-          {activeView === 'metaAi' && <MetaAiCaptureView />}
-          {activeView === 'campaignBuilder' && <CampaignBuilderView />}
-          {activeView === 'strategy' && <StrategyView />}
-          {activeView === 'settingsAudit' && <SettingsAuditView />}
-          {activeView === 'tracking' && <TrackingView data={data} />}
-          {activeView === 'alerts' && <AlertsView data={data} />}
           {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} onDashboardRefresh={onRefresh} />}
         </>
       )}
-
-      <AgentChatPanel
-        messages={chatMessages}
-        input={chatInput}
-        isLoading={isChatLoading}
-        onInputChange={setChatInput}
-        onSend={sendChatMessage}
-      />
     </main>
   )
 }
@@ -445,97 +400,100 @@ function Filters({
   })
 
   return (
-    <section className="filter-bar" aria-label="Dashboard filters">
-      <div className="filter-title">
+    <details className="filter-bar" aria-label="Dashboard filters">
+      <summary className="filter-summary">
         <SlidersHorizontal size={18} />
         <strong>Filters</strong>
-      </div>
-      <label>
-        Date range
-        <select value={filters.dateRange} onChange={(event) => update('dateRange', event.target.value as DashboardFilters['dateRange'])}>
-          <option value="7d">Last 7 days</option>
-          <option value="30d">Last 30 days</option>
-          <option value="90d">Last 90 days</option>
-        </select>
-      </label>
-      <label>
-        Campaigns
-        <select
-          className="campaign-multi-select"
-          value={filters.campaignIds}
-          multiple
-          size={Math.min(5, campaignOptions.length + 1)}
-          onChange={handleCampaignSelectChange}
-        >
-          <option value="all">All campaigns</option>
-          {campaignOptions.map((campaign) => (
-            <option value={campaign.id} key={campaign.id}>
-              {campaign.name}
-            </option>
-          ))}
-        </select>
-        <div className="campaign-selection-summary">
-          <span>{campaignSummary}</span>
-          {!filters.campaignIds.includes('all') && (
-            <button type="button" onClick={() => update('campaignIds', ['all'])}>
-              Clear
-            </button>
-          )}
-        </div>
-        <div className="campaign-chip-list">
-          <button
+        <span>{labelRawSetting(filters.dateRange)} · {campaignSummary}</span>
+      </summary>
+      <div className="filter-fields">
+        <label>
+          Date range
+          <select value={filters.dateRange} onChange={(event) => update('dateRange', event.target.value as DashboardFilters['dateRange'])}>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+        </label>
+        <label className="campaign-filter-field">
+          Campaigns
+          <div className="campaign-selection-summary">
+            <span>{campaignSummary}</span>
+            {!filters.campaignIds.includes('all') && (
+              <button type="button" onClick={() => update('campaignIds', ['all'])}>
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="campaign-chip-list">
+            <button
             type="button"
             className={isCampaignSelected('all') ? 'active' : ''}
             onClick={() => toggleCampaign('all')}
-          >
-            All
-          </button>
-          {campaignOptions.slice(0, 8).map((campaign) => (
-            <button
-              type="button"
-              className={isCampaignSelected(campaign.id) ? 'active' : ''}
-              onClick={() => toggleCampaign(campaign.id)}
-              key={campaign.id}
-              title={campaign.name}
             >
-              {shortCampaignLabel(campaign.name)}
+              All
             </button>
-          ))}
-        </div>
-      </label>
-      <label>
-        Creative type
-        <select value={filters.creativeFormat} onChange={(event) => update('creativeFormat', event.target.value as DashboardFilters['creativeFormat'])}>
-          <option value="all">All types</option>
-          <option value="video">Video</option>
-          <option value="image">Image</option>
-          <option value="gif">GIF</option>
-          <option value="carousel">Carousel</option>
-        </select>
-      </label>
-      <label>
-        Placement
-        <select value={filters.placement} onChange={(event) => update('placement', event.target.value as DashboardFilters['placement'])}>
-          <option value="all">All placements</option>
-          {placements.map((placement) => (
-            <option value={placement} key={placement}>
-              {labelPlacement(placement)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Objective
-        <select value={filters.objective} onChange={(event) => update('objective', event.target.value as DashboardFilters['objective'])}>
-          <option value="all">All objectives</option>
-          <option value="sales">Sales</option>
-          <option value="leads">Leads</option>
-          <option value="traffic">Traffic</option>
-          <option value="engagement">Engagement</option>
-          <option value="awareness">Awareness</option>
-        </select>
-      </label>
-    </section>
+            {campaignOptions.slice(0, 8).map((campaign) => (
+              <button
+                type="button"
+                className={isCampaignSelected(campaign.id) ? 'active' : ''}
+                onClick={() => toggleCampaign(campaign.id)}
+                key={campaign.id}
+                title={campaign.name}
+              >
+                {shortCampaignLabel(campaign.name)}
+              </button>
+            ))}
+          </div>
+          <select
+            className="campaign-multi-select"
+            value={filters.campaignIds}
+            multiple
+            size={Math.min(4, campaignOptions.length + 1)}
+            onChange={handleCampaignSelectChange}
+          >
+            <option value="all">All campaigns</option>
+            {campaignOptions.map((campaign) => (
+              <option value={campaign.id} key={campaign.id}>
+                {campaign.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Creative type
+          <select value={filters.creativeFormat} onChange={(event) => update('creativeFormat', event.target.value as DashboardFilters['creativeFormat'])}>
+            <option value="all">All types</option>
+            <option value="video">Video</option>
+            <option value="image">Image</option>
+            <option value="gif">GIF</option>
+            <option value="carousel">Carousel</option>
+          </select>
+        </label>
+        <label>
+          Placement
+          <select value={filters.placement} onChange={(event) => update('placement', event.target.value as DashboardFilters['placement'])}>
+            <option value="all">All placements</option>
+            {placements.map((placement) => (
+              <option value={placement} key={placement}>
+                {labelPlacement(placement)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Objective
+          <select value={filters.objective} onChange={(event) => update('objective', event.target.value as DashboardFilters['objective'])}>
+            <option value="all">All objectives</option>
+            <option value="sales">Sales</option>
+            <option value="leads">Leads</option>
+            <option value="traffic">Traffic</option>
+            <option value="engagement">Engagement</option>
+            <option value="awareness">Awareness</option>
+          </select>
+        </label>
+      </div>
+    </details>
   )
 }
 
@@ -632,6 +590,7 @@ function Overview({
   funnel,
   trend,
   placements,
+  metrics,
 }: {
   data: DashboardData
   kpis: DashboardKpi[]
@@ -639,14 +598,19 @@ function Overview({
   funnel: ReturnType<typeof deriveFunnel>
   trend: ReturnType<typeof deriveTrend>
   placements: ReturnType<typeof derivePlacementScores>
+  metrics: DailyAdMetric[]
 }) {
   return (
     <>
+      <DecisionHero data={data} />
       <KpiGrid kpis={kpis} />
-      <section className="dashboard-grid">
+      <section className="overview-command-grid">
         <FunnelPanel funnel={funnel} />
-        <TrendPanel trend={trend} />
         <TopProblemsPanel data={data} />
+        <OverviewRankingPreview data={data} metrics={metrics} placements={placements} />
+      </section>
+      <section className="dashboard-grid">
+        <TrendPanel trend={trend} />
         <CreativeTablePanel creativeScores={creativeScores} />
         <PlacementPanel placements={placements} />
         <AudiencePanel data={data} />
@@ -748,6 +712,140 @@ function TopProblemsPanel({ data }: { data: DashboardData }) {
   )
 }
 
+function DecisionHero({ data }: { data: DashboardData }) {
+  const attentionItems = buildOperatorAttention(data)
+  const topItem = attentionItems[0]
+  const hasDanger = attentionItems.some((item) => item.tone === 'danger')
+  const hasWarning = attentionItems.some((item) => item.tone === 'warning')
+  const status = hasDanger ? 'Action needed' : hasWarning ? 'Watch closely' : 'Healthy'
+  const tone = hasDanger ? 'danger' : hasWarning ? 'warning' : 'good'
+  const reason = topItem?.reason ?? 'No urgent campaign issue is visible in the current data window.'
+  const action = topItem?.action ?? 'Keep monitoring the strongest campaigns and protect tracking quality.'
+  const risk = hasDanger
+    ? 'Costs or funnel leakage may compound if ignored.'
+    : hasWarning
+      ? 'Performance may drift if the warning is not watched.'
+      : 'Main risk is missing new shifts if data is not refreshed.'
+
+  return (
+    <section className={`decision-hero ${tone}`}>
+      <div>
+        <span className="decision-hero-status">{status}</span>
+        <h2>{topItem?.title ?? 'Campaign system is stable'}</h2>
+        <p>{reason}</p>
+      </div>
+      <div className="decision-block-grid">
+        <div>
+          <small>Best next action</small>
+          <strong>{action}</strong>
+        </div>
+        <div>
+          <small>Risk if ignored</small>
+          <strong>{risk}</strong>
+        </div>
+        <button className="sync-button secondary" type="button">
+          <Bot size={16} />
+          Ask agents why
+        </button>
+      </div>
+    </section>
+  )
+}
+
+function OverviewRankingPreview({
+  data,
+  metrics,
+  placements,
+}: {
+  data: DashboardData
+  metrics: DailyAdMetric[]
+  placements: ReturnType<typeof derivePlacementScores>
+}) {
+  const campaigns = deriveRankingRows(
+    metrics,
+    data.campaigns.map((campaign) => ({
+      id: campaign.id,
+      name: campaign.name,
+      category: 'campaign',
+      metricIds: new Set([campaign.id]),
+    })),
+  ).slice(0, 3)
+  const creatives = deriveRankingRows(
+    metrics,
+    data.creatives.map((creative) => ({
+      id: creative.id,
+      name: creative.name,
+      category: 'creative',
+      metricIds: new Set([creative.id]),
+    })),
+  ).slice(0, 3)
+  const audiences = deriveRankingRows(
+    metrics,
+    data.adSets.map((adSet) => ({
+      id: adSet.id,
+      name: adSet.name,
+      category: 'audience',
+      metricIds: new Set([adSet.id]),
+    })),
+  ).slice(0, 3)
+  const placementRows = placements.slice(0, 3).map((placement) => ({
+    id: placement.name,
+    name: labelPlacement(placement.name as Placement),
+    metric: `${placement.value}% spend`,
+    helper: `${formatNumber(placement.buyers)} buyers`,
+  }))
+
+  return (
+    <article className="panel panel-wide overview-ranking-preview">
+      <PanelHeading eyebrow="Decision Rankings" title="Best current levers" icon={BarChart3} />
+      <div className="overview-ranking-grid">
+        <MiniRanking title="Campaigns" rows={campaigns.map(formatMiniRankingRow)} />
+        <MiniRanking title="Creatives" rows={creatives.map(formatMiniRankingRow)} />
+        <MiniRanking title="Audiences" rows={audiences.map(formatMiniRankingRow)} />
+        <MiniRanking title="Placements" rows={placementRows} />
+      </div>
+    </article>
+  )
+}
+
+function formatMiniRankingRow(row: RankingRow) {
+  const metric = row.costPerTelegramStart > 0
+    ? `${formatCurrency(row.costPerTelegramStart)} / TG start`
+    : row.cpl > 0
+      ? `${formatCurrency(row.cpl)} CPL`
+      : `${row.qualityScore}/100`
+  return {
+    id: row.id,
+    name: row.name,
+    metric,
+    helper: `${formatNumber(row.leads)} leads · ${formatNumber(row.telegramSubscribers)} TG`,
+  }
+}
+
+function MiniRanking({
+  title,
+  rows,
+}: {
+  title: string
+  rows: Array<{ id: string; name: string; metric: string; helper: string }>
+}) {
+  return (
+    <div className="mini-ranking">
+      <strong>{title}</strong>
+      {rows.length ? rows.map((row, index) => (
+        <div className="ranking-mini-row" key={row.id}>
+          <span>{index + 1}</span>
+          <div>
+            <b>{row.name}</b>
+            <small>{row.helper}</small>
+          </div>
+          <em>{row.metric}</em>
+        </div>
+      )) : <small>No ranked data yet.</small>}
+    </div>
+  )
+}
+
 function CreativeTablePanel({ creativeScores }: { creativeScores: ReturnType<typeof deriveCreativeScores> }) {
   return (
     <article className="panel panel-wide">
@@ -769,97 +867,35 @@ function CreativeTable({
       <div className="table-head">
         <span>Rank</span>
         <span>Creative</span>
+        <span>Clicks</span>
         <span>Leads</span>
-        <span>CPL</span>
-        <span>Lead rate</span>
-        <span>Confidence</span>
+        <span>Buyers</span>
+        <span>Viral</span>
         <span>Intent</span>
         <span>Quality</span>
         <span>Action</span>
-        <span>Watch</span>
       </div>
-      {creativeScores.map((creative) => {
-        const interactive = Boolean(onSelect)
-        return (
-          <div
-            className="table-row"
-            key={creative.id}
-            role={interactive ? 'button' : undefined}
-            tabIndex={interactive ? 0 : undefined}
-            onClick={interactive ? () => onSelect?.(creative.id) : undefined}
-            onKeyDown={
-              interactive
-                ? (event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      onSelect?.(creative.id)
-                    }
-                  }
-                : undefined
-            }
-          >
-            <span>#{creative.rank}</span>
-            <div className="creative-cell">
-              <MediaThumb assetUrl={creative.assetUrl} videoUrl={creative.videoUrl} videoId={creative.videoId} format={creative.format} />
-              <div>
-                <strong>{creative.name}</strong>
-                <small>
-                  {creative.type} / {creative.format}
-                  {creative.lowSample && <span className="creative-flag low-sample">Low sample</span>}
-                  {creative.mismatch >= 40 && <span className="creative-flag mismatch">Viral≫intent</span>}
-                </small>
-              </div>
+      {creativeScores.map((creative) => (
+        <button className="table-row" type="button" onClick={() => onSelect?.(creative.id)} key={creative.id}>
+          <span>#{creative.rank}</span>
+          <div className="creative-cell">
+            <MediaThumb assetUrl={creative.assetUrl} videoUrl={creative.videoUrl} videoId={creative.videoId} format={creative.format} />
+            <div>
+              <strong>{creative.name}</strong>
+              <small>{creative.type} / {creative.format}</small>
             </div>
-            <span>{formatNumber(creative.leads)}</span>
-            <span>{creative.cpl > 0 ? `$${creative.cpl.toFixed(2)}` : '—'}</span>
-            <span>{creative.leadRate.toFixed(1)}%</span>
-            <span className={`confidence ${creative.spendConfidence}`}>{creative.spendConfidence}</span>
-            <span>{creative.intent}</span>
-            <span>{creative.quality}</span>
-            <em className={creative.tone}>{creative.action}</em>
-            <WatchAction creative={creative} onSelect={onSelect} />
           </div>
-        )
-      })}
+          <span>{formatNumber(creative.clicks)}</span>
+          <span>{formatNumber(creative.leads)}</span>
+          <span>{creative.buyers}</span>
+          <span>{creative.viral}</span>
+          <span>{creative.intent}</span>
+          <span>{creative.quality}</span>
+          <em className={creative.tone}>{creative.action}</em>
+        </button>
+      ))}
     </div>
   )
-}
-
-function WatchAction({
-  creative,
-  onSelect,
-}: {
-  creative: ReturnType<typeof deriveCreativeScores>[number]
-  onSelect?: (id: string) => void
-}) {
-  if (creative.videoUrl) {
-    return (
-      <a
-        className="watch-action"
-        href={creative.videoUrl}
-        target="_blank"
-        rel="noreferrer"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <Play size={13} /> Watch
-      </a>
-    )
-  }
-  if (creative.videoId && onSelect) {
-    return (
-      <button
-        type="button"
-        className="watch-action"
-        onClick={(event) => {
-          event.stopPropagation()
-          onSelect(creative.id)
-        }}
-      >
-        <Play size={13} /> Load
-      </button>
-    )
-  }
-  return <span className="watch-action disabled">—</span>
 }
 
 function PlacementPanel({ placements }: { placements: ReturnType<typeof derivePlacementScores> }) {
@@ -929,163 +965,25 @@ function SpendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
   )
 }
 
-function CreativesView({
+function CommandCenterView({
   data,
-  creativeScores,
-  selectedCreative,
-  onSelectCreative,
+  latestCouncil,
+  onCouncilReady,
+  chatMessages,
+  chatInput,
+  isChatLoading,
+  onChatInputChange,
+  onChatSend,
 }: {
   data: DashboardData
-  creativeScores: ReturnType<typeof deriveCreativeScores>
-  selectedCreative?: Creative
-  onSelectCreative: (id: string) => void
+  latestCouncil: AgentCouncilSession | null
+  onCouncilReady: (council: AgentCouncilSession) => void
+  chatMessages: ChatMessage[]
+  chatInput: string
+  isChatLoading: boolean
+  onChatInputChange: (value: string) => void
+  onChatSend: (message: string) => void
 }) {
-  const analysis = data.creativeAnalyses.find((item) => item.creativeId === selectedCreative?.id)
-  const score = creativeScores.find((item) => item.id === selectedCreative?.id)
-  const decisionInsight = selectedCreative
-    ? deriveCreativeDecisionInsight({
-        creativeId: selectedCreative.id,
-        metrics: data.metrics,
-        adSets: data.adSets,
-        score,
-      })
-    : null
-
-  return (
-    <section className="detail-layout">
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Creative Library" title="Creative performance and quality" icon={Film} />
-        <CreativeTable creativeScores={creativeScores} onSelect={onSelectCreative} />
-      </article>
-
-      <article className="panel detail-panel">
-        <PanelHeading eyebrow="Creative Detail" title={selectedCreative?.name ?? 'No creative selected'} icon={Eye} />
-        {selectedCreative && score ? (
-          <>
-            <CreativePreview creative={selectedCreative} />
-            <CreativeMetrics score={score} />
-            <div className="score-grid">
-              <Score label="Viral" value={analysis?.viralScore ?? score.viral} tone="neutral" />
-              <Score label="Intent" value={analysis?.buyerIntentScore ?? score.intent} tone={score.intent >= 70 ? 'good' : 'warning'} />
-              <Score label="Course fit" value={analysis?.courseFitScore ?? score.courseFit} tone="good" />
-              <Score
-                label="Purchasing power"
-                value={analysis?.purchasingPowerScore ?? score.quality}
-                tone={(analysis?.purchasingPowerScore ?? score.quality) >= 70 ? 'good' : 'warning'}
-              />
-              <Score
-                label="Funnel quality"
-                value={analysis?.funnelQualityScore ?? score.quality}
-                tone={(analysis?.funnelQualityScore ?? score.quality) >= 70 ? 'good' : 'warning'}
-              />
-            </div>
-            <div className="analysis-block">
-              <strong>Why it worked</strong>
-              <p>{analysis?.whyItWorked ?? 'This ranking is estimated from Meta performance data until deep video analysis is available.'}</p>
-            </div>
-            <div className="analysis-block">
-              <strong>Why it did not convert</strong>
-              <p>{analysis?.whyItDidNotConvert ?? 'Purchase tracking is missing or too sparse, so conversion quality needs downstream validation.'}</p>
-            </div>
-            {decisionInsight && <CreativeDecisionPanel insight={decisionInsight} />}
-            <div className="scene-list">
-              {(analysis?.sceneNotes ?? [
-                'Use Gemini/video analysis next to inspect hook, pacing, offer clarity, and visual pattern.',
-                'Compare this creative against landing-page leads, Telegram joins, webinar attendance, and purchases.',
-              ]).map((note) => (
-                <span key={note}>{note}</span>
-              ))}
-            </div>
-          </>
-        ) : (
-          <EmptyState compact />
-        )}
-      </article>
-    </section>
-  )
-}
-
-function CreativeMetrics({ score }: { score: ReturnType<typeof deriveCreativeScores>[number] }) {
-  const stats: { label: string; value: string; tone?: string }[] = [
-    { label: 'Spend', value: `$${score.spendUsd.toFixed(2)}` },
-    { label: 'CPL', value: score.cpl > 0 ? `$${score.cpl.toFixed(2)}` : '—' },
-    { label: 'Lead rate', value: `${score.leadRate.toFixed(1)}%` },
-    { label: 'Leads', value: formatNumber(score.leads) },
-    { label: 'Clicks', value: formatNumber(score.clicks) },
-    { label: 'Confidence', value: score.spendConfidence, tone: score.spendConfidence },
-  ]
-
-  return (
-    <div className="creative-metrics">
-      <div className="metric-stats">
-        {stats.map((stat) => (
-          <div className="metric-stat" key={stat.label}>
-            <small>{stat.label}</small>
-            <strong className={stat.tone ? `confidence ${stat.tone}` : undefined}>{stat.value}</strong>
-          </div>
-        ))}
-      </div>
-      {(score.lowSample || score.mismatch >= 40) && (
-        <div className="metric-notes">
-          {score.lowSample && <span className="creative-flag low-sample">Low sample — ranking is provisional</span>}
-          {score.mismatch >= 40 && (
-            <span className="creative-flag mismatch">Viral≫intent — attention without buyer intent</span>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-
-function CreativeDecisionPanel({ insight }: { insight: ReturnType<typeof deriveCreativeDecisionInsight> }) {
-  return (
-    <div className="creative-decision">
-      <div className="creative-decision__summary">
-        <strong>Specialist read</strong>
-        <p>{insight.diagnosis}</p>
-      </div>
-      <div className="creative-metric-strip">
-        <span>
-          <small>CPC</small>
-          <strong>{formatCurrency(insight.cpc)}</strong>
-        </span>
-        <span>
-          <small>CPL</small>
-          <strong>{insight.cpl ? formatCurrency(insight.cpl) : '—'}</strong>
-        </span>
-        <span>
-          <small>Lead rate</small>
-          <strong>{formatRate(insight.leadRatePercent)}</strong>
-        </span>
-        <span>
-          <small>Visit rate</small>
-          <strong>{formatRate(insight.landingVisitRatePercent)}</strong>
-        </span>
-      </div>
-      <div className="creative-decision-grid">
-        <div>
-          <strong>Replicate signals</strong>
-          {insight.replicateSignals.map((signal) => (
-            <span key={signal}>{signal}</span>
-          ))}
-        </div>
-        <div>
-          <strong>Watch risks</strong>
-          {(insight.risks.length ? insight.risks : ['No major risk detected from the filtered metric window.']).map((risk) => (
-            <span key={risk}>{risk}</span>
-          ))}
-        </div>
-      </div>
-      <div className="creative-next-action">
-        <strong>Next action</strong>
-        <p>{insight.nextAction}</p>
-      </div>
-    </div>
-  )
-}
-
-function CommandCenterView({ data }: { data: DashboardData }) {
   const [tasks, setTasks] = useState<AgentTask[]>([])
   const [agents, setAgents] = useState<AgentSpec[]>([])
   const [systemChecklist, setSystemChecklist] = useState<SystemChecklist | null>(null)
@@ -1191,47 +1089,34 @@ function CommandCenterView({ data }: { data: DashboardData }) {
   }
 
   return (
-    <section className="dashboard-grid">
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Command Center" title="Give work to the orchestrator" icon={Bot} />
-        <div className="command-grid">
-          <label className="command-field-wide">
-            <span>Command</span>
-            <textarea value={command} onChange={(event) => setCommand(event.target.value)} />
-          </label>
-          <label>
-            <span>Input source</span>
-            <select value={source} onChange={(event) => setSource(event.target.value as typeof source)}>
-              <option value="dashboard">Dashboard</option>
-              <option value="telegram">Telegram bot</option>
-              <option value="codex">Codex chat</option>
-            </select>
-          </label>
-          <label>
-            <span>Campaign group ID</span>
-            <input value={campaignGroupId} onChange={(event) => setCampaignGroupId(event.target.value)} />
-          </label>
-          <label>
-            <span>Segment / VSL IDs</span>
-            <input value={segmentIds} onChange={(event) => setSegmentIds(event.target.value)} />
-          </label>
-        </div>
-        <div className="command-actions">
-          <label className="approval-toggle">
-            <input
-              type="checkbox"
-              checked={prepareApproval}
-              onChange={(event) => setPrepareApproval(event.target.checked)}
-            />
-            <span>Create approval request if campaign plan is complete</span>
-          </label>
-          <button className="sync-button" type="button" onClick={submitTask} disabled={isSubmitting || !command.trim()}>
-            <Send size={16} />
-            {isSubmitting ? 'Planning...' : 'Send command'}
+    <section className="command-center-layout">
+      <article className="panel panel-wide mission-control-hero">
+        <PanelHeading eyebrow="Command Center" title="Tell the agent what outcome you want" icon={Bot} />
+        <p>
+          Use natural language for strategy, campaign setup, edits, A/B tests, or monitoring decisions. The orchestrator can route the work to specialists, show their debate, and prepare a paused campaign packet for approval.
+        </p>
+        <div className="mission-control-examples">
+          <button type="button" onClick={() => onChatSend('Plan the best paused VSL campaign from the last 180 days using top audiences and top 3 creatives.')} disabled={isChatLoading}>
+            Plan paused VSL campaign
           </button>
-          {message && <small className="sync-message">{message}</small>}
+          <button type="button" onClick={() => onChatSend('Which audience, creative, and placement should we scale next, and what should we stop?')} disabled={isChatLoading}>
+            Find scale and stop decisions
+          </button>
+          <button type="button" onClick={() => onChatSend('Create an A/B test plan that protects budget and optimizes for Telegram START quality.')} disabled={isChatLoading}>
+            Build A/B test plan
+          </button>
         </div>
       </article>
+
+      <AgentChatPanel
+        messages={chatMessages}
+        input={chatInput}
+        isLoading={isChatLoading}
+        onInputChange={onChatInputChange}
+        onSend={onChatSend}
+      />
+
+      <AgentOfficeView latestCouncil={latestCouncil} onCouncilReady={onCouncilReady} />
 
       <article className="panel">
         <PanelHeading eyebrow="Task Queue" title="Recent orchestrator work" icon={ListChecks} />
@@ -1280,77 +1165,127 @@ function CommandCenterView({ data }: { data: DashboardData }) {
         </div>
       </article>
 
-      <article className="panel">
-        <PanelHeading eyebrow="Regression Checklist" title="Completion readiness" icon={CheckCircle2} />
-        {systemChecklist ? (
-          <>
-            <div className="builder-summary command-summary">
-              <MiniMetric label="Ready" value={`${systemChecklist.summary.ready}/${systemChecklist.summary.total}`} />
-              <MiniMetric label="Partial" value={systemChecklist.summary.partial.toString()} />
-              <MiniMetric label="Needs work" value={systemChecklist.summary.needs_attention.toString()} />
-            </div>
-            <div className="task-list">
-              {systemChecklist.items.slice(0, 10).map((item) => (
-                <div className={`task-item ${item.status}`} key={item.id}>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <p>{item.evidence}</p>
+      <ApprovalQueue data={data} />
+
+      <details className="advanced-command-section">
+        <summary>Edit campaign playbook and task metadata</summary>
+        <article className="panel panel-wide">
+          <PanelHeading eyebrow="Advanced Command" title="Structured task controls" icon={SlidersHorizontal} />
+          <div className="command-grid">
+            <label className="command-field-wide">
+              <span>Command</span>
+              <textarea value={command} onChange={(event) => setCommand(event.target.value)} />
+            </label>
+            <label>
+              <span>Input source</span>
+              <select value={source} onChange={(event) => setSource(event.target.value as typeof source)}>
+                <option value="dashboard">Dashboard</option>
+                <option value="telegram">Telegram bot</option>
+                <option value="codex">Codex chat</option>
+              </select>
+            </label>
+            <label>
+              <span>Campaign group ID</span>
+              <input value={campaignGroupId} onChange={(event) => setCampaignGroupId(event.target.value)} />
+            </label>
+            <label>
+              <span>Segment / VSL IDs</span>
+              <input value={segmentIds} onChange={(event) => setSegmentIds(event.target.value)} />
+            </label>
+          </div>
+          <div className="command-actions">
+            <label className="approval-toggle">
+              <input
+                type="checkbox"
+                checked={prepareApproval}
+                onChange={(event) => setPrepareApproval(event.target.checked)}
+              />
+              <span>Create approval request if campaign plan is complete</span>
+            </label>
+            <button className="sync-button" type="button" onClick={submitTask} disabled={isSubmitting || !command.trim()}>
+              <Send size={16} />
+              {isSubmitting ? 'Planning...' : 'Send structured task'}
+            </button>
+            {message && <small className="sync-message">{message}</small>}
+          </div>
+        </article>
+        <CampaignBuilderView />
+      </details>
+
+      <details className="advanced-command-section">
+        <summary>Operational diagnostics</summary>
+        <article className="panel">
+          <PanelHeading eyebrow="Regression Checklist" title="Completion readiness" icon={CheckCircle2} />
+          {systemChecklist ? (
+            <>
+              <div className="builder-summary command-summary">
+                <MiniMetric label="Ready" value={`${systemChecklist.summary.ready}/${systemChecklist.summary.total}`} />
+                <MiniMetric label="Partial" value={systemChecklist.summary.partial.toString()} />
+                <MiniMetric label="Needs work" value={systemChecklist.summary.needs_attention.toString()} />
+              </div>
+              <div className="task-list">
+                {systemChecklist.items.slice(0, 10).map((item) => (
+                  <div className={`task-item ${item.status}`} key={item.id}>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <p>{item.evidence}</p>
+                    </div>
+                    <span>{labelRawSetting(item.status)}</span>
                   </div>
-                  <span>{labelRawSetting(item.status)}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <EmptyState compact />
-        )}
-      </article>
+                ))}
+              </div>
+            </>
+          ) : (
+            <EmptyState compact />
+          )}
+        </article>
 
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Campaign Mapping" title="Connect Meta campaigns to reusable launch groups" icon={Target} />
-        <div className="campaign-map-grid">
-          <div className="mapping-note">
-            <strong>Mapping rule</strong>
-            <p>
-              Use a stable campaign group ID plus segment/VSL IDs. The same structure works for one VSL, three VSLs, or five VSLs later.
-            </p>
-          </div>
-          {recentCampaigns.map((campaign) => (
-            <div className="campaign-map-row" key={campaign.id}>
-              <strong>{campaign.name}</strong>
-              <span>{campaign.id}</span>
-              <small>{campaign.objective} / {campaign.status} / {formatCurrency(campaign.dailyBudgetUsd)}/day</small>
+        <article className="panel panel-wide">
+          <PanelHeading eyebrow="Campaign Mapping" title="Connect Meta campaigns to reusable launch groups" icon={Target} />
+          <div className="campaign-map-grid">
+            <div className="mapping-note">
+              <strong>Mapping rule</strong>
+              <p>
+                Use a stable campaign group ID plus segment/VSL IDs. The same structure works for one VSL, three VSLs, or five VSLs later.
+              </p>
             </div>
-          ))}
-        </div>
-      </article>
+            {recentCampaigns.map((campaign) => (
+              <div className="campaign-map-row" key={campaign.id}>
+                <strong>{campaign.name}</strong>
+                <span>{campaign.id}</span>
+                <small>{campaign.objective} / {campaign.status} / {formatCurrency(campaign.dailyBudgetUsd)}/day</small>
+              </div>
+            ))}
+          </div>
+        </article>
 
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Telegram Control" title="Bot command wiring" icon={Bot} />
-        <div className="telegram-command-grid">
-          <div>
-            <strong>Command webhook</strong>
-            <code>POST /api/telegram/command</code>
-            <p>Send Telegram message updates here to create orchestrator tasks from bot commands.</p>
+        <article className="panel panel-wide">
+          <PanelHeading eyebrow="Telegram Control" title="Bot command wiring" icon={Bot} />
+          <div className="telegram-command-grid">
+            <div>
+              <strong>Command webhook</strong>
+              <code>POST /api/telegram/command</code>
+              <p>Send Telegram message updates here to create orchestrator tasks from bot commands.</p>
+            </div>
+            <div>
+              <strong>Shared secret</strong>
+              <code>x-telegram-agent-secret</code>
+              <p>Set `TELEGRAM_COMMAND_SECRET` in the backend and send the same value in this header.</p>
+            </div>
+            <div>
+              <strong>Approval button data</strong>
+              <code>approve:approval_id</code>
+              <p>Approval buttons can approve a request, but publishing or spend still needs the execution endpoint and guardrails.</p>
+            </div>
           </div>
-          <div>
-            <strong>Shared secret</strong>
-            <code>x-telegram-agent-secret</code>
-            <p>Set `TELEGRAM_COMMAND_SECRET` in the backend and send the same value in this header.</p>
+          <div className="command-actions">
+            <button className="sync-button secondary" type="button" onClick={sendTelegramTest} disabled={isSendingTelegramTest}>
+              <Send size={16} />
+              {isSendingTelegramTest ? 'Sending...' : 'Send test message'}
+            </button>
           </div>
-          <div>
-            <strong>Approval button data</strong>
-            <code>approve:approval_id</code>
-            <p>Approval buttons can approve a request, but publishing or spend still needs the execution endpoint and guardrails.</p>
-          </div>
-        </div>
-        <div className="command-actions">
-          <button className="sync-button secondary" type="button" onClick={sendTelegramTest} disabled={isSendingTelegramTest}>
-            <Send size={16} />
-            {isSendingTelegramTest ? 'Sending...' : 'Send test message'}
-          </button>
-        </div>
-      </article>
+        </article>
+      </details>
     </section>
   )
 }
@@ -1783,13 +1718,13 @@ function getAgentApproachPosition(fromAgentId?: string, toAgentId?: string) {
 function getAgentDeskPosition(agentId?: string) {
   const positions: Record<string, { x: number; y: number }> = {
     orchestrator: { x: 50, y: 13 },
-    audit: { x: 24, y: 18 },
-    meta_ai_strategist: { x: 76, y: 18 },
-    audience: { x: 19, y: 42 },
-    creative: { x: 81, y: 42 },
-    placement: { x: 24, y: 73 },
+    audit: { x: 25, y: 18 },
+    meta_ai_strategist: { x: 75, y: 18 },
+    audience: { x: 21, y: 42 },
+    creative: { x: 79, y: 42 },
+    placement: { x: 25, y: 73 },
     funnel: { x: 50, y: 84 },
-    experiment: { x: 76, y: 73 },
+    experiment: { x: 75, y: 73 },
     monitoring: { x: 38, y: 30 },
     execution: { x: 62, y: 30 },
   }
@@ -1929,169 +1864,6 @@ function RankingTable({ rows }: { rows: RankingRow[] }) {
         </div>
       ))}
     </div>
-  )
-}
-
-function CreativePreview({ creative }: { creative: Creative }) {
-  const [videoAsset, setVideoAsset] = useState<{
-    creativeId: string
-    videoUrl?: string
-    posterUrl?: string
-    permalinkUrl?: string
-  } | null>(null)
-  const fetchedAsset = videoAsset?.creativeId === creative.id ? videoAsset : null
-  const resolvedVideoUrl = creative.videoUrl ?? fetchedAsset?.videoUrl ?? ''
-  const resolvedPosterUrl = creative.assetUrl ?? fetchedAsset?.posterUrl ?? ''
-  const resolvedPermalinkUrl = normalizeMetaPermalink(fetchedAsset?.permalinkUrl)
-
-  useEffect(() => {
-    if (!creative.videoId || creative.videoUrl) {
-      return
-    }
-
-    let cancelled = false
-    void fetch(`/api/meta/video/${creative.videoId}`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload: { videoUrl?: string; posterUrl?: string; permalinkUrl?: string } | null) => {
-        if (cancelled || !payload) {
-          return
-        }
-        setVideoAsset({
-          creativeId: creative.id,
-          videoUrl: payload.videoUrl,
-          posterUrl: payload.posterUrl,
-          permalinkUrl: payload.permalinkUrl,
-        })
-      })
-      .catch(() => undefined)
-
-    return () => {
-      cancelled = true
-    }
-  }, [creative.assetUrl, creative.id, creative.videoId, creative.videoUrl])
-
-  return (
-    <div className={resolvedPosterUrl || resolvedVideoUrl ? 'creative-preview has-media' : 'creative-preview'}>
-      {resolvedVideoUrl ? (
-        <video controls poster={resolvedPosterUrl} src={resolvedVideoUrl} />
-      ) : resolvedPosterUrl ? (
-        <img src={resolvedPosterUrl} alt={creative.name} />
-      ) : (
-        <div>
-          <Film size={24} />
-          <strong>No media preview available</strong>
-          <span>Meta returned metadata but no playable source URL.</span>
-        </div>
-      )}
-      <div>
-        <strong>{creative.format.toUpperCase()}</strong>
-        <span>
-          {resolvedVideoUrl
-            ? creative.hookType
-            : creative.videoId
-              ? `${creative.hookType} / Meta video ID ${creative.videoId}`
-              : creative.hookType}
-        </span>
-        {!resolvedVideoUrl && resolvedPermalinkUrl && (
-          <a href={resolvedPermalinkUrl} target="_blank" rel="noreferrer">
-            Open Meta video
-          </a>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function normalizeMetaPermalink(permalinkUrl?: string) {
-  if (!permalinkUrl) {
-    return ''
-  }
-  if (/^https?:\/\//i.test(permalinkUrl)) {
-    return permalinkUrl
-  }
-  return `https://www.facebook.com${permalinkUrl.startsWith('/') ? permalinkUrl : `/${permalinkUrl}`}`
-}
-
-function FunnelView({ funnel, trend }: { funnel: ReturnType<typeof deriveFunnel>; trend: ReturnType<typeof deriveTrend> }) {
-  return (
-    <section className="dashboard-grid">
-      <FunnelPanel funnel={funnel} />
-      <TrendPanel trend={trend} />
-      <article className="panel">
-        <PanelHeading eyebrow="Leak Detector" title="Weakest funnel steps" icon={Gauge} />
-        <div className="metric-list">
-          {funnel.slice(1).map((item) => (
-            <div key={item.step}>
-              <strong>{item.step}</strong>
-              <span>{item.rate}</span>
-            </div>
-          ))}
-        </div>
-      </article>
-    </section>
-  )
-}
-
-function AudiencesView({ data }: { data: DashboardData }) {
-  return (
-    <section className="dashboard-grid">
-      <AudiencePanel data={data} />
-      <article className="panel">
-        <PanelHeading eyebrow="Audience Ranking" title="Buyer quality" icon={Target} />
-        <div className="metric-list">
-          {data.audience.map((item) => (
-            <div key={item.segment}>
-              <strong>{item.segment}</strong>
-              <span>{item.buyers} buyers / {item.subs} subs</span>
-            </div>
-          ))}
-        </div>
-      </article>
-    </section>
-  )
-}
-
-function PlacementsView({ placements }: { placements: ReturnType<typeof derivePlacementScores> }) {
-  return (
-    <section className="dashboard-grid">
-      <PlacementPanel placements={placements} />
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Placement Efficiency" title="Spend share vs buyers" icon={BarChart3} />
-        <ChartFrame tall>
-          <BarChart data={placements}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="name" tickLine={false} axisLine={false} />
-            <YAxis tickLine={false} axisLine={false} />
-            <Tooltip />
-            <Bar dataKey="value" fill="#3b82f6" radius={[5, 5, 0, 0]} />
-            <Bar dataKey="buyers" fill="#1f9d8a" radius={[5, 5, 0, 0]} />
-          </BarChart>
-        </ChartFrame>
-      </article>
-    </section>
-  )
-}
-
-function ExperimentsView({ data }: { data: DashboardData }) {
-  return (
-    <section className="bottom-grid">
-      <article className="panel">
-        <PanelHeading eyebrow="Experiment Queue" title="Next controlled tests" icon={FlaskConical} />
-        <div className="experiment-list">
-          {data.experiments.map((experiment, index) => (
-            <div className="experiment-item" key={experiment.title}>
-              <span>{index + 1}</span>
-              <div>
-                <strong>{experiment.title}</strong>
-                <p>{experiment.metric}</p>
-                <small>{experiment.budget}</small>
-              </div>
-            </div>
-          ))}
-        </div>
-      </article>
-      <ApprovalQueue data={data} />
-    </section>
   )
 }
 
@@ -2443,342 +2215,6 @@ function CampaignBuilderView() {
   )
 }
 
-function StrategyView() {
-  const [playbooks, setPlaybooks] = useState<CampaignPlaybook[]>([])
-  const [selectedPlaybookId, setSelectedPlaybookId] = useState('')
-  const [strategy, setStrategy] = useState<LaunchStrategy | null>(null)
-  const [proposal, setProposal] = useState<DraftCampaignProposal | null>(null)
-  const [knowledgeAvailable, setKnowledgeAvailable] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [isPreparing, setIsPreparing] = useState(false)
-  const [isGeneratingProposal, setIsGeneratingProposal] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (typeof fetch !== 'function') {
-      return
-    }
-
-    void fetch('/api/playbooks')
-      .then((response) => response.ok ? response.json() : { playbooks: [] })
-      .then((result: { playbooks?: CampaignPlaybook[] }) => {
-        const nextPlaybooks = result.playbooks ?? []
-        setPlaybooks(nextPlaybooks)
-        setSelectedPlaybookId((current) => current || nextPlaybooks[0]?.id || '')
-      })
-      .catch(() => {
-        setPlaybooks([])
-        setMessage('Could not load saved playbooks.')
-      })
-  }, [])
-
-  const selectedPlaybook = playbooks.find((playbook) => playbook.id === selectedPlaybookId) ?? playbooks[0]
-  const selectedPlaybookHasSegments = Boolean(selectedPlaybook?.segments?.length)
-
-  const generateStrategy = async () => {
-    if (isGenerating) {
-      return
-    }
-    if (!selectedPlaybookHasSegments) {
-      setMessage('Add at least one segment in Campaign Builder before generating a launch strategy.')
-      return
-    }
-
-    setIsGenerating(true)
-    setMessage('Generating approval-ready strategy...')
-    try {
-      const response = await fetch('/api/strategy/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playbook: selectedPlaybook ?? null }),
-      })
-      const result = (await response.json()) as { ok?: boolean; strategy?: LaunchStrategy; knowledgeAvailable?: boolean; error?: string }
-      if (!response.ok || !result.ok || !result.strategy) {
-        setMessage(result.error ?? `Strategy generation failed with ${response.status}`)
-        return
-      }
-      setStrategy(result.strategy)
-      setKnowledgeAvailable(Boolean(result.knowledgeAvailable))
-      setMessage(result.knowledgeAvailable ? 'Strategy generated from saved Meta knowledge.' : 'Strategy generated from playbook defaults; sync Meta for stronger evidence.')
-    } catch {
-      setMessage('Could not reach the strategy endpoint.')
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
-  const prepareExecutionApproval = async () => {
-    if (isPreparing || !selectedPlaybookHasSegments) {
-      return
-    }
-
-    setIsPreparing(true)
-    setMessage('Preparing paused Meta campaign approval...')
-    try {
-      const response = await fetch('/api/execution/prepare-campaign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playbook: selectedPlaybook ?? null,
-          reason: 'Prepare a paused campaign shell from this playbook. Do not spend until approved.',
-        }),
-      })
-      const result = (await response.json()) as { ok?: boolean; approval?: ApprovalRequest; detail?: string; error?: string }
-      if (!response.ok || !result.ok || !result.approval) {
-        setMessage(result.detail ?? result.error ?? `Approval preparation failed with ${response.status}`)
-        return
-      }
-      setMessage(`Approval request created: ${result.approval.id}. Review it in the approval queue before dry-run execution.`)
-    } catch {
-      setMessage('Could not reach the execution approval endpoint.')
-    } finally {
-      setIsPreparing(false)
-    }
-  }
-
-  const generateDraftProposal = async () => {
-    if (isGeneratingProposal || !selectedPlaybookHasSegments) {
-      return
-    }
-
-    setIsGeneratingProposal(true)
-    setMessage('Generating review-only draft proposal...')
-    try {
-      const response = await fetch('/api/campaign-proposals/draft', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playbook: selectedPlaybook ?? null }),
-      })
-      const result = (await response.json()) as { ok?: boolean; proposal?: DraftCampaignProposal; detail?: string; error?: string }
-      if (!response.ok || !result.ok || !result.proposal) {
-        setMessage(result.detail ?? result.error ?? `Draft proposal failed with ${response.status}`)
-        return
-      }
-      setProposal(result.proposal)
-      setMessage('Review-only draft proposal generated. Nothing was created in Meta.')
-    } catch {
-      setMessage('Could not reach the draft proposal endpoint.')
-    } finally {
-      setIsGeneratingProposal(false)
-    }
-  }
-
-  return (
-    <section className="dashboard-grid">
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Agent Strategy" title="Approval-ready launch plan" icon={Target} />
-        <div className="strategy-command-row">
-          <label>
-            <span>Playbook</span>
-            <select value={selectedPlaybook?.id ?? ''} onChange={(event) => setSelectedPlaybookId(event.target.value)}>
-              {playbooks.map((playbook) => (
-                <option value={playbook.id} key={playbook.id}>
-                  {playbook.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className="sync-button" type="button" onClick={generateStrategy} disabled={isGenerating || !selectedPlaybookHasSegments}>
-            <TrendingUp size={16} />
-            {isGenerating ? 'Generating...' : 'Generate strategy'}
-          </button>
-          <button className="sync-button secondary" type="button" onClick={prepareExecutionApproval} disabled={isPreparing || !selectedPlaybookHasSegments}>
-            <ShieldAlert size={16} />
-            {isPreparing ? 'Preparing...' : 'Prepare approval'}
-          </button>
-          <button className="sync-button secondary" type="button" onClick={generateDraftProposal} disabled={isGeneratingProposal || !selectedPlaybookHasSegments}>
-            <ClipboardCheck size={16} />
-            {isGeneratingProposal ? 'Generating...' : 'Generate draft proposal'}
-          </button>
-          {message && <small className="sync-message">{message}</small>}
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Review-Only Draft Proposal" title="Paused campaign packet" icon={ClipboardCheck} />
-        {proposal ? (
-          <div className="proposal-layout">
-            <div className="proposal-summary">
-              <MiniMetric label="Campaign status" value={proposal.draftCampaign.status} />
-              <MiniMetric label="Draft ad sets" value={proposal.draftAdSets.length.toString()} />
-              <MiniMetric label="Daily budget" value={formatCurrency(proposal.budgetPlan.totalDailyBudgetUsd)} />
-              <MiniMetric label="Tracking" value={labelRawSetting(proposal.trackingReadiness.status)} />
-            </div>
-            <div className="metric-list">
-              <div><strong>Campaign</strong><span>{proposal.draftCampaign.name}</span></div>
-              <div><strong>Recommended placements</strong><span>{proposal.recommendedPlacements.map(labelRawSetting).join(', ')}</span></div>
-              <div><strong>Avoid placements</strong><span>{proposal.avoidPlacements.map(labelRawSetting).join(', ')}</span></div>
-              <div><strong>Approval packet</strong><span>{proposal.approvalPacket.status} / {proposal.approvalPacket.guardrailResult}</span></div>
-            </div>
-            <div className="proposal-checklist">
-              {proposal.operatorChecklist.slice(0, 5).map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="empty-panel compact">
-            <ClipboardCheck size={24} />
-            <strong>No proposal generated yet</strong>
-            <p>Generate a review-only packet to inspect paused campaign/ad set payloads before creating anything in Meta.</p>
-          </div>
-        )}
-      </article>
-
-      {strategy ? (
-        <>
-          <article className="panel panel-wide">
-            <PanelHeading eyebrow="Launch Summary" title={strategy.playbookName} icon={Gauge} />
-            <p className="strategy-summary">{strategy.summary}</p>
-            <div className="builder-summary">
-              <MiniMetric label="Daily budget" value={formatCurrency(strategy.budget.totalDailyBudgetUsd)} />
-              <MiniMetric label="Max daily budget" value={formatCurrency(strategy.budget.maxDailyBudgetUsd)} />
-              <MiniMetric label="Lead load estimate" value={strategy.budget.estimatedDailyLeadLoad.toLocaleString()} />
-              <MiniMetric label="Approval mode" value={strategy.execution.requiresApproval ? 'Required' : 'Optional'} />
-            </div>
-          </article>
-
-          {strategy.launchPacket && (
-            <article className="panel panel-wide">
-              <PanelHeading eyebrow="Launch Packet" title="Operator-ready decision brief" icon={ListChecks} />
-              <div className="builder-summary">
-                <MiniMetric label="Decision" value={labelRawSetting(strategy.launchPacket.decision)} />
-                <MiniMetric label="Primary goal" value={labelEventName(strategy.launchPacket.primaryGoal)} />
-                <MiniMetric label="Monitor every" value={`${strategy.launchPacket.monitoringPlan.cadenceHours}h`} />
-                <MiniMetric label="Publish" value={strategy.launchPacket.approvalPlan.publishBlocked ? 'Blocked' : 'Allowed'} />
-              </div>
-              <div className="strategy-knowledge-grid">
-                <KnowledgeList title="Use placements" items={strategy.launchPacket.placementPlan.use.map(labelRawSetting)} />
-                <KnowledgeList title="Avoid / isolate" items={strategy.launchPacket.placementPlan.avoid.map(labelRawSetting)} />
-                <KnowledgeList title="Required funnel events" items={strategy.launchPacket.funnelPlan.requiredEvents.map(labelEventName)} />
-                <KnowledgeList title="Watch metrics" items={strategy.launchPacket.monitoringPlan.watchMetrics} />
-              </div>
-              <div className="proposal-checklist">
-                {strategy.launchPacket.regressionChecklist.slice(0, 6).map((item) => (
-                  <span key={item}>{item}</span>
-                ))}
-              </div>
-            </article>
-          )}
-
-          <article className="panel panel-wide">
-            <PanelHeading eyebrow="Budget Split" title="Segment allocation" icon={CircleDollarSign} />
-            <div className="strategy-budget-list">
-              {strategy.budget.split.map((item) => (
-                <div className="strategy-budget-row" key={item.segmentId}>
-                  <div>
-                    <strong>{item.segmentName}</strong>
-                    <span>{formatCurrency(item.dailyBudgetUsd)} / day</span>
-                  </div>
-                  <div className="funnel-track">
-                    <div className="funnel-fill" style={{ width: `${Math.max(4, item.sharePercent)}%` }} />
-                  </div>
-                  <em>{item.sharePercent.toFixed(1)}%</em>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <section className="strategy-segment-grid">
-            {strategy.segments.map((segment) => (
-              <article className="panel" key={segment.id}>
-                <PanelHeading eyebrow="Segment Strategy" title={segment.name} icon={Users} />
-                <div className="metric-list">
-                  <div><strong>Budget</strong><span>{formatCurrency(segment.budgetUsd)} / day</span></div>
-                  <div><strong>Audience</strong><span>{segment.audienceHypothesis}</span></div>
-                  <div><strong>Age / gender</strong><span>{segment.ageRange} / {segment.gender}</span></div>
-                  <div><strong>Geo</strong><span>{segment.geoStrategy.recommendation}</span></div>
-                  <div><strong>Placements</strong><span>{segment.recommendedPlacements.map(labelRawSetting).join(', ')}</span></div>
-                  <div><strong>Interests</strong><span>{segment.interestStrategy.slice(0, 4).join(', ')}</span></div>
-                  <div><strong>Funnel</strong><span>{segment.funnelReadiness.status === 'ready' ? 'Ready' : `Missing ${segment.funnelReadiness.missing.join(', ')}`}</span></div>
-                </div>
-                <div className="strategy-angle-list">
-                  {segment.creativeAngles.map((angle) => <span key={angle}>{angle}</span>)}
-                </div>
-              </article>
-            ))}
-          </section>
-
-          <article className="panel panel-wide">
-            <PanelHeading eyebrow="Testing Plan" title="First review window" icon={FlaskConical} />
-            <div className="settings-table strategy-table">
-              <div className="settings-row settings-head">
-                <span>Window</span>
-                <span>Test</span>
-                <span>Decision metric</span>
-                <span>Action</span>
-              </div>
-              {strategy.testMatrix.map((item) => (
-                <div className="settings-row" key={`${item.day}-${item.test}`}>
-                  <span>{item.day}</span>
-                  <span>{item.test}</span>
-                  <span>{labelEventName(item.decisionMetric)}</span>
-                  <span>{item.action}</span>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="panel">
-            <PanelHeading eyebrow="Risks" title="What can break the launch" icon={AlertTriangle} />
-            <div className="insight-list">
-              {(strategy.risks.length ? strategy.risks : ['No major launch risks detected from the current playbook.']).map((risk) => (
-                <div className="insight-item warning" key={risk}>
-                  <AlertTriangle size={18} />
-                  <div>
-                    <strong>Watchpoint</strong>
-                    <p>{risk}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="panel">
-            <PanelHeading eyebrow="Approval Queue" title="Human-controlled actions" icon={ShieldAlert} />
-            <div className="action-list">
-              {strategy.approvalActions.map((action) => (
-                <div className={`action-item ${action.risk}`} key={action.id}>
-                  <strong>{action.title}</strong>
-                  <p>{action.impact}</p>
-                  <span>{labelRawSetting(action.status)} · {action.owner}</span>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="panel panel-wide">
-            <PanelHeading eyebrow="Knowledge Used" title={knowledgeAvailable ? 'Saved Meta evidence' : 'Playbook defaults'} icon={BookOpen} />
-            <div className="strategy-knowledge-grid">
-              <KnowledgeList title="Placements" items={strategy.knowledgeUsed.bestPlacements} />
-              <KnowledgeList title="Interests" items={strategy.knowledgeUsed.bestInterests} />
-              <KnowledgeList title="Regions" items={strategy.knowledgeUsed.bestRegions} />
-              <KnowledgeList title="Lessons" items={strategy.knowledgeUsed.lessons} />
-            </div>
-          </article>
-        </>
-      ) : (
-        <article className="panel panel-wide empty-panel">
-          <Bot size={28} />
-          <strong>No strategy generated yet</strong>
-          <p>{selectedPlaybookHasSegments ? 'Choose a saved playbook and generate the first approval-ready campaign strategy.' : 'Add configurable segments in Campaign Builder, save the playbook, then generate the launch strategy.'}</p>
-        </article>
-      )}
-    </section>
-  )
-}
-
-function KnowledgeList({ title, items }: { title: string; items: string[] }) {
-  return (
-    <div className="knowledge-list">
-      <strong>{title}</strong>
-      {(items.length ? items : ['Waiting for more saved evidence.']).map((item) => (
-        <span key={item}>{item}</span>
-      ))}
-    </div>
-  )
-}
-
 function TrackingView({ data }: { data: DashboardData }) {
   const [funnelEvents, setFunnelEvents] = useState<FunnelEventSummary | null>(null)
 
@@ -2874,90 +2310,6 @@ function TrackingView({ data }: { data: DashboardData }) {
         </article>
       ))}
     </section>
-  )
-}
-
-function AlertsView({ data }: { data: DashboardData }) {
-  return (
-    <section className="bottom-grid">
-      <CampaignWatchPanel items={data.campaignWatch ?? []} />
-      <MonitoringAlertsPanel data={data} />
-      <TopProblemsPanel data={data} />
-      <InsightsPanel data={data} />
-    </section>
-  )
-}
-
-function CampaignWatchPanel({ items }: { items: CampaignWatchItem[] }) {
-  return (
-    <article className="panel panel-wide">
-      <PanelHeading eyebrow="New Campaign Watch" title="Current campaign decisions" icon={Gauge} />
-      {items.length === 0 ? (
-        <EmptyState
-          compact
-          title="No current campaigns to watch"
-          body="Sync recent Meta data or refresh the dashboard after a new campaign is created."
-        />
-      ) : (
-        <div className="campaign-watch-list">
-          {items.slice(0, 6).map((item) => (
-            <div className={`campaign-watch-card ${item.tone}`} key={item.campaignId}>
-              <div>
-                <small>{item.currentDate} | {item.status} | {item.daysObserved} observed days</small>
-                <strong>{item.campaignName}</strong>
-                <p>{item.reason}</p>
-              </div>
-              <div className="campaign-watch-metrics">
-                <MiniMetric label="Spend" value={formatCurrency(item.spendUsd)} />
-                <MiniMetric label="CPC" value={formatCurrency(item.cpc)} />
-                <MiniMetric label="CPL" value={item.cpl > 0 ? formatCurrency(item.cpl) : '-'} />
-                <MiniMetric label="Lead rate" value={`${item.leadRatePercent.toFixed(1)}%`} />
-                <MiniMetric label="START rate" value={`${item.telegramStartRatePercent.toFixed(1)}%`} />
-              </div>
-              <div className="campaign-watch-actions">
-                <em>{item.decision}</em>
-                <ul>
-                  {item.nextActions.slice(0, 3).map((action) => (
-                    <li key={action}>{action}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </article>
-  )
-}
-
-function MonitoringAlertsPanel({ data }: { data: DashboardData }) {
-  const alerts = data.monitoringAlerts ?? []
-  return (
-    <article className="panel">
-      <PanelHeading eyebrow="Monitoring Alerts" title="Latest campaign health warnings" icon={AlertTriangle} />
-      <div className="insight-list">
-        {alerts.length === 0 ? (
-          <div className="insight-item good">
-            <CheckCircle2 size={18} />
-            <div>
-              <strong>No monitoring alerts</strong>
-              <p>Run the monitoring check to detect rising costs, falling Telegram START quality, or creative fatigue.</p>
-            </div>
-          </div>
-        ) : (
-          alerts.slice(0, 5).map((alert) => (
-            <div className={`insight-item ${alert.severity === 'high' ? 'danger' : alert.severity === 'medium' ? 'warning' : 'neutral'}`} key={alert.id}>
-              <AlertTriangle size={18} />
-              <div>
-                <strong>{alert.title}</strong>
-                {alert.whyItMatters ? <p>{alert.whyItMatters}</p> : null}
-                <p>{alert.recommendedActions.slice(0, 2).join(' ')}</p>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </article>
   )
 }
 
@@ -3144,6 +2496,14 @@ function SettingsView({
           <div><strong>Gemini</strong><span>Creative video analysis next</span></div>
         </div>
       </article>
+      <details className="advanced-command-section settings-diagnostics">
+        <summary>Tracking diagnostics</summary>
+        <TrackingView data={data} />
+      </details>
+      <details className="advanced-command-section settings-diagnostics">
+        <summary>Meta settings audit</summary>
+        <SettingsAuditView />
+      </details>
       {syncErrors.length > 0 && (
         <article className="panel panel-wide">
           <PanelHeading eyebrow="Sync Warnings" title="Meta data to retry in smaller slices" icon={AlertTriangle} />
@@ -3352,15 +2712,6 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
         ))}
       </div>
     </article>
-  )
-}
-
-function Score({ label, value, tone }: { label: string; value: number; tone: Tone }) {
-  return (
-    <div className={`score-card ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   )
 }
 
