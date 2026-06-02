@@ -7,6 +7,7 @@ entrypoint stays focused on routing; app.py re-imports the names it serves.
 
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
@@ -35,18 +36,25 @@ DASHBOARD_CACHE: dict[str, Any] = {
     "key": None,
     "payload": None,
 }
+# FastAPI serves these handlers from a threadpool, so guard the shared cache to
+# avoid a TOCTOU race where one request's payload overwrites/leaks into another's.
+_CACHE_LOCK = threading.Lock()
 
 
 def build_dashboard() -> dict[str, Any]:
     knowledge = load_knowledge_base()
     if knowledge:
         cache_key = dashboard_cache_key()
-        if DASHBOARD_CACHE["key"] == cache_key and DASHBOARD_CACHE["payload"]:
-            return DASHBOARD_CACHE["payload"]
+        with _CACHE_LOCK:
+            if DASHBOARD_CACHE["key"] == cache_key and DASHBOARD_CACHE["payload"]:
+                return DASHBOARD_CACHE["payload"]
 
+        # Compute outside the lock (it can be expensive); each caller returns its own
+        # freshly computed payload, so no request ever sees another's mid-flight object.
         payload = dashboard_from_knowledge_base(knowledge)
-        DASHBOARD_CACHE["key"] = cache_key
-        DASHBOARD_CACHE["payload"] = payload
+        with _CACHE_LOCK:
+            DASHBOARD_CACHE["key"] = cache_key
+            DASHBOARD_CACHE["payload"] = payload
         return payload
 
     return {
@@ -97,7 +105,7 @@ def derive_kpis(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     spend = sum(row["spendUsd"] for row in rows)
     subs = sum(row["telegramSubscribers"] for row in rows)
     buyers = sum(row["purchases"] for row in rows)
-    tracking = round(sum(item["matchRate"] for item in tracking_health) / len(tracking_health))
+    tracking = round(sum(item["matchRate"] for item in tracking_health) / len(tracking_health)) if tracking_health else 0
     return [
         {"label": "Spend", "value": money(spend), "change": f"{len(rows)} rows", "helper": "From backend API", "tone": "neutral", "icon": "dollar"},
         {"label": "Telegram Subs", "value": f"{subs:,}", "change": money(spend / subs) if subs else "$0", "helper": "Attributed subscriber volume", "tone": "good", "icon": "bot"},
@@ -176,6 +184,7 @@ def map_campaign(row: dict[str, Any]) -> dict[str, Any]:
         "name": row.get("name") or "Untitled campaign",
         "objective": map_objective(row.get("objective")),
         "status": map_status(row.get("effective_status") or row.get("status")),
+        # Meta returns budgets in minor account-currency units (cents); convert to USD.
         "dailyBudgetUsd": as_float(row.get("daily_budget")) / 100,
         "startedAt": date_part(row.get("start_time")),
         "endedAt": date_part(row.get("stop_time") or row.get("end_time")),

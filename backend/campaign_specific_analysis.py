@@ -145,7 +145,27 @@ def rank_rows(rows: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any
         item["purchases"] += action_count(row, "purchase")
         item["rows"] += 1
     ranked = [with_rates(item) for item in grouped.values()]
-    return sorted(ranked, key=lambda item: (item["cpl"] if item["cpl"] else 999999, -item["leads"], -item["spend"]))
+    return sorted(ranked, key=rank_key)
+
+
+def rank_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    """Quality + volume aware ranking (aligned with analysis_engine), not pure CPL.
+
+    Ranking only by CPL lets a marginally-cheaper low-volume ad set outrank a proven
+    high-volume winner. Order: enough-sample first, then higher lead-quality, then
+    purchase proof, then lead volume, then cheaper CPL as a final tiebreak.
+    """
+    cpl = item.get("cpl", 0)
+    lead_rate = item.get("leadRateFromClick", 0)
+    quality = min(40.0, lead_rate * 2)  # lead-quality proxy, same shape as analysis_engine
+    confident = item.get("clicks", 0) >= 50
+    return (
+        0 if confident else 1,
+        -quality,
+        -item.get("purchases", 0),
+        -item.get("leads", 0),
+        cpl if cpl else 1_000_000,
+    )
 
 
 def label_for(row: dict[str, Any], keys: list[str]) -> str:

@@ -147,6 +147,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
       creatives: data.creatives,
       filters: {
         start: window.start,
+        end: window.end,
         campaignIds: filters.campaignIds,
         creativeFormat: filters.creativeFormat,
         placement: filters.placement,
@@ -392,10 +393,32 @@ function Filters({
     updateCampaignSelection(Array.from(event.target.selectedOptions, (option) => option.value))
   }
 
-  const placements = Array.from(new Set(data.metrics.map((metric) => metric.placement)))
+  const optionWindow = getDateWindow(filters.dateRange, getDashboardAnchorDate(data))
+  // Placement options reflect the active date/campaign/objective context, but NOT the
+  // placement selection itself (otherwise picking one placement would hide the others).
+  const placementScopedMetrics = filterMetricsForDashboard({
+    metrics: data.metrics,
+    campaigns: data.campaigns,
+    ads: data.ads,
+    creatives: data.creatives,
+    filters: {
+      start: optionWindow.start,
+      end: optionWindow.end,
+      campaignIds: filters.campaignIds,
+      creativeFormat: 'all',
+      placement: 'all',
+      objective: filters.objective,
+    },
+  })
+  const placements = Array.from(
+    new Set([
+      ...placementScopedMetrics.map((metric) => metric.placement),
+      ...(filters.placement !== 'all' ? [filters.placement] : []),
+    ]),
+  )
   const campaignOptions = getCampaignOptions({
     campaigns: data.campaigns,
-    window: getDateWindow(filters.dateRange, getDashboardAnchorDate(data)),
+    window: optionWindow,
     objective: filters.objective,
   })
 

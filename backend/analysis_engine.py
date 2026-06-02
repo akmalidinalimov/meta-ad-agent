@@ -218,6 +218,11 @@ def merge_metrics(target: dict[str, Any], row: dict[str, Any]) -> None:
     target["impressions"] = target.get("impressions", 0) + as_float(row.get("impressions"))
     target["reach"] = target.get("reach", 0) + as_float(row.get("reach"))
     target["clicks"] = target.get("clicks", 0) + as_float(row.get("clicks"))
+    # Business definition: "leads" is the website-registration conversion proxy. We sum
+    # Meta's `lead` and `complete_registration` actions because this account uses them
+    # interchangeably across campaigns (some report one, some the other). NOTE: if a single
+    # objective ever reports BOTH for the same conversion this would double-count — revisit
+    # with real per-campaign action data before trusting lead volume as buyer quality.
     target["leads"] = target.get("leads", 0) + action_count(row, "lead") + action_count(row, "registration")
     target["purchases"] = target.get("purchases", 0) + action_count(row, "purchase")
     target["linkClicks"] = target.get("linkClicks", 0) + action_count(row, "link_click")

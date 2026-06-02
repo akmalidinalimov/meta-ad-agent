@@ -63,7 +63,10 @@ export function campaignOverlapsWindow(
   window: { start: string; end: string },
 ) {
   const campaignStart = campaign.startedAt || window.start
-  const campaignEnd = campaign.endedAt || (campaign.status === 'active' ? window.end : campaignStart)
+  // Without an explicit end date, treat the campaign as still running through the
+  // window end (active) or — for paused/completed with no end — as open-ended rather
+  // than collapsing to a single start-day, which would wrongly exclude it.
+  const campaignEnd = campaign.endedAt || window.end
   return campaignStart <= window.end && campaignEnd >= window.start
 }
 
@@ -74,6 +77,7 @@ export function filterMetricsForDashboard(args: {
   creatives: Creative[]
   filters: {
     start: string
+    end: string
     campaignIds: string[]
     creativeFormat: 'all' | Creative['format']
     placement: 'all' | Placement
@@ -90,6 +94,7 @@ export function filterMetricsForDashboard(args: {
 
     return (
       metric.date >= args.filters.start &&
+      metric.date <= args.filters.end &&
       (args.filters.campaignIds.includes('all') || args.filters.campaignIds.includes(metric.campaignId)) &&
       (args.filters.creativeFormat === 'all' || creative?.format === args.filters.creativeFormat) &&
       (args.filters.placement === 'all' || metric.placement === args.filters.placement) &&

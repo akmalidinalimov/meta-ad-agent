@@ -8,7 +8,7 @@ import {
   getCampaignOptions,
   getDateWindow,
 } from './analytics'
-import type { AdSet, Campaign, Creative, CreativeAnalysis, DailyAdMetric } from '../types/marketing'
+import type { Ad, AdSet, Campaign, Creative, CreativeAnalysis, DailyAdMetric } from '../types/marketing'
 
 describe('getDateWindow', () => {
   it('builds an inclusive 30 day window anchored to the latest dashboard date', () => {
@@ -475,6 +475,7 @@ describe('dashboard filtering', () => {
       ],
       filters: {
         start: '2026-04-29',
+        end: '2026-05-28',
         campaignIds: ['recent'],
         creativeFormat: 'video',
         placement: 'instagram_reels',
@@ -484,5 +485,42 @@ describe('dashboard filtering', () => {
 
     expect(filtered).toHaveLength(1)
     expect(filtered[0].campaignId).toBe('recent')
+  })
+
+  it('excludes metrics after the date window end bound', () => {
+    const campaigns: Campaign[] = [
+      { id: 'c', platform: 'meta', name: 'C', objective: 'leads', status: 'active', dailyBudgetUsd: 10, startedAt: '2026-01-01' },
+    ]
+    const ads: Ad[] = [{ id: 'ad_1', adSetId: 'as', creativeId: 'cr', name: 'A', status: 'active' }]
+    const creatives: Creative[] = [
+      { id: 'cr', adId: 'ad_1', name: 'C', format: 'video', theme: 't', hookType: 'h', primaryPersona: 'p', cta: 'x' },
+    ]
+    const mk = (date: string): DailyAdMetric => ({
+      date,
+      campaignId: 'c',
+      adSetId: 'as',
+      adId: 'ad_1',
+      creativeId: 'cr',
+      placement: 'instagram_reels',
+      spendUsd: 1,
+      impressions: 10,
+      clicks: 1,
+      landingPageViews: 1,
+      leads: 0,
+      telegramSubscribers: 0,
+      webinarAttendees: 0,
+      purchases: 0,
+      purchaseRevenueUsd: 0,
+    })
+
+    const filtered = filterMetricsForDashboard({
+      metrics: [mk('2026-05-10'), mk('2026-05-28'), mk('2026-06-15')],
+      campaigns,
+      ads,
+      creatives,
+      filters: { start: '2026-04-29', end: '2026-05-28', campaignIds: ['all'], creativeFormat: 'all', placement: 'all', objective: 'all' },
+    })
+
+    expect(filtered.map((metric) => metric.date)).toEqual(['2026-05-10', '2026-05-28'])
   })
 })
