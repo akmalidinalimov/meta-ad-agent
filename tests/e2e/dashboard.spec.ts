@@ -56,13 +56,19 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
 
   await page.getByRole('button', { name: /agent office/i }).click();
   await expect(page.getByText(/multi-agent strategy council/i)).toBeVisible();
-  await expect(page.getByText(/who is talking to whom/i)).toBeVisible();
+  await expect(page.getByText(/watch agents debate the campaign/i)).toBeVisible();
+  await expect(page.getByText(/what is happening now/i)).toBeVisible();
   await page.getByRole('button', { name: /run council/i }).click();
   await expect(page.getByText(/council session generated/i)).toBeVisible();
   await expect(page.getByText(/paused draft allowed/i)).toBeVisible();
-  await expect(page.getByText(/recent agent exchanges/i)).toBeVisible();
+  await expect(page.getByText(/timeline replay/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await expect(page.locator('.moving-agent')).toBeVisible();
+  await expect(page.locator('.agent-desk.speaker')).toBeVisible();
+  await expect(page.locator('.agent-desk.receiver')).toBeVisible();
+  await expect(page.locator('.active-exchange-card')).toContainText(/round/i);
 
-  await page.getByRole('button', { name: /creatives/i }).click();
+  await page.getByRole('button', { name: 'Creatives', exact: true }).click();
   await expect(page.getByText(/creative performance and quality/i)).toBeVisible();
   await expect(page.locator('.creative-thumb.has-video').first()).toBeVisible();
   await expect(page.locator('.creative-thumb img').first()).toBeVisible();

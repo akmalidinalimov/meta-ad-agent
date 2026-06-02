@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type ComponentType } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent, type ComponentType, type CSSProperties } from 'react'
 import {
   AlertTriangle,
   BarChart3,
@@ -1265,14 +1265,40 @@ function AgentOfficeView({
     'Run strategy council: agents talk to each other, challenge weak assumptions, and create the best paused VSL campaign plan from the last 180 days.',
   )
   const [isRunning, setIsRunning] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [activeEventIndex, setActiveEventIndex] = useState(0)
   const [message, setMessage] = useState<string | null>(null)
   const agents = latestCouncil?.agents ?? fallbackCouncilAgents()
-  const recentEvents = latestCouncil?.events.slice(-6) ?? []
-  const activeAgentIds = new Set(
-    latestCouncil
-      ? latestCouncil.events.slice(-3).flatMap((event) => [event.fromAgent, event.toAgent])
-      : ['orchestrator'],
-  )
+  const events = latestCouncil?.events ?? []
+  const safeActiveEventIndex = events.length ? Math.min(activeEventIndex, events.length - 1) : 0
+  const activeEvent = events[safeActiveEventIndex]
+  const activeRound = latestCouncil?.rounds.find((round) => activeEvent && round.events.some((event) => event.id === activeEvent.id))
+  const fromPosition = getAgentDeskPosition(activeEvent?.fromAgent)
+  const toPosition = getAgentDeskPosition(activeEvent?.toAgent)
+  const activeAgentIds = new Set(activeEvent ? [activeEvent.fromAgent, activeEvent.toAgent] : ['orchestrator'])
+  const movingAgentName = activeEvent ? agentNameForId(agents, activeEvent.fromAgent) : 'Orchestrator'
+  const progressLabel = latestCouncil
+    ? `${Math.min(safeActiveEventIndex + 1, events.length)} of ${events.length} exchanges`
+    : 'Waiting for a council session'
+
+  useEffect(() => {
+    if (!isPlaying || events.length <= 1) {
+      return undefined
+    }
+
+    const timer = window.setInterval(() => {
+      setActiveEventIndex((current) => {
+        if (current >= events.length - 1) {
+          window.clearInterval(timer)
+          setIsPlaying(false)
+          return current
+        }
+        return current + 1
+      })
+    }, 2200)
+
+    return () => window.clearInterval(timer)
+  }, [events.length, isPlaying])
 
   const startCouncil = async () => {
     if (!command.trim() || isRunning) {
@@ -1284,12 +1310,19 @@ function AgentOfficeView({
     try {
       const council = await runAgentCouncil(command)
       onCouncilReady(council)
+      setActiveEventIndex(0)
+      setIsPlaying(true)
       setMessage('Council session generated. Review the plan before creating any paused campaign draft.')
     } catch {
       setMessage('Could not run the council endpoint. Make sure the backend is running on port 8000.')
     } finally {
       setIsRunning(false)
     }
+  }
+
+  const stepEvent = (direction: -1 | 1) => {
+    setIsPlaying(false)
+    setActiveEventIndex((current) => Math.min(Math.max(current + direction, 0), Math.max(events.length - 1, 0)))
   }
 
   return (
@@ -1320,39 +1353,103 @@ function AgentOfficeView({
         </div>
       </article>
 
-      <article className="panel panel-wide agent-office-map-panel">
-        <PanelHeading eyebrow="2D Office" title="Who is talking to whom" icon={Bot} />
-        <div className="agent-office-map">
+      <article className="panel panel-wide agent-office-map-panel agent-office-main">
+        <PanelHeading eyebrow="Top-View Office" title="Watch agents debate the campaign" icon={Bot} />
+        <div className="office-status-strip">
+          <div>
+            <small>What is happening now</small>
+            <strong>
+              {activeEvent
+                ? `${agentNameForId(agents, activeEvent.fromAgent)} is talking to ${agentNameForId(agents, activeEvent.toAgent)}`
+                : 'Run the council to start the agent conversation'}
+            </strong>
+            <span>{activeRound ? `${activeRound.title}: ${activeRound.purpose}` : 'Agents will move between desks as they critique the plan.'}</span>
+          </div>
+          <div className="office-playback">
+            <button type="button" onClick={() => stepEvent(-1)} disabled={!events.length || safeActiveEventIndex === 0}>
+              Back
+            </button>
+            <button type="button" onClick={() => setIsPlaying((current) => !current)} disabled={!events.length}>
+              {isPlaying ? 'Pause' : 'Play'}
+            </button>
+            <button type="button" onClick={() => stepEvent(1)} disabled={!events.length || safeActiveEventIndex >= events.length - 1}>
+              Next
+            </button>
+            <span>{progressLabel}</span>
+          </div>
+        </div>
+        <div className="agent-office-scene">
+          <div className="agent-office-map" aria-label="Top-view animated agent office">
+            <div className="office-floor-rug" />
+            <div className="office-center-table">
+              <strong>Strategy table</strong>
+              <span>Final plan forms here after critique rounds</span>
+            </div>
+            {activeEvent && (
+              <div
+                className="moving-agent"
+                style={
+                  {
+                    '--from-x': `${fromPosition.x}%`,
+                    '--from-y': `${fromPosition.y}%`,
+                    '--to-x': `${toPosition.x}%`,
+                    '--to-y': `${toPosition.y}%`,
+                  } as CSSProperties
+                }
+              >
+                <Bot size={17} />
+                <span>{movingAgentName}</span>
+              </div>
+            )}
           {agents.map((agent) => {
+            const position = getAgentDeskPosition(agent.id)
             const isActive = activeAgentIds.has(agent.id)
+            const isSpeaker = activeEvent?.fromAgent === agent.id
+            const isReceiver = activeEvent?.toAgent === agent.id
             return (
               <div
-                className={`agent-desk ${agent.id === 'orchestrator' ? 'orchestrator' : ''} ${isActive ? 'active' : ''}`}
+                className={`agent-desk ${agent.id === 'orchestrator' ? 'orchestrator' : ''} ${isActive ? 'active' : ''} ${isSpeaker ? 'speaker' : ''} ${isReceiver ? 'receiver' : ''}`}
+                style={{ left: `${position.x}%`, top: `${position.y}%` }}
                 key={agent.id}
               >
-                <div className="agent-avatar">
-                  <Bot size={18} />
-                </div>
-                <div>
+                <div className="office-chair" />
+                <div className="desk-surface">
+                  <div className="desk-laptop" />
+                  <div className="desk-keyboard" />
+                  <div className="desk-status-light" />
                   <strong>{agent.name}</strong>
                   <span>{agent.role}</span>
-                  <small>{labelRawSetting(agent.state)} · {councilScoreForAgent(latestCouncil, agent.id)}</small>
                 </div>
+                <small>{labelRawSetting(agent.state)} · {councilScoreForAgent(latestCouncil, agent.id)}</small>
               </div>
             )
           })}
-          <div className="agent-office-table">
-            <strong>Strategy table</strong>
-            <span>Orchestrator coordinates critique rounds before any execution.</span>
+          </div>
+          <div className="active-exchange-card">
+            <small>{activeRound?.title ?? 'Waiting'}</small>
+            <strong>{activeEvent?.question ?? 'No exchange selected yet'}</strong>
+            <p>{activeEvent?.answer ?? 'Run the council to see each agent question, critique, and refine the setup.'}</p>
           </div>
         </div>
       </article>
 
       <article className="panel">
-        <PanelHeading eyebrow="Live Handoffs" title="Recent agent exchanges" icon={RadioTower} />
-        <div className="council-event-list">
-          {recentEvents.length > 0 ? (
-            recentEvents.map((event) => <CouncilEventCard event={event} key={event.id} />)
+        <PanelHeading eyebrow="Timeline Replay" title="Every agent exchange" icon={RadioTower} />
+        <div className="council-event-list timeline-replay">
+          {events.length > 0 ? (
+            events.map((event, index) => (
+              <button
+                className={index === safeActiveEventIndex ? 'council-event active' : 'council-event'}
+                type="button"
+                onClick={() => {
+                  setIsPlaying(false)
+                  setActiveEventIndex(index)
+                }}
+                key={event.id}
+              >
+                <CouncilEventCard event={event} />
+              </button>
+            ))
           ) : (
             <EmptyState compact />
           )}
@@ -1406,7 +1503,7 @@ function AgentOfficeView({
 
 function CouncilEventCard({ event }: { event: AgentCouncilSession['events'][number] }) {
   return (
-    <div className="council-event">
+    <>
       <div className="council-event-flow">
         <span>{labelRawSetting(event.fromAgent)}</span>
         <i />
@@ -1415,7 +1512,7 @@ function CouncilEventCard({ event }: { event: AgentCouncilSession['events'][numb
       <strong>{event.question}</strong>
       <p>{event.answer}</p>
       <small>{labelRawSetting(event.state)}</small>
-    </div>
+    </>
   )
 }
 
@@ -1482,6 +1579,26 @@ function CouncilFinalPlan({ council }: { council: AgentCouncilSession }) {
 function councilScoreForAgent(council: AgentCouncilSession | null, agentId: string) {
   const score = council?.scores.find((item) => item.agentId === agentId)
   return score ? `${score.scoreOutOf10.toFixed(1)}/10` : 'not scored'
+}
+
+function agentNameForId(agents: AgentCouncilSession['agents'], agentId?: string) {
+  return agents.find((agent) => agent.id === agentId)?.name ?? labelRawSetting(agentId ?? 'agent')
+}
+
+function getAgentDeskPosition(agentId?: string) {
+  const positions: Record<string, { x: number; y: number }> = {
+    orchestrator: { x: 50, y: 12 },
+    audit: { x: 22, y: 16 },
+    meta_ai_strategist: { x: 78, y: 16 },
+    audience: { x: 16, y: 44 },
+    creative: { x: 84, y: 44 },
+    placement: { x: 22, y: 74 },
+    funnel: { x: 50, y: 82 },
+    experiment: { x: 78, y: 74 },
+    monitoring: { x: 50, y: 48 },
+    execution: { x: 50, y: 24 },
+  }
+  return positions[agentId ?? 'orchestrator'] ?? { x: 50, y: 50 }
 }
 
 function fallbackCouncilAgents(): AgentCouncilSession['agents'] {
