@@ -143,10 +143,16 @@ def route_question(question: str) -> dict[str, Any]:
         return route("meta_ai_strategist", "Captured Meta AI evidence should be converted into Meta-side strategy.")
     if any(word in lower for word in ["meta ai", "ads manager ai", "analyze button", "opportunity score", "opportunity-score"]):
         return route("meta_ai_advisor", "Meta AI Analyze request should be captured read-only and validated against business data.")
-    if any(word in lower for word in ["execute", "change budget", "browser", "go to meta", "pause", "publish", "upload creative"]):
+    if has_execution_intent(lower):
         return route("execution", "Live Meta change request requires approval and API-first execution policy.")
     if is_campaign_creation_request(lower):
         return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
+    if len(detect_involved_agents(question)) >= 3:
+        return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
+    if is_monitoring_request(lower):
+        return route("monitoring", "Monitoring question needs trend detection and alert rules.")
+    if is_experiment_request(lower):
+        return route("experiment", "Experiment question needs hypothesis, variable, metric, and guardrail design.")
     if len(detect_involved_agents(question)) >= 2:
         return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
     if is_campaign_analysis_request(lower):
@@ -164,9 +170,9 @@ def route_question(question: str) -> dict[str, Any]:
         return route("placement", "Placement question needs platform and position-level quality checks.")
     if any(word in lower for word in ["funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"]):
         return route("funnel", "Funnel question needs event tracking and attribution reasoning.")
-    if any(word in lower for word in ["monitor", "alert", "every four hours", "trend", "rising", "improving", "getting expensive"]):
+    if is_monitoring_request(lower):
         return route("monitoring", "Monitoring question needs trend detection and alert rules.")
-    if any(word in lower for word in ["experiment", "test", "ab test", "a/b", "scale rule", "stop rule"]):
+    if is_experiment_request(lower):
         return route("experiment", "Experiment question needs hypothesis, variable, metric, and guardrail design.")
     return route("audit", "Default to audit agent for historical performance and lessons.")
 
@@ -185,8 +191,34 @@ def is_campaign_creation_request(lower_question: str) -> bool:
         "campaign plan",
         "prepare campaign",
         "prepare a campaign",
+        "create a plan",
+        "create plan",
+        "build recommendation",
+        "campaign recommendation",
     )
-    return any(phrase in lower_question for phrase in creation_phrases)
+    return any(phrase in lower_question for phrase in creation_phrases) or ("vsl" in lower_question and "plan" in lower_question)
+
+
+def has_execution_intent(lower_question: str) -> bool:
+    negative_execution = (
+        "do not execute",
+        "don't execute",
+        "not execute",
+        "without executing",
+        "before execution",
+        "until approved",
+    )
+    if any(phrase in lower_question for phrase in negative_execution) and (is_campaign_creation_request(lower_question) or "plan" in lower_question):
+        return False
+    return any(word in lower_question for word in ["execute", "change budget", "browser", "go to meta", "pause", "publish", "upload creative"])
+
+
+def is_monitoring_request(lower_question: str) -> bool:
+    return any(word in lower_question for word in ["monitor", "monitoring", "alert", "every four hours", "trend", "rising", "improving", "getting expensive"])
+
+
+def is_experiment_request(lower_question: str) -> bool:
+    return any(word in lower_question for word in ["experiment", "test", "ab test", "a/b", "scale rule", "stop rule"])
 
 
 def is_campaign_analysis_request(lower_question: str) -> bool:
@@ -483,9 +515,7 @@ def should_prepare_meta_action(question: str, routed: dict[str, Any], plan: dict
     lower = question.lower()
     if "meta ai" in lower or "ads manager ai" in lower:
         return False
-    if routed["agentId"] == "orchestrator" and any(
-        phrase in lower for phrase in ["create a campaign", "create campaign", "set up", "setup", "launch campaign", "campaign plan"]
-    ):
+    if routed["agentId"] == "orchestrator" and is_campaign_creation_request(lower):
         return False
     if plan["intent"] in {"rename", "pause", "enable"}:
         return True

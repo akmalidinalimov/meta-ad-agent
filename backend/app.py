@@ -1418,6 +1418,7 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         )
 
     lower = question.lower()
+    routed = route_question(question)
     dashboard_data = dashboard()
     meta = await meta_status()
     knowledge = load_knowledge_base()
@@ -1442,6 +1443,30 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
                 "Can you pull my campaigns now?",
                 "What Meta data do we still need?",
                 "What is the next integration step?",
+            ],
+        )
+
+    if routed["agentId"] == "monitoring":
+        return specialist_chat_response(
+            question,
+            answer=answer_monitoring(dashboard_data),
+            sources=["monitoring", "alerts", "approvalActions"],
+            suggestedQuestions=[
+                "What should we check every four hours?",
+                "Which alert should become an experiment?",
+                "What should require approval before execution?",
+            ],
+        )
+
+    if routed["agentId"] == "experiment":
+        return specialist_chat_response(
+            question,
+            answer=answer_experiments(dashboard_data),
+            sources=["experiments", "approvalActions"],
+            suggestedQuestions=[
+                "What should the stop rule be?",
+                "What should the scale rule be?",
+                "Which variable should we test first?",
             ],
         )
 

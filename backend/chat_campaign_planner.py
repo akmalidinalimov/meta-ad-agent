@@ -86,6 +86,14 @@ def extract_segment_names(message: str) -> list[str]:
         segment_text = re.split(r"\b(?:start|use|budget|optimi[sz]e|with \$|for \$)\b", segment_text, maxsplit=1, flags=re.IGNORECASE)[0]
         return split_segments(segment_text)
 
+    repeated_vsl_segments = re.findall(
+        r"\bone\s+(.+?)\s+vsl\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if len(repeated_vsl_segments) >= 2:
+        return [clean_segment_name(segment) for segment in repeated_vsl_segments if clean_segment_name(segment)]
+
     count = extract_vsl_count(message)
     if count == 1:
         return [infer_single_segment_name(message)]
