@@ -58,6 +58,21 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await expect(page.getByText(/multi-agent strategy council/i)).toBeVisible();
   await expect(page.getByText(/watch agents debate the campaign/i)).toBeVisible();
   await expect(page.getByText(/what is happening now/i)).toBeVisible();
+  await expect(page.locator('.agent-desk')).toHaveCount(10);
+  const officeBox = await page.locator('.agent-office-map').boundingBox();
+  expect(officeBox).toBeTruthy();
+  const agentBoxes = await page.locator('.agent-desk').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }),
+  );
+  for (const box of agentBoxes) {
+    expect(box.left).toBeGreaterThanOrEqual(officeBox!.x - 1);
+    expect(box.top).toBeGreaterThanOrEqual(officeBox!.y - 1);
+    expect(box.right).toBeLessThanOrEqual(officeBox!.x + officeBox!.width + 1);
+    expect(box.bottom).toBeLessThanOrEqual(officeBox!.y + officeBox!.height + 1);
+  }
   await page.getByRole('button', { name: /run council/i }).click();
   await expect(page.getByText(/council session generated/i)).toBeVisible();
   await expect(page.getByText(/paused draft allowed/i)).toBeVisible();
@@ -67,6 +82,9 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await expect(page.locator('.agent-desk.speaker')).toBeVisible();
   await expect(page.locator('.agent-desk.receiver')).toBeVisible();
   await expect(page.locator('.active-exchange-card')).toContainText(/round/i);
+  await page.getByRole('button', { name: 'Implemented', exact: true }).click();
+  await expect(page.locator('.implementation-result')).toContainText(/paused campaign approval created/i);
+  await expect(page.getByText(/cannot publish or spend/i)).toBeVisible();
 
   await page.getByRole('button', { name: 'Creatives', exact: true }).click();
   await expect(page.getByText(/creative performance and quality/i)).toBeVisible();

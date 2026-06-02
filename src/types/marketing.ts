@@ -735,6 +735,8 @@ export interface AgentCouncilSession {
     liveSpendAllowed: boolean
     rule: string
   }
+  generatedPlaybook?: CampaignPlaybook
+  generatedStrategy?: LaunchStrategy
 }
 
 export interface AgentCouncilEvent {

@@ -1266,8 +1266,14 @@ function AgentOfficeView({
   )
   const [isRunning, setIsRunning] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isImplementing, setIsImplementing] = useState(false)
   const [activeEventIndex, setActiveEventIndex] = useState(0)
   const [message, setMessage] = useState<string | null>(null)
+  const [implementationResult, setImplementationResult] = useState<{
+    approvalId: string
+    status: string
+    guardrail: string
+  } | null>(null)
   const agents = latestCouncil?.agents ?? fallbackCouncilAgents()
   const events = latestCouncil?.events ?? []
   const safeActiveEventIndex = events.length ? Math.min(activeEventIndex, events.length - 1) : 0
@@ -1317,6 +1323,41 @@ function AgentOfficeView({
       setMessage('Could not run the council endpoint. Make sure the backend is running on port 8000.')
     } finally {
       setIsRunning(false)
+    }
+  }
+
+  const implementCouncilPlan = async () => {
+    if (!latestCouncil || isImplementing) {
+      return
+    }
+
+    setIsImplementing(true)
+    setImplementationResult(null)
+    setMessage('Creating paused Meta campaign approval from the council plan...')
+    try {
+      const response = await fetch('/api/execution/prepare-campaign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playbook: latestCouncil.generatedPlaybook ?? null,
+          reason: `Implemented from Agent Office council ${latestCouncil.id}. Create only a paused Meta campaign structure from the final council recommendations.`,
+        }),
+      })
+      const result = (await response.json()) as { ok?: boolean; approval?: ApprovalRequest; detail?: string; error?: string }
+      if (!response.ok || !result.ok || !result.approval) {
+        setMessage(result.detail ?? result.error ?? `Implementation failed with ${response.status}`)
+        return
+      }
+      setImplementationResult({
+        approvalId: result.approval.id,
+        status: result.approval.status,
+        guardrail: result.approval.guardrailResult,
+      })
+      setMessage(`Paused campaign approval created: ${result.approval.id}. It remains review-gated and cannot publish or spend.`)
+    } catch {
+      setMessage('Could not reach the paused campaign implementation endpoint.')
+    } finally {
+      setIsImplementing(false)
     }
   }
 
@@ -1410,6 +1451,7 @@ function AgentOfficeView({
             return (
               <div
                 className={`agent-desk ${agent.id === 'orchestrator' ? 'orchestrator' : ''} ${isActive ? 'active' : ''} ${isSpeaker ? 'speaker' : ''} ${isReceiver ? 'receiver' : ''}`}
+                data-agent-id={agent.id}
                 style={{ left: `${position.x}%`, top: `${position.y}%`, '--agent-color': visual.color } as CSSProperties}
                 key={agent.id}
               >
@@ -1496,7 +1538,16 @@ function AgentOfficeView({
 
       <article className="panel panel-wide">
         <PanelHeading eyebrow="Final Plan" title="Council output before approval" icon={ClipboardCheck} />
-        {latestCouncil ? <CouncilFinalPlan council={latestCouncil} /> : <EmptyState compact />}
+        {latestCouncil ? (
+          <CouncilFinalPlan
+            council={latestCouncil}
+            isImplementing={isImplementing}
+            implementationResult={implementationResult}
+            onImplement={implementCouncilPlan}
+          />
+        ) : (
+          <EmptyState compact />
+        )}
       </article>
     </section>
   )
@@ -1517,8 +1568,19 @@ function CouncilEventCard({ event }: { event: AgentCouncilSession['events'][numb
   )
 }
 
-function CouncilFinalPlan({ council }: { council: AgentCouncilSession }) {
+function CouncilFinalPlan({
+  council,
+  isImplementing,
+  implementationResult,
+  onImplement,
+}: {
+  council: AgentCouncilSession
+  isImplementing: boolean
+  implementationResult: { approvalId: string; status: string; guardrail: string } | null
+  onImplement: () => void
+}) {
   const finalPlan = council.finalPlan
+  const canImplement = finalPlan.executionDecision.canCreatePausedDraft && !isImplementing
   return (
     <div className="council-final-plan">
       <div className="council-plan-summary">
@@ -1573,6 +1635,25 @@ function CouncilFinalPlan({ council }: { council: AgentCouncilSession }) {
           </div>
         ))}
       </div>
+      <div className="council-implementation-actions">
+        <div>
+          <strong>Turn this council output into an executable paused campaign packet</strong>
+          <p>
+            This uses the generated playbook, creates a Meta approval request, and keeps every campaign/ad set paused until a guarded execution step is approved.
+          </p>
+        </div>
+        <button className="sync-button" type="button" onClick={onImplement} disabled={!canImplement}>
+          <ClipboardCheck size={16} />
+          {isImplementing ? 'Implementing...' : 'Implemented'}
+        </button>
+      </div>
+      {implementationResult && (
+        <div className="implementation-result" role="status">
+          <strong>Paused campaign approval created</strong>
+          <span>{implementationResult.approvalId}</span>
+          <small>Status: {labelRawSetting(implementationResult.status)} · Guardrail: {labelRawSetting(implementationResult.guardrail)}</small>
+        </div>
+      )}
     </div>
   )
 }
@@ -1593,23 +1674,23 @@ function getAgentApproachPosition(fromAgentId?: string, toAgentId?: string) {
   const deltaY = target.y - source.y
   const distance = Math.max(Math.sqrt(deltaX * deltaX + deltaY * deltaY), 1)
   return {
-    x: target.x - (deltaX / distance) * 9,
-    y: target.y - (deltaY / distance) * 9,
+    x: target.x - (deltaX / distance) * 16,
+    y: target.y - (deltaY / distance) * 16,
   }
 }
 
 function getAgentDeskPosition(agentId?: string) {
   const positions: Record<string, { x: number; y: number }> = {
-    orchestrator: { x: 50, y: 10 },
-    audit: { x: 18, y: 18 },
-    meta_ai_strategist: { x: 82, y: 18 },
-    audience: { x: 10, y: 44 },
-    creative: { x: 90, y: 44 },
-    placement: { x: 18, y: 78 },
-    funnel: { x: 50, y: 91 },
-    experiment: { x: 82, y: 78 },
-    monitoring: { x: 34, y: 34 },
-    execution: { x: 66, y: 34 },
+    orchestrator: { x: 50, y: 13 },
+    audit: { x: 24, y: 18 },
+    meta_ai_strategist: { x: 76, y: 18 },
+    audience: { x: 19, y: 42 },
+    creative: { x: 81, y: 42 },
+    placement: { x: 24, y: 73 },
+    funnel: { x: 50, y: 84 },
+    experiment: { x: 76, y: 73 },
+    monitoring: { x: 38, y: 30 },
+    execution: { x: 62, y: 30 },
   }
   return positions[agentId ?? 'orchestrator'] ?? { x: 50, y: 50 }
 }
@@ -1634,9 +1715,13 @@ function fallbackCouncilAgents(): AgentCouncilSession['agents'] {
   return [
     { id: 'orchestrator', name: 'Orchestrator', role: 'routes work and asks follow-up questions', state: 'waiting', requiresApproval: true },
     { id: 'audit', name: 'Performance Auditor', role: 'checks 180-day evidence', state: 'waiting', requiresApproval: false },
+    { id: 'meta_ai_strategist', name: 'Meta AI Strategist', role: 'captures Meta AI recommendations', state: 'waiting', requiresApproval: false },
     { id: 'audience', name: 'Audience Specialist', role: 'ranks interests, age, gender, geo', state: 'waiting', requiresApproval: false },
     { id: 'creative', name: 'Creative Analyst', role: 'ranks videos and hooks', state: 'waiting', requiresApproval: false },
     { id: 'placement', name: 'Placement Optimizer', role: 'guards Instagram placement mix', state: 'waiting', requiresApproval: false },
+    { id: 'funnel', name: 'Funnel Tracking Agent', role: 'tracks landing page and Telegram starts', state: 'waiting', requiresApproval: false },
+    { id: 'experiment', name: 'Experiment Agent', role: 'designs A/B tests and stop rules', state: 'waiting', requiresApproval: false },
+    { id: 'monitoring', name: 'Monitoring Agent', role: 'checks campaigns every four hours', state: 'waiting', requiresApproval: false },
     { id: 'execution', name: 'Execution Agent', role: 'creates paused drafts only', state: 'waiting', requiresApproval: true },
   ]
 }
