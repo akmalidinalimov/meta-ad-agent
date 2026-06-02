@@ -18,6 +18,7 @@ from .routers import crm as crm_router
 from .routers import dashboard as dashboard_router
 from .routers import funnel as funnel_router
 from .routers import meta as meta_router
+from .routers import meta_ai as meta_ai_router
 from .routers import monitoring as monitoring_router
 from .routers import planning as planning_router
 from .routers import tasks as tasks_router
@@ -52,6 +53,7 @@ for module in (
     approvals_router,
     tasks_router,
     telegram_router,
+    meta_ai_router,
     agents_router,
 ):
     app.include_router(module.router)

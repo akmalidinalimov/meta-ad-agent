@@ -90,3 +90,12 @@ class AgentTaskRequest(BaseModel):
     campaignGroupId: str | None = None
     segmentIds: list[str] = []
     prepareApproval: bool = False
+
+
+class MetaAiCaptureRequest(BaseModel):
+    sourceText: str = ""
+    screenshotText: str = ""
+    campaignId: str | None = None
+    campaignName: str | None = None
+    objectLevel: str | None = None
+    capturedBy: str = "operator"

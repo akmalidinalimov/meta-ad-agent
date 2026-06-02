@@ -21,6 +21,7 @@ import {
   Settings,
   ShieldAlert,
   SlidersHorizontal,
+  Sparkles,
   Target,
   TrendingDown as TrendingDownIcon,
   TrendingUp,
@@ -44,6 +45,7 @@ import {
 } from 'recharts'
 import { ChartFrame } from './dashboard/shared/ChartFrame'
 import { MediaThumb } from './dashboard/shared/MediaThumb'
+import { MetaAiCaptureView } from './dashboard/sections/MetaAiCaptureView'
 import { PanelHeading } from './dashboard/shared/PanelHeading'
 import {
   deriveCreativeScores,
@@ -111,6 +113,7 @@ const navItems = [
   { id: 'audiences', label: 'Audiences', icon: Users },
   { id: 'placements', label: 'Placements', icon: RadioTower },
   { id: 'experiments', label: 'Experiments', icon: FlaskConical },
+  { id: 'metaAi', label: 'Meta AI', icon: Sparkles },
   { id: 'campaignBuilder', label: 'Campaign Builder', icon: ClipboardCheck },
   { id: 'strategy', label: 'Strategy', icon: Target },
   { id: 'settingsAudit', label: 'Settings Audit', icon: ClipboardCheck },
@@ -309,6 +312,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
           {activeView === 'audiences' && <AudiencesView data={data} />}
           {activeView === 'placements' && <PlacementsView placements={placements} />}
           {activeView === 'experiments' && <ExperimentsView data={data} />}
+          {activeView === 'metaAi' && <MetaAiCaptureView />}
           {activeView === 'campaignBuilder' && <CampaignBuilderView />}
           {activeView === 'strategy' && <StrategyView />}
           {activeView === 'settingsAudit' && <SettingsAuditView />}
