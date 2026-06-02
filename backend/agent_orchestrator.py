@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .agent_quality import evaluate_agent_response
@@ -120,9 +121,9 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
 }
 
 SPECIALIST_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "audience": ("audience", "target", "interest", "age", "gender", "country", "region", "city", "tashkent"),
+    "audience": ("audience", "audiences", "target", "interest", "interests", "age", "gender", "country", "region", "city", "tashkent"),
     "creative": ("creative", "creatives", "video", "hook", "thumbnail", "viral", "visual"),
-    "placement": ("placement", "facebook", "instagram", "reels", "stories", "feed", "threads"),
+    "placement": ("placement", "placements", "facebook", "instagram", "reels", "stories", "feed", "threads"),
     "funnel": ("funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"),
     "monitoring": ("monitor", "alert", "trend", "rising", "improving", "getting expensive"),
     "experiment": ("experiment", "test", "ab test", "a/b", "scale rule", "stop rule"),
@@ -156,19 +157,19 @@ def route_question(question: str) -> dict[str, Any]:
     if len(detect_involved_agents(question)) >= 2:
         return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
     if is_campaign_analysis_request(lower):
-        if any(word in lower for word in ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
+        if matches_any_keyword(lower, ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
             return route("creative", "Campaign-specific creative analysis should rank actual ads before planning.")
-        if any(word in lower for word in ["placement", "facebook", "instagram", "reels", "stories", "feed", "threads"]):
+        if matches_any_keyword(lower, ["placement", "placements", "facebook", "instagram", "reels", "stories", "feed", "threads"]):
             return route("placement", "Campaign-specific placement analysis should inspect delivery quality before planning.")
-        if any(word in lower for word in ["audience", "target", "interest", "age", "gender", "country", "region", "city", "tashkent"]):
+        if matches_any_keyword(lower, ["audience", "audiences", "target", "interest", "interests", "age", "gender", "country", "region", "city", "tashkent"]):
             return route("audience", "Campaign-specific audience analysis should rank actual ad sets before planning.")
-    if any(word in lower for word in ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
+    if matches_any_keyword(lower, ["creative", "video", "hook", "thumbnail", "viral", "visual"]):
         return route("creative", "Creative question needs hook, asset, and buyer-intent analysis.")
-    if any(word in lower for word in ["audience", "target", "interest", "age", "gender", "country", "region", "city", "tashkent"]):
+    if matches_any_keyword(lower, ["audience", "audiences", "target", "interest", "interests", "age", "gender", "country", "region", "city", "tashkent"]):
         return route("audience", "Audience question needs targeting and purchasing-power reasoning.")
-    if any(word in lower for word in ["placement", "facebook", "instagram", "reels", "stories", "feed", "threads"]):
+    if matches_any_keyword(lower, ["placement", "placements", "facebook", "instagram", "reels", "stories", "feed", "threads"]):
         return route("placement", "Placement question needs platform and position-level quality checks.")
-    if any(word in lower for word in ["funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"]):
+    if matches_any_keyword(lower, ["funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"]):
         return route("funnel", "Funnel question needs event tracking and attribution reasoning.")
     if is_monitoring_request(lower):
         return route("monitoring", "Monitoring question needs trend detection and alert rules.")
@@ -585,8 +586,18 @@ def detect_involved_agents(question: str) -> list[str]:
     return [
         agent
         for agent, keywords in SPECIALIST_KEYWORDS.items()
-        if any(keyword in lower for keyword in keywords)
+        if matches_any_keyword(lower, keywords)
     ]
+
+
+def matches_any_keyword(lower_question: str, keywords: tuple[str, ...] | list[str]) -> bool:
+    return any(matches_keyword(lower_question, keyword) for keyword in keywords)
+
+
+def matches_keyword(lower_question: str, keyword: str) -> bool:
+    if " " in keyword or "/" in keyword or "+" in keyword or "-" in keyword:
+        return keyword in lower_question
+    return bool(re.search(rf"\b{re.escape(keyword)}\b", lower_question))
 
 
 def build_agent_handoffs(agent_id: str) -> list[dict[str, Any]]:

@@ -57,6 +57,13 @@ def test_route_question_keeps_campaign_specific_analysis_with_specialist():
     )
 
 
+def test_route_question_does_not_match_age_inside_landing_page():
+    assert (
+        route_question("Diagnose whether we lose people before landing page, Telegram START, form, or CRM purchase.")["agentId"]
+        == "funnel"
+    )
+
+
 def test_orchestrator_handles_multi_specialist_strategy_questions_with_decision_trace():
     response = orchestrate_agent_chat(
         "Analyze the best audience, creatives, placements, funnel quality, and experiments for the next campaign",
