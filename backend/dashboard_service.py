@@ -835,6 +835,47 @@ def answer_funnel(data: dict[str, Any]) -> str:
     )
 
 
+def answer_measurement(data: dict[str, Any]) -> str:
+    tracking = data.get("trackingHealth", []) or []
+    broken = [item for item in tracking if item.get("status") != "healthy"]
+    buyers = sum(as_float(row.get("purchases")) for row in data.get("metrics", []) or [])
+    broken_text = "; ".join(f"{item.get('name')} is {item.get('status')} at {item.get('matchRate', 0)}% match" for item in broken) or "no broken events flagged"
+    verdict = "NOT trusted — scaling is premature" if (broken or not buyers) else "acceptable for cautious scaling"
+    return (
+        f"Measurement readiness: {verdict}. Attributed purchases in the model: {buyers:,.0f}. "
+        f"Event health: {broken_text}. "
+        "Leads are reported under several Meta action types (lead/registration), so treat lead volume as a quality proxy and dedup before trusting it. "
+        "Pick one canonical conversion per objective and confirm Pixel/CAPI + Telegram START before any budget scale."
+    )
+
+
+def answer_budget_pacing(data: dict[str, Any]) -> str:
+    campaigns = data.get("campaigns", []) or []
+    total_budget = sum(as_float(c.get("dailyBudgetUsd")) for c in campaigns)
+    spend = sum(as_float(row.get("spendUsd")) for row in data.get("metrics", []) or [])
+    utilization = (spend / total_budget * 100) if total_budget else 0
+    pacing = "under-delivering (<70% of budget)" if 0 < utilization < 70 else "pacing normally" if utilization else "no daily-budget data yet"
+    return (
+        f"Budget pacing: {pacing}" + (f" at {utilization:.0f}% utilization." if total_budget else ".") + " "
+        "Use ABO while testing (so each ad set gets enough budget to exit the learning phase) and switch to CBO once a winner is proven. "
+        "Do not scale an ad set still in learning or one without the primary success metric (qualified lead / Telegram START); cap steps at ~20%."
+    )
+
+
+def answer_landing_cro(data: dict[str, Any]) -> str:
+    funnel_steps = data.get("funnel", [])[1:]
+    if funnel_steps:
+        weakest = min(funnel_steps, key=lambda item: parse_percent(item.get("rate", "0%")))
+        leak = f"The biggest landing/funnel leak is {weakest['step']} at {weakest['rate']}."
+    else:
+        leak = "No funnel data is synced yet, so the leak location is unconfirmed."
+    return (
+        f"{leak} As the CRO owner I would: (1) check message-match between the ad's promise and the landing/VSL headline, "
+        "(2) check page-speed and VSL early drop-off, (3) reduce form/Telegram handoff friction. "
+        "Then run one controlled CRO test on that single step before asking for more traffic."
+    )
+
+
 def answer_experiments(data: dict[str, Any]) -> str:
     first = data["experiments"][0]
     ready_actions = [item for item in data["approvalActions"] if item["status"] == "ready"]

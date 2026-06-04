@@ -21,10 +21,13 @@ from ..approval_store import list_approval_requests
 from ..campaign_specific_analysis import campaign_specific_answer
 from ..dashboard_service import (
     answer_audiences,
+    answer_budget_pacing,
     answer_creatives,
     answer_experiments,
     answer_from_knowledge_base,
     answer_funnel,
+    answer_landing_cro,
+    answer_measurement,
     answer_meta_status,
     answer_monitoring,
     answer_placements,
@@ -85,7 +88,7 @@ def agent_insights() -> dict[str, Any]:
 def agent_status_payload(agent: dict[str, Any], knowledge: dict[str, Any] | None, live_writes_enabled: bool) -> dict[str, Any]:
     agent_id = str(agent.get("id") or "")
     blocked_reasons = []
-    if agent_id in {"audit", "audience", "creative", "placement", "funnel", "monitoring", "experiment"} and not knowledge:
+    if agent_id in {"audit", "audience", "creative", "placement", "funnel", "monitoring", "experiment", "measurement", "budget_pacing", "landing_cro"} and not knowledge:
         blocked_reasons.append("knowledge_base_missing")
     if agent_id in {"execution", "browser_operator"} and not live_writes_enabled:
         blocked_reasons.append("live_writes_disabled")
@@ -285,6 +288,37 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
                 "Which variable should we test first?",
             ],
         )
+
+    new_specialists = {
+        "measurement": (
+            answer_measurement,
+            ["trackingHealth", "metrics", "storage/meta_knowledge_base.json"],
+            ["Which attribution window should we use?", "Is our lead count double-counted?", "Is measurement good enough to scale?"],
+        ),
+        "budget_pacing": (
+            answer_budget_pacing,
+            ["campaigns", "metrics", "docs/AGENT_OPERATING_POLICY.md"],
+            ["Are we under-pacing budget?", "Should this be CBO or ABO?", "What is a safe budget step?"],
+        ),
+        "landing_cro": (
+            answer_landing_cro,
+            ["funnel", "trackingHealth"],
+            ["Where is the landing-page leak?", "Is the message-match off?", "What CRO test should we run first?"],
+        ),
+    }
+    if routed["agentId"] in new_specialists:
+        builder, sources, suggested = new_specialists[routed["agentId"]]
+        answer = builder(dashboard_data)
+        if knowledge:
+            persona_prompt = specialist_system_prompt(routed["agentId"])
+            try:
+                llm_answer = await generate_specialist_answer(question, knowledge_chat_preview(knowledge), system_prompt=persona_prompt) if persona_prompt else None
+            except Exception:
+                llm_answer = None
+            if llm_answer:
+                answer = llm_answer
+                sources = [*sources, "openai", routed["agentId"]]
+        return specialist_chat_response(question, answer=answer, sources=sources, suggestedQuestions=suggested)
 
     if knowledge:
         campaign_answer = campaign_specific_answer(question, knowledge)

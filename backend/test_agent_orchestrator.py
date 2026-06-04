@@ -128,6 +128,19 @@ def test_route_question_does_not_match_age_inside_landing_page():
     )
 
 
+def test_routes_to_new_specialist_agents():
+    assert route_question("Is our pixel/CAPI attribution healthy and are leads double-counted?")["agentId"] == "measurement"
+    assert route_question("Are we under-pacing budget and should this be CBO or ABO?")["agentId"] == "budget_pacing"
+    assert route_question("How do we fix the landing page message match and page speed?")["agentId"] == "landing_cro"
+
+
+def test_new_specialist_agents_registered_with_safe_permissions():
+    registry = agent_registry()
+    for agent_id in ["measurement", "budget_pacing", "landing_cro"]:
+        assert agent_id in registry
+        assert registry[agent_id]["canExecuteLiveChanges"] is False
+
+
 def test_confidence_is_evidence_derived_not_field_presence():
     # A thin single-agent response (sources + next steps but no confident handoffs)
     # should be moderate, NOT a 95 stamped purely for having non-empty fields.

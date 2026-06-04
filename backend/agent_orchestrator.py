@@ -82,6 +82,33 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
         "canExecuteLiveChanges": False,
         "requiresApproval": False,
     },
+    "measurement": {
+        "name": "Measurement & Attribution Agent",
+        "purpose": "Own Pixel/CAPI event health, attribution windows, and lead/registration dedup; gate every scale decision on trustworthy measurement.",
+        "inputs": ["pixel/dataset diagnostics", "tracking health", "attribution windows", "lead/registration action mix"],
+        "outputs": ["measurement readiness verdict", "attribution-window recommendation", "dedup/double-count warnings", "scale gate"],
+        "tools": ["tracking_health", "dataset_diagnostics", "knowledge_base"],
+        "canExecuteLiveChanges": False,
+        "requiresApproval": False,
+    },
+    "budget_pacing": {
+        "name": "Budget & Pacing Agent",
+        "purpose": "Watch spend pacing, learning-phase status, and decide CBO vs ABO and safe budget steps.",
+        "inputs": ["daily budgets", "spend pacing", "learning-phase status", "target CPA", "sales capacity"],
+        "outputs": ["pacing diagnosis", "CBO/ABO recommendation", "approval-safe budget step", "learning-phase guardrails"],
+        "tools": ["dashboard_data", "campaign_watch", "knowledge_base"],
+        "canExecuteLiveChanges": False,
+        "requiresApproval": False,
+    },
+    "landing_cro": {
+        "name": "Landing & CRO Agent",
+        "purpose": "Own the landing page / VSL: message-match, page speed, form/Telegram handoff friction, and conversion-rate optimization for the diagnosed funnel leak.",
+        "inputs": ["funnel leak diagnosis", "landing events", "creative promise vs LP headline", "Telegram/form handoff"],
+        "outputs": ["LP/VSL fix list", "message-match check", "CRO test ideas for the leaking step"],
+        "tools": ["funnel_events", "landing_tracker", "knowledge_base"],
+        "canExecuteLiveChanges": False,
+        "requiresApproval": False,
+    },
     "meta_ai_advisor": {
         "name": "Meta AI Advisor Agent",
         "purpose": "Capture and interpret Ads Manager AI Analyze recommendations as read-only platform-side evidence.",
@@ -127,6 +154,9 @@ SPECIALIST_KEYWORDS: dict[str, tuple[str, ...]] = {
     "funnel": ("funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"),
     "monitoring": ("monitor", "alert", "trend", "rising", "improving", "getting expensive"),
     "experiment": ("experiment", "test", "ab test", "a/b", "scale rule", "stop rule"),
+    "measurement": ("attribution", "attribution window", "pixel health", "capi", "conversions api", "dedup", "double count", "double-count", "measurement", "tracking health", "event match"),
+    "budget_pacing": ("pacing", "budget utilization", "underspending", "overspending", "learning phase", "learning limited", "cbo", "abo", "budget split", "budget allocation"),
+    "landing_cro": ("cro", "conversion rate optimization", "message match", "message-match", "page speed", "form friction", "landing optimization", "optimize landing", "optimize the landing", "fix the landing", "landing page speed"),
 }
 
 
@@ -150,6 +180,14 @@ def route_question(question: str) -> dict[str, Any]:
         return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
     if has_execution_intent(lower):
         return route("execution", "Live Meta change request requires approval and API-first execution policy.")
+    # Specific new specialist intents take priority over multi-specialist aggregation,
+    # so an attribution/pacing/CRO question reaches its owner instead of being merged.
+    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["measurement"]):
+        return route("measurement", "Measurement/attribution question needs Pixel/CAPI health, attribution-window, and dedup reasoning.")
+    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["budget_pacing"]):
+        return route("budget_pacing", "Budget/pacing question needs pacing, learning-phase, and CBO/ABO reasoning.")
+    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["landing_cro"]):
+        return route("landing_cro", "Landing/CRO question needs message-match, page-speed, and funnel-leak remediation reasoning.")
     if len(detect_involved_agents(question)) >= 3:
         return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
     if is_monitoring_request(lower):
@@ -418,6 +456,9 @@ def describe_agent_system() -> str:
         "creative",
         "placement",
         "funnel",
+        "measurement",
+        "budget_pacing",
+        "landing_cro",
         "monitoring",
         "experiment",
         "meta_ai_advisor",
@@ -602,6 +643,12 @@ def build_evidence_needs(involved_agents: list[str]) -> list[str]:
         needs.append("Landing click, Telegram START, form click, and CRM attribution events.")
     if "experiment" in involved_agents:
         needs.append("One-variable test plan with stop and scale rules.")
+    if "measurement" in involved_agents:
+        needs.append("Pixel/CAPI event health, attribution windows, and lead/registration dedup status.")
+    if "budget_pacing" in involved_agents:
+        needs.append("Spend pacing vs daily budget, learning-phase status, and CBO/ABO choice.")
+    if "landing_cro" in involved_agents:
+        needs.append("Landing/VSL message-match, page speed, and form/Telegram handoff friction.")
     return needs
 
 
@@ -661,6 +708,17 @@ def build_agent_handoffs(agent_id: str) -> list[dict[str, Any]]:
         ],
         "placement": [
             handoff("placement", "experiment", "Convert placement findings into safe placement tests.", ["placement ranking", "platform quality notes"], "Placement experiment matrix", "medium"),
+        ],
+        "measurement": [
+            handoff("measurement", "budget_pacing", "Gate any scale decision on trustworthy measurement before budget moves.", ["pixel/CAPI health", "attribution windows", "dedup status"], "Scale gate verdict", "high"),
+            handoff("measurement", "audit", "Feed attribution/dedup caveats into the historical lessons.", ["lead/registration action mix", "tracking health"], "Measurement-adjusted confidence notes", "medium"),
+        ],
+        "budget_pacing": [
+            handoff("budget_pacing", "experiment", "Turn pacing/learning findings into a safe budget-step test instead of a live change.", ["pacing diagnosis", "learning-phase status", "target CPA"], "Approval-safe budget step", "high"),
+        ],
+        "landing_cro": [
+            handoff("landing_cro", "experiment", "Convert the landing/VSL leak into a controlled CRO test.", ["funnel leak diagnosis", "message-match check"], "CRO test for the leaking step", "high"),
+            handoff("landing_cro", "funnel", "Confirm the diagnosed leak with funnel/Telegram tracking before optimizing.", ["funnel summary", "landing events"], "Validated leak location", "medium"),
         ],
     }
     return handoff_map.get(agent_id, [])
