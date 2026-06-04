@@ -154,15 +154,34 @@ def analyze_interests(adsets: list[dict[str, Any]], base_rows: list[dict[str, An
         interests = extract_interests(adset.get("targeting", {}))
         if not interests:
             interests = ["Broad / no explicit interests"]
+        # When an ad set stacks several interests, Meta does not attribute results to a
+        # single interest — each interest below inherits the SAME ad-set metrics, so they
+        # are not independently ranked performers. Flag that shared attribution.
+        shared = len(interests) > 1
         for interest in interests:
-            current = interest_groups.setdefault(interest, {"label": interest, "rows": 0, "adsetCount": 0})
+            current = interest_groups.setdefault(
+                interest,
+                {"label": interest, "rows": 0, "adsetCount": 0, "sharedAttribution": False},
+            )
             current["adsetCount"] += 1
+            if shared:
+                current["sharedAttribution"] = True
             for row in adset_rows:
                 merge_metrics(current, row)
 
     ranked = []
     for item in interest_groups.values():
         finalize_metrics(item)
+        # Make the attribution limitation explicit on every interest item. Where the metric
+        # was inherited from a multi-interest ad set, we describe it as "present in winning
+        # ad sets" rather than an independently ranked performer.
+        item["attributionCaveat"] = (
+            "Metrics are inherited from the ad set's full interest stack and shared across "
+            "all its interests; treat as 'present in winning ad sets', not independently ranked."
+            if item.get("sharedAttribution")
+            else "Single-interest ad set, so the metric is attributable to this interest."
+        )
+        item["independentlyRanked"] = not item.get("sharedAttribution", False)
         ranked.append(item)
     return sorted(ranked, key=quality_sort, reverse=True)[:25]
 

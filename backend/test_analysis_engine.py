@@ -1,6 +1,7 @@
 from backend.analysis_engine import (
     action_count,
     action_value,
+    analyze_interests,
     finalize_metrics,
     quality_score,
     summarize_overall,
@@ -149,6 +150,39 @@ def test_finalize_metrics_flags_lead_double_count_risk():
     item = {"clicks": 100.0, "leads": 150.0, "impressions": 1000.0}
     finalize_metrics(item)
     assert item["leadDoubleCountRisk"] is True
+
+
+def test_analyze_interests_flags_shared_attribution_for_stacked_interests():
+    adsets = [
+        {
+            "id": "as_multi",
+            "targeting": {"interests": [{"name": "Artificial intelligence"}, {"name": "Freelancing"}]},
+        },
+        {
+            "id": "as_single",
+            "targeting": {"interests": [{"name": "Graphic design"}]},
+        },
+    ]
+    base_rows = [
+        {"adset_id": "as_multi", "spend": "100", "impressions": "5000", "clicks": "300", "actions": [{"action_type": "lead", "value": "40"}]},
+        {"adset_id": "as_single", "spend": "80", "impressions": "4000", "clicks": "250", "actions": [{"action_type": "lead", "value": "30"}]},
+    ]
+    interests = analyze_interests(adsets, base_rows)
+    by_label = {item["label"]: item for item in interests}
+
+    ai = by_label["Artificial intelligence"]
+    freelancing = by_label["Freelancing"]
+    design = by_label["Graphic design"]
+
+    # Stacked interests share attribution and tie on inherited metrics.
+    assert ai["sharedAttribution"] is True
+    assert ai["independentlyRanked"] is False
+    assert "present in winning ad sets" in ai["attributionCaveat"]
+    assert ai["leads"] == freelancing["leads"]  # inherited identical metric
+
+    # The single-interest ad set is independently attributable.
+    assert design["sharedAttribution"] is False
+    assert design["independentlyRanked"] is True
 
 
 def test_finalize_metrics_buyer_economics_with_purchases():
