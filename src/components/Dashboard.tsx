@@ -89,6 +89,7 @@ import type {
   Placement,
   RankingRow,
   SystemChecklist,
+  Tone,
   TrackingHealthItem,
 } from '../types/marketing'
 
@@ -307,40 +308,46 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
         })}
       </nav>
 
+      {data.dataSource?.backendUnreachable && (
+        <div className="data-banner danger" role="status">
+          <AlertTriangle size={16} />
+          <span>Backend not reachable — showing local sample data. These numbers are NOT live; connect the backend before making decisions.</span>
+        </div>
+      )}
+
       <Filters data={data} filters={filters} onChange={setFilters} />
 
-      {!hasData ? (
-        <EmptyState onReset={() => setFilters(defaultFilters)} />
-      ) : (
-        <>
-          {activeView === 'overview' && (
-            <Overview
-              data={data}
-              kpis={filteredKpis}
-              creativeScores={creativeScores}
-              funnel={funnel}
-              trend={trend}
-              placements={placements}
-              metrics={filteredMetrics}
-              onAskWhy={askAgentsAbout}
-            />
-          )}
-          {activeView === 'commandCenter' && (
-            <CommandCenterView
-              data={data}
-              latestCouncil={latestCouncil}
-              onCouncilReady={setLatestCouncil}
-              chatMessages={chatMessages}
-              chatInput={chatInput}
-              isChatLoading={isChatLoading}
-              onChatInputChange={setChatInput}
-              onChatSend={sendChatMessage}
-            />
-          )}
-          {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
-          {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} onDashboardRefresh={onRefresh} />}
-        </>
+      {/* Empty state is scoped to the data-driven Overview only, so an over-narrow
+          filter never hides Settings (reconnect) or Command Center (ask the agent). */}
+      {activeView === 'overview' &&
+        (hasData ? (
+          <Overview
+            data={data}
+            kpis={filteredKpis}
+            creativeScores={creativeScores}
+            funnel={funnel}
+            trend={trend}
+            placements={placements}
+            metrics={filteredMetrics}
+            onAskWhy={askAgentsAbout}
+          />
+        ) : (
+          <EmptyState onReset={() => setFilters(defaultFilters)} />
+        ))}
+      {activeView === 'commandCenter' && (
+        <CommandCenterView
+          data={data}
+          latestCouncil={latestCouncil}
+          onCouncilReady={setLatestCouncil}
+          chatMessages={chatMessages}
+          chatInput={chatInput}
+          isChatLoading={isChatLoading}
+          onChatInputChange={setChatInput}
+          onChatSend={sendChatMessage}
+        />
       )}
+      {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
+      {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} onDashboardRefresh={onRefresh} />}
     </main>
   )
 }
@@ -592,6 +599,19 @@ function AgentChatPanel({
       <div className="agent-chat-messages">
         {messages.map((message) => (
           <div className={`chat-message ${message.role}`} key={message.id}>
+            {message.role === 'agent' && message.sources && message.sources.length > 0 && (
+              <span
+                className={`provenance-chip ${
+                  message.sources.includes('openai') ? 'llm' : message.sources.includes('error') ? 'error' : 'rule'
+                }`}
+              >
+                {message.sources.includes('openai')
+                  ? 'Live + LLM'
+                  : message.sources.includes('error')
+                    ? 'Unavailable'
+                    : 'Rule-based'}
+              </span>
+            )}
             <p>{message.content}</p>
             {message.activeAgent && <small>Agent: {labelRawSetting(message.activeAgent)}{message.routeReason ? ` · ${message.routeReason}` : ''}</small>}
             {message.quality && <small>Quality: {message.quality.score}/100 · {labelRawSetting(message.quality.status)}</small>}
@@ -2762,12 +2782,18 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
   }
 
   const reject = async (approvalId: string) => {
+    // Reject permanently kills a planned packet — confirm and capture a real reason
+    // (the backend stores and re-displays it) instead of a meaningless canned string.
+    const reason = window.prompt('Reject this approval? Enter a short reason (it will be recorded):')
+    if (reason === null) {
+      return
+    }
     setMessage('Rejecting request...')
     try {
       const response = await fetch(`/api/approvals/${approvalId}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rejectedBy: 'dashboard', reason: 'Rejected in dashboard.' }),
+        body: JSON.stringify({ rejectedBy: 'dashboard', reason: reason.trim() || 'Rejected in dashboard.' }),
       })
       if (!response.ok) {
         const result = (await response.json()) as { detail?: string }
@@ -2782,12 +2808,16 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
   }
 
   const requestChanges = async (approvalId: string) => {
+    const note = window.prompt('What changes are needed? This note is sent back with the request:')
+    if (note === null) {
+      return
+    }
     setMessage('Marking request as needs changes...')
     try {
       const response = await fetch(`/api/approvals/${approvalId}/changes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestedBy: 'dashboard', note: 'Needs changes in dashboard.' }),
+        body: JSON.stringify({ requestedBy: 'dashboard', note: note.trim() || 'Needs changes in dashboard.' }),
       })
       if (!response.ok) {
         const result = (await response.json()) as { detail?: string }
@@ -2972,6 +3002,16 @@ function deriveFilteredKpis(metrics: DailyAdMetric[], trackingHealth: TrackingHe
   const averageTrackingHealth = Math.round(
     sumBy(trackingHealth, (item) => item.matchRate) / Math.max(1, trackingHealth.length),
   )
+  // Tone reflects whether a rate is on-target, not merely non-zero — so an off-target
+  // funnel reads as warning/danger instead of a misleading "good" just because it exists.
+  const visitRate = clicks > 0 ? (landingPageViews / clicks) * 100 : 0
+  const lpLeadRate = landingPageViews > 0 ? (leads / landingPageViews) * 100 : 0
+  const toneForRate = (value: number, good: number, warn: number, hasInputs: boolean): Tone => {
+    if (!hasInputs) return 'neutral'
+    if (value >= good) return 'good'
+    if (value >= warn) return 'warning'
+    return 'danger'
+  }
 
   return [
     {
@@ -2987,7 +3027,7 @@ function deriveFilteredKpis(metrics: DailyAdMetric[], trackingHealth: TrackingHe
       value: formatPercent(landingPageViews, clicks),
       change: `${formatNumber(landingPageViews)} landing visits`,
       helper: 'Landing visits / clicks',
-      tone: landingPageViews > 0 ? 'good' : 'warning',
+      tone: toneForRate(visitRate, 70, 40, clicks > 0),
       icon: 'bot',
     },
     {
@@ -2995,7 +3035,7 @@ function deriveFilteredKpis(metrics: DailyAdMetric[], trackingHealth: TrackingHe
       value: formatPercent(leads, landingPageViews),
       change: `${formatNumber(leads)} leads`,
       helper: 'Leads / landing visits',
-      tone: leads > 0 ? 'good' : 'warning',
+      tone: toneForRate(lpLeadRate, 35, 15, landingPageViews > 0),
       icon: 'target',
     },
     {

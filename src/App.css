@@ -100,6 +100,50 @@
   background: #fff9e8;
 }
 
+.data-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-weight: var(--weight-medium, 600);
+}
+
+.data-banner.danger {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.provenance-chip {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: var(--weight-medium, 600);
+  border: 1px solid transparent;
+}
+
+.provenance-chip.llm {
+  color: #0f766e;
+  background: var(--accent-soft, #e6f4f1);
+  border-color: var(--accent-soft-border, #b6e0d8);
+}
+
+.provenance-chip.rule {
+  color: #475569;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+
+.provenance-chip.error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
 .status-pill.good {
   border-color: var(--accent-soft-border);
   color: var(--accent);

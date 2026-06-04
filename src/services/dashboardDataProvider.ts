@@ -68,7 +68,15 @@ export const dashboardDataProvider: DashboardDataProvider = {
       return await apiDashboardDataProvider.getDashboardData()
     } catch (error) {
       console.warn('Falling back to local mock dashboard data.', error)
-      return mockDashboardDataProvider.getDashboardData()
+      const mock = await mockDashboardDataProvider.getDashboardData()
+      // Tag the fallback so the UI can warn the operator they are NOT looking at live data.
+      return {
+        ...mock,
+        dataSource: {
+          ...(mock.dataSource ?? { kind: 'mock', label: 'Local sample data' }),
+          backendUnreachable: true,
+        },
+      }
     }
   },
 }

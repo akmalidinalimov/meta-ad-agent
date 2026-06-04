@@ -316,6 +316,9 @@ export interface DashboardData {
     days?: number
     rawCounts?: Record<string, number>
     syncErrors?: Array<{ source: string; error: string }>
+    // True only when the backend was unreachable and we fell back to local sample data,
+    // distinct from the backend deliberately serving mock/demo data.
+    backendUnreachable?: boolean
   }
 }
 
