@@ -92,7 +92,16 @@ import type {
   TrackingHealthItem,
 } from '../types/marketing'
 
-const COLORS = ['#1f9d8a', '#3b82f6', '#f59e0b', '#ef4444', '#7c3aed', '#0f766e']
+// Sourced from the --chart-* custom properties in index.css so the chart
+// palette tracks the design tokens (incl. dark mode) in one place.
+const COLORS = [
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+  'var(--chart-6)',
+]
 
 const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
   alert: AlertTriangle,
