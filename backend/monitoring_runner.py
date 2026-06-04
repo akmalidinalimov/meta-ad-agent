@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .monitoring_rules import evaluate_monitoring_snapshot
+from .storage_io import read_json, write_json_atomic
 
 ROOT = Path(__file__).resolve().parents[1]
 STORAGE_DIR = ROOT / "storage"
@@ -118,22 +119,12 @@ def save_monitoring_alerts(alerts: list[dict[str, Any]], *, storage_dir: Path = 
 
 
 def list_monitoring_alerts(*, storage_dir: Path = STORAGE_DIR) -> list[dict[str, Any]]:
-    path = storage_dir / "monitoring_alerts.json"
-    if not path.exists():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
+    payload = read_json(storage_dir / "monitoring_alerts.json", [])
     return payload if isinstance(payload, list) else []
 
 
 def write_monitoring_alerts(rows: list[dict[str, Any]], *, storage_dir: Path = STORAGE_DIR) -> None:
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    (storage_dir / "monitoring_alerts.json").write_text(
-        json.dumps(rows, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    write_json_atomic(storage_dir / "monitoring_alerts.json", rows)
 
 
 def format_monitoring_alert(alert: dict[str, Any]) -> str:

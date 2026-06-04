@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .monitoring_runner import AlertSender, STORAGE_DIR, run_monitoring_check
+from .storage_io import read_json, write_json_atomic
 
 DashboardFactory = Callable[[], dict[str, Any]]
 RUNS_PATH = STORAGE_DIR / "monitoring_runs.json"
@@ -78,23 +78,13 @@ def run_scheduled_monitoring(
 
 
 def list_monitoring_runs(*, storage_dir: Path = STORAGE_DIR) -> list[dict[str, Any]]:
-    path = storage_dir / "monitoring_runs.json"
-    if not path.exists():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
+    payload = read_json(storage_dir / "monitoring_runs.json", [])
     return payload if isinstance(payload, list) else []
 
 
 def save_monitoring_run(run: dict[str, Any], *, storage_dir: Path = STORAGE_DIR) -> None:
     rows = [run, *list_monitoring_runs(storage_dir=storage_dir)]
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    (storage_dir / "monitoring_runs.json").write_text(
-        json.dumps(rows[:100], indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    write_json_atomic(storage_dir / "monitoring_runs.json", rows[:100])
 
 
 def first_completed_run(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
