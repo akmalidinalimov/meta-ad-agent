@@ -7,11 +7,10 @@ routers and the service modules they depend on.
 
 from __future__ import annotations
 
-import os
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .config import allowed_origins
 from .routers import agents as agents_router
 from .routers import approvals as approvals_router
 from .routers import crm as crm_router
@@ -26,18 +25,9 @@ from .routers import telegram as telegram_router
 
 app = FastAPI(title="Meta Ad Agent API")
 
-ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv(
-        "FUNNEL_ALLOWED_ORIGINS",
-        "http://127.0.0.1:5173,http://localhost:5173",
-    ).split(",")
-    if origin.strip()
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

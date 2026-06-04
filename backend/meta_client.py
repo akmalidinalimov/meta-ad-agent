@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import ssl
 from dataclasses import dataclass
@@ -190,7 +191,11 @@ async def get_insights(
         "time_increment": 1,
         "fields": (
             "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
-            "date_start,date_stop,impressions,reach,frequency,spend,cpm,ctr,cpc,clicks,actions,action_values"
+            "date_start,date_stop,impressions,reach,frequency,spend,cpm,ctr,cpc,clicks,actions,action_values,"
+            # Video engagement for hook-rate / hold-rate creative analysis.
+            "video_play_actions,video_thruplay_watched_actions,video_p25_watched_actions,"
+            "video_p50_watched_actions,video_p75_watched_actions,video_p100_watched_actions,"
+            "video_avg_time_watched_actions"
         ),
         "limit": 200,
     }
@@ -216,7 +221,7 @@ async def paged_get(config: MetaConfig, path: str, params: dict[str, Any]) -> li
     try:
         async with httpx.AsyncClient(timeout=60, verify=get_ssl_context()) as client:
             while url:
-                response = await client.get(url, params=request_params)
+                response = await _get_with_retry(client, url, request_params)
                 request_params = {}
                 if response.status_code >= 400:
                     if rows:
@@ -229,6 +234,47 @@ async def paged_get(config: MetaConfig, path: str, params: dict[str, Any]) -> li
         raise MetaApiError(f"Could not reach Meta API: {error}") from error
 
     return rows
+
+
+# Transient conditions worth retrying: HTTP 429/5xx and Meta throttling/transient
+# error codes (1 unknown, 2 service, 4 app rate limit, 17 user rate limit, 32 page
+# rate limit, 341 app limit reached, 613 custom rate limit).
+_TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
+_TRANSIENT_META_CODES = {1, 2, 4, 17, 32, 341, 613}
+
+
+def _is_transient_error(response: httpx.Response) -> bool:
+    if response.status_code in _TRANSIENT_HTTP_STATUS:
+        return True
+    try:
+        error = response.json().get("error", {})
+    except ValueError:
+        return False
+    return error.get("code") in _TRANSIENT_META_CODES
+
+
+async def _get_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict[str, Any],
+    *,
+    max_attempts: int = 4,
+    base_delay: float = 0.5,
+) -> httpx.Response:
+    """GET with exponential backoff on Meta throttling / transient errors.
+
+    A single throttle response used to abort a whole insights breakdown (and silently
+    return partial/zero rows); retrying lets the sync ride out short rate-limit windows.
+    """
+    response = await client.get(url, params=params)
+    delay = base_delay
+    for _ in range(max_attempts - 1):
+        if response.status_code < 400 or not _is_transient_error(response):
+            return response
+        await asyncio.sleep(delay)
+        delay *= 2
+        response = await client.get(url, params=params)
+    return response
 
 
 async def post_meta_object(config: MetaConfig, path: str, payload: dict[str, Any]) -> dict[str, Any]:

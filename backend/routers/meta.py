@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import APIRouter
 
 from ..analysis_engine import build_meta_analysis
+from ..config import live_writes_enabled
 from ..api_models import MetaSyncRequest
 from ..knowledge_base import load_knowledge_base, save_knowledge_base
 from ..llm_reasoner import generate_llm_summary
@@ -41,7 +41,7 @@ async def meta_status() -> dict[str, Any]:
         "pixelConfigured": bool(config.pixel_id),
         "tokenConfigured": bool(config.access_token),
         "tokenPreview": mask_token(config.access_token),
-        "liveWritesEnabled": os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true",
+        "liveWritesEnabled": live_writes_enabled(),
         "connected": False,
         "account": None,
         "error": None,

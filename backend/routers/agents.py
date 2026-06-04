@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import APIRouter
 
 from ..agent_council import run_strategy_council, should_run_strategy_council
+from ..config import live_writes_enabled
 from ..agent_orchestrator import (
     agent_registry,
     build_agent_decision,
@@ -105,13 +105,13 @@ def agent_status_payload(agent: dict[str, Any], knowledge: dict[str, Any] | None
 
 @router.get("/api/agents")
 def agents() -> dict[str, Any]:
-    live_writes_enabled = os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true"
+    writes_enabled = live_writes_enabled()
     knowledge = load_knowledge_base()
     return {
-        "agents": [agent_status_payload(agent, knowledge, live_writes_enabled) for agent in agent_registry().values()],
-        "executionEnabled": live_writes_enabled,
+        "agents": [agent_status_payload(agent, knowledge, writes_enabled) for agent in agent_registry().values()],
+        "executionEnabled": writes_enabled,
         "approvalRequiredForLiveChanges": True,
-        "liveWriteScope": "paused_campaign_and_adset_creation_only" if live_writes_enabled else "disabled",
+        "liveWriteScope": "paused_campaign_and_adset_creation_only" if writes_enabled else "disabled",
     }
 
 
