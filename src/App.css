@@ -1,3 +1,36 @@
+/* Global keyboard-focus ring. Many controls below reset their native outline
+   (custom buttons, chips, table rows), so we restore a visible focus indicator
+   for keyboard users without affecting mouse-driven :focus. */
+:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+/* Custom-reset buttons set their own background/border and otherwise lose the
+   ring; make sure the focus ring is clearly visible and not clipped. */
+.table-row:focus-visible,
+.app-nav button:focus-visible,
+.campaign-chip-list button:focus-visible,
+.chat-suggestions button:focus-visible,
+.mission-control-examples button:focus-visible,
+.segmented-control button:focus-visible,
+.office-playback button:focus-visible,
+.timeline-replay .council-event:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* Respect users who ask for reduced motion: disable the decorative, infinite
+   council/office animations while keeping all functional state changes. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-desk.active,
+  .council-event-flow i::after,
+  .moving-agent {
+    animation: none !important;
+  }
+}
+
 .app-shell {
   max-width: 1440px;
   margin: 0 auto;
