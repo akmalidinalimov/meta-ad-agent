@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 import httpx
@@ -14,6 +15,36 @@ load_dotenv()
 
 def _llm_enabled() -> bool:
     return bool(os.getenv("OPENAI_API_KEY", "").strip())
+
+
+_NUMBER_RE = re.compile(r"\d[\d,]*\.?\d*")
+
+
+def _significant_numbers(text: str) -> list[str]:
+    """Numbers worth grounding: skip tiny integers (years/percentages like 3, 100)
+    that legitimately appear in prose, focus on multi-digit figures that would be
+    fabricated metrics (CPL, spend, lead counts)."""
+    numbers = []
+    for raw in _NUMBER_RE.findall(text):
+        normalized = raw.replace(",", "")
+        try:
+            value = float(normalized)
+        except ValueError:
+            continue
+        if value >= 10 and normalized not in {"100", "1000"}:
+            numbers.append(normalized)
+    return numbers
+
+
+def answer_is_grounded(answer: str, context_text: str) -> bool:
+    """Hallucination guard: every significant number in the answer must appear in the
+    provided context. Prevents the model from inventing a CPL, spend, or lead count
+    that is then shown to the operator as if sourced from saved data."""
+    haystack = context_text.replace(",", "")
+    for number in _significant_numbers(answer):
+        if number not in haystack and number.rstrip("0").rstrip(".") not in haystack:
+            return False
+    return True
 
 
 async def refine_text(text: str, *, instruction: str, context: Any = None) -> str:
@@ -147,3 +178,54 @@ async def generate_chat_answer(question: str, analysis_preview: dict[str, Any]) 
         return response.json()["choices"][0]["message"]["content"]
     except Exception as error:
         return f"LLM chat unavailable: {error}"
+
+
+async def generate_specialist_answer(
+    question: str,
+    analysis_preview: dict[str, Any],
+    *,
+    system_prompt: str,
+) -> str | None:
+    """Specialist reasoning over the saved analysis using a role-specific persona.
+
+    This is the inverted LLM path: instead of the model being a generic last-resort
+    fallback, each specialist reasons with its own system prompt + the house strategy.
+    Returns None when no API key is set, on any error, OR when the answer fails the
+    hallucination guard — so the caller falls back to the deterministic template and
+    the operator never sees an ungrounded number.
+    """
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    model = os.getenv("OPENAI_MODEL", "gpt-5.4-mini").strip() or "gpt-5.4-mini"
+    context_text = json.dumps(analysis_preview, ensure_ascii=False)
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Question: {question}\n\n"
+                    "Saved Meta analysis (your only source of truth):\n"
+                    f"{context_text[:30000]}"
+                ),
+            },
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60, verify=get_ssl_context()) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+        response.raise_for_status()
+        answer = (response.json()["choices"][0]["message"]["content"] or "").strip()
+    except Exception:
+        return None
+
+    if not answer or not answer_is_grounded(answer, context_text):
+        return None
+    return answer

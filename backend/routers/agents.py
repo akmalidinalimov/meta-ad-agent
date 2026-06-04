@@ -33,8 +33,9 @@ from ..dashboard_service import (
     default_questions,
     knowledge_chat_preview,
 )
+from ..agent_personas import specialist_system_prompt
 from ..knowledge_base import load_knowledge_base
-from ..llm_reasoner import generate_chat_answer, refine_text
+from ..llm_reasoner import generate_chat_answer, generate_specialist_answer, refine_text
 from ..monitoring_scheduler import list_monitoring_runs
 from ..playbook_store import load_playbooks, save_playbook
 from ..proactive_insights import build_proactive_insights
@@ -298,15 +299,29 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
                     "What tracking is missing before scaling?",
                 ],
             )
+        # Inverted LLM path: the routed specialist reasons with its own persona +
+        # house strategy (grounded), instead of the model always speaking as a
+        # generic auditor. Falls back to the generic prompt only when the routed
+        # agent has no persona, and to deterministic templates below on any miss.
+        persona_prompt = specialist_system_prompt(routed["agentId"])
+        llm_answer: str | None = None
         try:
-            llm_answer = await generate_chat_answer(question, knowledge_chat_preview(knowledge))
+            if persona_prompt:
+                llm_answer = await generate_specialist_answer(
+                    question,
+                    knowledge_chat_preview(knowledge),
+                    system_prompt=persona_prompt,
+                )
+            else:
+                generic = await generate_chat_answer(question, knowledge_chat_preview(knowledge))
+                llm_answer = None if (not generic or generic.startswith("LLM chat unavailable")) else generic
         except Exception:
             llm_answer = None
-        if llm_answer and not llm_answer.startswith("LLM chat unavailable"):
+        if llm_answer:
             return specialist_chat_response(
                 question,
                 answer=llm_answer,
-                sources=["storage/meta_knowledge_base.json", "openai"],
+                sources=["storage/meta_knowledge_base.json", "openai", routed["agentId"]],
                 suggestedQuestions=[
                     "Which audience should we scale?",
                     "How is lead percentage calculated?",
