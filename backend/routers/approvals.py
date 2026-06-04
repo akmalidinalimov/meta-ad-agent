@@ -6,12 +6,13 @@ modules; build_meta_action_writer is local to this router (patched here).
 
 from __future__ import annotations
 
-import os
+from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from .. import approval_store, telegram_outbound
+from ..auth import require_api_key
 from ..approval_store import list_approval_requests
 from ..api_models import (
     ApprovalChangesRequest,
@@ -29,7 +30,9 @@ from ..meta_client import (
     update_ad_set as meta_update_ad_set,
     update_campaign as meta_update_campaign,
 )
+from ..config import live_writes_enabled
 from ..meta_execution import (
+    assert_executable,
     build_campaign_creation_approval,
     execute_campaign_creation_approval,
     execute_meta_action_approval,
@@ -46,7 +49,7 @@ def approvals() -> dict[str, Any]:
     return {"approvals": list_approval_requests()}
 
 
-@router.post("/api/execution/prepare-campaign")
+@router.post("/api/execution/prepare-campaign", dependencies=[Depends(require_api_key)])
 def prepare_campaign_execution(request: CampaignExecutionPlanRequest) -> dict[str, Any]:
     playbook = request.playbook or first_playbook_with_segments(load_playbooks())
     if not playbook:
@@ -63,7 +66,7 @@ def prepare_campaign_execution(request: CampaignExecutionPlanRequest) -> dict[st
     return {"ok": True, "approval": saved_approval, "telegram": telegram}
 
 
-@router.post("/api/approvals/{approval_id}/approve")
+@router.post("/api/approvals/{approval_id}/approve", dependencies=[Depends(require_api_key)])
 def approve_approval_request(approval_id: str, request: ApprovalDecisionRequest) -> dict[str, Any]:
     try:
         approval = approval_store.approve_request(approval_id, approved_by=request.approvedBy)
@@ -75,7 +78,7 @@ def approve_approval_request(approval_id: str, request: ApprovalDecisionRequest)
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-@router.post("/api/approvals/{approval_id}/reject")
+@router.post("/api/approvals/{approval_id}/reject", dependencies=[Depends(require_api_key)])
 def reject_approval_request(approval_id: str, request: ApprovalRejectRequest) -> dict[str, Any]:
     try:
         approval = approval_store.reject_request(approval_id, rejected_by=request.rejectedBy, reason=request.reason)
@@ -89,7 +92,7 @@ def reject_approval_request(approval_id: str, request: ApprovalRejectRequest) ->
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-@router.post("/api/approvals/{approval_id}/changes")
+@router.post("/api/approvals/{approval_id}/changes", dependencies=[Depends(require_api_key)])
 def request_approval_changes(approval_id: str, request: ApprovalChangesRequest) -> dict[str, Any]:
     try:
         approval = approval_store.request_changes(approval_id, requested_by=request.requestedBy, note=request.note)
@@ -103,11 +106,18 @@ def request_approval_changes(approval_id: str, request: ApprovalChangesRequest) 
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-@router.post("/api/approvals/{approval_id}/execute")
+@router.post("/api/approvals/{approval_id}/execute", dependencies=[Depends(require_api_key)])
 async def execute_approval_request(approval_id: str, request: ApprovalExecutionRequest) -> dict[str, Any]:
     approval = next((item for item in list_approval_requests() if item.get("id") == approval_id), None)
     if not approval:
         raise HTTPException(status_code=404, detail=f"Approval request not found: {approval_id}")
+
+    # Idempotency: a retried live execute with the same clientRequestId returns the prior
+    # result rather than creating a second campaign / re-applying a change.
+    if not request.dryRun and request.clientRequestId:
+        for entry in approval.get("executionLog", []):
+            if not entry.get("dryRun") and entry.get("clientRequestId") == request.clientRequestId:
+                return {"ok": True, "approval": approval, "result": entry.get("result"), "idempotent": True}
 
     config = get_meta_config()
     if approval.get("actionType") == "create_paused_campaign_structure":
@@ -115,7 +125,7 @@ async def execute_approval_request(approval_id: str, request: ApprovalExecutionR
             approval,
             dry_run=request.dryRun,
             confirm_live=request.confirmLive,
-            live_writes_enabled=os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true",
+            live_writes_enabled=live_writes_enabled(),
             create_campaign=lambda payload: meta_create_campaign(config, payload),
             create_ad_set=lambda payload: meta_create_ad_set(config, payload),
         )
@@ -125,17 +135,30 @@ async def execute_approval_request(approval_id: str, request: ApprovalExecutionR
         raise HTTPException(status_code=400, detail=result.get("error") or result.get("blockedReason") or "Execution failed.")
 
     status = "dry_run_completed" if request.dryRun else "executed"
+    # Append an immutable audit entry (who/when/idempotency key) instead of only
+    # overwriting lastExecutionResult, so the money-spending path is auditable.
+    execution_log = [
+        *approval.get("executionLog", []),
+        {
+            "executedBy": request.executedBy,
+            "executedAt": datetime.now(timezone.utc).isoformat(),
+            "clientRequestId": request.clientRequestId,
+            "dryRun": request.dryRun,
+            "result": result,
+        },
+    ]
     updated = approval_store.update_approval_request(
         approval_id,
         {
             "status": status,
             "lastExecutionResult": result,
+            "executedBy": request.executedBy,
+            "executionLog": execution_log,
         },
     )
-    task_status = "dry_run_completed" if request.dryRun else "executed"
     task = sync_task_with_approval(
         approval_id,
-        task_status,
+        status,
         updated,
         {"executionResult": result},
     )
@@ -166,10 +189,10 @@ async def execute_meta_action_approval_request(
             },
             "note": "Dry run only. No request was sent to Meta.",
         }
-    if not request.confirmLive:
-        return {"ok": False, "dryRun": False, "error": "Final live confirmation is required before Meta writes."}
-    if os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() != "true":
-        return {"ok": False, "dryRun": False, "error": "Live Meta writes are disabled by configuration."}
+    # Unified live-write gate (status + guardrail + confirm-live + env flag).
+    block = assert_executable(approval, confirm_live=request.confirmLive, live_writes_enabled=live_writes_enabled())
+    if block:
+        return {"ok": False, "dryRun": False, "error": block}
 
     return await execute_meta_action_approval(approval, writer=build_meta_action_writer(config))
 

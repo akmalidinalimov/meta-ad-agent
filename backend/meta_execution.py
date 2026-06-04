@@ -118,10 +118,9 @@ async def execute_campaign_creation_approval(
             "wouldCreate": approval_request.get("after", {}),
             "note": "Dry run only. No request was sent to Meta.",
         }
-    if not confirm_live:
-        return {"ok": False, "dryRun": False, "error": "Final live confirmation is required before Meta writes."}
-    if not live_writes_enabled:
-        return {"ok": False, "dryRun": False, "error": "Live Meta writes are disabled by configuration."}
+    block = assert_executable(approval_request, confirm_live=confirm_live, live_writes_enabled=live_writes_enabled)
+    if block:
+        return {"ok": False, "dryRun": False, "error": block}
     if not create_campaign or not create_ad_set:
         return {"ok": False, "dryRun": False, "error": "Meta create functions are not configured."}
 
@@ -219,6 +218,29 @@ def payload_for_meta_action(action_type: str | None, after: dict[str, Any]) -> d
 
 def is_execution_approved_status(status: Any) -> bool:
     return status in {"approved", "dry_run_completed"}
+
+
+def assert_executable(
+    approval: dict[str, Any],
+    *,
+    confirm_live: bool,
+    live_writes_enabled: bool,
+) -> str | None:
+    """Single source of truth for the live-write gate.
+
+    Returns a blocking reason string, or None when a live write may proceed. Both the
+    campaign-creation and meta-action execution paths call this so the safety policy
+    (the most security-critical logic in the app) cannot drift between two copies.
+    """
+    if not is_execution_approved_status(approval.get("status")):
+        return "Specific approval is required before execution."
+    if approval.get("guardrailResult") == "fail":
+        return "Guardrail failed; execution is blocked."
+    if not confirm_live:
+        return "Final live confirmation is required before Meta writes."
+    if not live_writes_enabled:
+        return "Live Meta writes are disabled by configuration."
+    return None
 
 
 def guardrail_checks(playbook: dict[str, Any], adsets: list[dict[str, Any]]) -> list[dict[str, Any]]:

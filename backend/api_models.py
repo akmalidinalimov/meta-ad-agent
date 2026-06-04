@@ -56,22 +56,26 @@ class DraftCampaignProposalRequest(BaseModel):
 
 
 class ApprovalDecisionRequest(BaseModel):
-    approvedBy: str = "akmal"
+    approvedBy: str = "operator"
 
 
 class ApprovalRejectRequest(BaseModel):
-    rejectedBy: str = "akmal"
+    rejectedBy: str = "operator"
     reason: str = ""
 
 
 class ApprovalChangesRequest(BaseModel):
-    requestedBy: str = "akmal"
+    requestedBy: str = "operator"
     note: str = ""
 
 
 class ApprovalExecutionRequest(BaseModel):
     dryRun: bool = True
     confirmLive: bool = False
+    executedBy: str = "operator"
+    # Optional client-supplied idempotency key: a retried/double-clicked live execute
+    # with the same key returns the prior result instead of creating a second campaign.
+    clientRequestId: str | None = None
 
 
 class ScheduledMonitoringRequest(BaseModel):
