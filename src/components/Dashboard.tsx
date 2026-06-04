@@ -31,6 +31,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   Pie,
@@ -53,6 +54,12 @@ import {
   getCampaignOptions,
   getDateWindow,
 } from '../lib/analytics'
+import {
+  chartTooltipFormatter,
+  formatAxisCurrency,
+  formatChartCurrency,
+  formatChartNumber,
+} from '../lib/chartConfig'
 import { buildOperatorAttention } from '../lib/operatorAttention'
 import {
   buildEmptySegment,
@@ -85,7 +92,16 @@ import type {
   TrackingHealthItem,
 } from '../types/marketing'
 
-const COLORS = ['#1f9d8a', '#3b82f6', '#f59e0b', '#ef4444', '#7c3aed', '#0f766e']
+// Sourced from the --chart-* custom properties in index.css so the chart
+// palette tracks the design tokens (incl. dark mode) in one place.
+const COLORS = [
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+  'var(--chart-6)',
+]
 
 const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
   alert: AlertTriangle,
@@ -106,6 +122,22 @@ const navItems = [
 ] as const
 
 type ViewId = (typeof navItems)[number]['id']
+
+// The single <h1> must describe the current view so screen-reader users (and
+// the document outline) reflect where they are, not a fixed title.
+function viewHeading(view: ViewId): string {
+  switch (view) {
+    case 'commandCenter':
+      return 'Agent Command Center'
+    case 'rankings':
+      return 'Performance Rankings'
+    case 'settings':
+      return 'Settings & Data Sources'
+    case 'overview':
+    default:
+      return 'Campaign Audit Dashboard'
+  }
+}
 
 interface DashboardProps {
   data: DashboardData
@@ -241,7 +273,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
       <header className="topbar">
         <div>
           <p className="eyebrow">Meta Ad Agent</p>
-          <h1>Campaign Audit Dashboard</h1>
+          <h1>{viewHeading(activeView)}</h1>
         </div>
         <div className="topbar-actions">
           <div className={`status-pill ${dataSourceTone}`}>
@@ -264,6 +296,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
             <button
               type="button"
               className={activeView === item.id ? 'active' : ''}
+              aria-current={activeView === item.id ? 'page' : undefined}
               onClick={() => setActiveView(item.id)}
               key={item.id}
             >
@@ -685,35 +718,45 @@ function FunnelPanel({ funnel }: { funnel: ReturnType<typeof deriveFunnel> }) {
     <article className="panel panel-wide">
       <PanelHeading eyebrow="Funnel" title="Meta click to course buyer path" icon={MousePointerClick} />
       <div className="funnel-list">
-        {funnel.map((item, index) => (
-          <div className="funnel-row" key={item.step}>
-            <div>
-              <span>{item.step}</span>
-              <strong>{formatNumber(item.value)}</strong>
+        {funnel.map((item) => {
+          // Width must reflect the actual data (share of the top-of-funnel
+          // value), not the row index. A small floor keeps tiny stages legible.
+          const topValue = funnel[0]?.value ?? 0
+          const widthPercent = topValue > 0 ? Math.max(7, (item.value / topValue) * 100) : 7
+          return (
+            <div className="funnel-row" key={item.step}>
+              <div>
+                <span>{item.step}</span>
+                <strong>{formatNumber(item.value)}</strong>
+              </div>
+              <div className="funnel-track">
+                <div className="funnel-fill" style={{ width: `${widthPercent}%` }} />
+              </div>
+              <em>{item.rate}</em>
             </div>
-            <div className="funnel-track">
-              <div className="funnel-fill" style={{ width: `${Math.max(7, 100 - index * 13)}%` }} />
-            </div>
-            <em>{item.rate}</em>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </article>
   )
 }
 
 function TrendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
+  const totalLeads = sumBy(trend, (point) => point.leads)
+  const totalBuyers = sumBy(trend, (point) => point.buyers)
+  const summary = `Daily trend over ${trend.length} days: ${formatChartNumber(totalLeads)} leads and ${formatChartNumber(totalBuyers)} buyers total.`
   return (
     <article className="panel">
       <PanelHeading eyebrow="Trend" title="Spend, leads, buyers" icon={TrendingUp} />
-      <ChartFrame>
+      <ChartFrame summary={summary}>
         <LineChart data={trend}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="day" tickLine={false} axisLine={false} />
-          <YAxis tickLine={false} axisLine={false} />
-          <Tooltip />
-          <Line type="monotone" dataKey="leads" stroke="#1f9d8a" strokeWidth={3} dot={false} />
-          <Line type="monotone" dataKey="buyers" stroke="#ef4444" strokeWidth={3} dot={false} />
+          <YAxis tickLine={false} axisLine={false} tickFormatter={formatChartNumber} />
+          <Tooltip formatter={chartTooltipFormatter} />
+          <Legend />
+          <Line type="monotone" dataKey="leads" name="Leads" stroke={COLORS[0]} strokeWidth={3} dot={false} />
+          <Line type="monotone" dataKey="buyers" name="Buyers" stroke={COLORS[3]} strokeWidth={3} dot={false} />
         </LineChart>
       </ChartFrame>
     </article>
@@ -942,17 +985,21 @@ function CreativeTable({
 }
 
 function PlacementPanel({ placements }: { placements: ReturnType<typeof derivePlacementScores> }) {
+  const topPlacement = placements[0]
+  const summary = topPlacement
+    ? `Spend share across ${placements.length} placements; ${topPlacement.name} leads at ${topPlacement.value}%.`
+    : 'Spend share by placement channel.'
   return (
     <article className="panel">
       <PanelHeading eyebrow="Placement" title="Spend share by channel" icon={RadioTower} />
-      <ChartFrame>
+      <ChartFrame summary={summary}>
         <PieChart>
           <Pie data={placements} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88}>
             {placements.map((entry, index) => (
               <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
             ))}
           </Pie>
-          <Tooltip />
+          <Tooltip formatter={(value, name) => [`${Array.isArray(value) ? value[0] : value}% spend`, String(name ?? '')]} />
         </PieChart>
       </ChartFrame>
       <ChartLegend placements={placements} />
@@ -974,17 +1021,21 @@ function ChartLegend({ placements }: { placements: ReturnType<typeof derivePlace
 }
 
 function AudiencePanel({ data }: { data: DashboardData }) {
+  const totalSubs = sumBy(data.audience, (segment) => segment.subs)
+  const totalBuyers = sumBy(data.audience, (segment) => segment.buyers)
+  const summary = `Subscribers vs buyers across ${data.audience.length} audience segments: ${formatChartNumber(totalSubs)} subscribers and ${formatChartNumber(totalBuyers)} buyers total.`
   return (
     <article className="panel panel-wide">
       <PanelHeading eyebrow="Audience Quality" title="Purchasing power by segment" icon={Users} />
-      <ChartFrame tall>
+      <ChartFrame tall summary={summary}>
         <BarChart data={data.audience}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="segment" tickLine={false} axisLine={false} />
-          <YAxis tickLine={false} axisLine={false} />
-          <Tooltip />
-          <Bar dataKey="subs" fill="#3b82f6" radius={[5, 5, 0, 0]} />
-          <Bar dataKey="buyers" fill="#1f9d8a" radius={[5, 5, 0, 0]} />
+          <YAxis tickLine={false} axisLine={false} tickFormatter={formatChartNumber} />
+          <Tooltip formatter={chartTooltipFormatter} />
+          <Legend />
+          <Bar dataKey="subs" name="Subscribers" fill={COLORS[1]} radius={[5, 5, 0, 0]} />
+          <Bar dataKey="buyers" name="Buyers" fill={COLORS[0]} radius={[5, 5, 0, 0]} />
         </BarChart>
       </ChartFrame>
     </article>
@@ -992,16 +1043,18 @@ function AudiencePanel({ data }: { data: DashboardData }) {
 }
 
 function SpendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
+  const totalSpend = sumBy(trend, (point) => point.spend)
+  const summary = `Daily spend curve over ${trend.length} days totaling ${formatChartCurrency(totalSpend)}.`
   return (
     <article className="panel">
       <PanelHeading eyebrow="Spend Curve" title="Budget pressure" icon={CircleDollarSign} />
-      <ChartFrame>
+      <ChartFrame summary={summary}>
         <AreaChart data={trend}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="day" tickLine={false} axisLine={false} />
-          <YAxis tickLine={false} axisLine={false} />
-          <Tooltip />
-          <Area type="monotone" dataKey="spend" stroke="#7c3aed" fill="#ddd6fe" strokeWidth={3} />
+          <YAxis tickLine={false} axisLine={false} tickFormatter={formatAxisCurrency} />
+          <Tooltip formatter={chartTooltipFormatter} />
+          <Area type="monotone" dataKey="spend" name="Spend" stroke="#7c3aed" fill="#ddd6fe" strokeWidth={3} />
         </AreaChart>
       </ChartFrame>
     </article>
