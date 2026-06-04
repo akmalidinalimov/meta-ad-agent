@@ -551,19 +551,40 @@ def response(
 
 
 def build_agent_decision(routed: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    handoff_agents = [handoff["toAgent"] for handoff in payload.get("agentHandoffs", []) if handoff.get("toAgent")]
+    handoffs = payload.get("agentHandoffs", [])
+    handoff_agents = [handoff["toAgent"] for handoff in handoffs if handoff.get("toAgent")]
     involved = list(dict.fromkeys([*handoff_agents] or [routed["agentId"]]))
-    high_confidence_handoffs = sum(1 for handoff in payload.get("agentHandoffs", []) if handoff.get("confidence") in {"high", "medium"})
-    confidence_score = 95 if payload.get("sources") and payload.get("suggestedQuestions") else 75
+    high_confidence_handoffs = sum(1 for handoff in handoffs if handoff.get("confidence") in {"high", "medium"})
+
+    # Honest confidence: earn the score from substance (cited sources, next steps,
+    # and the number of confident specialist handoffs), not from field presence.
+    # The old logic stamped 95/100 whenever `sources` was non-empty, which read as
+    # decision quality but only measured whether template fields were populated.
+    score = 40
+    basis: list[str] = []
+    if payload.get("sources"):
+        score += 15
+        basis.append("cited sources")
+    if payload.get("suggestedQuestions"):
+        score += 10
+        basis.append("clear next steps")
+    if high_confidence_handoffs:
+        score += min(30, high_confidence_handoffs * 8)
+        basis.append(f"{high_confidence_handoffs} confident specialist handoff(s)")
     if routed["agentId"] == "orchestrator" and high_confidence_handoffs >= 3:
-        confidence_score = 100
-    if routed["agentId"] == "execution":
-        confidence_score = 95 if payload.get("sources") else 70
+        score += 10
+        basis.append("well-coordinated multi-specialist plan")
+    if routed["agentId"] == "execution" and not payload.get("sources"):
+        score -= 20
+        basis.append("execution path without cited policy")
+    confidence_score = max(20, min(100, score))
+
     return {
         "primaryAgent": routed["agentId"],
         "involvedAgents": involved,
         "approvalRequired": routed["agentId"] in {"orchestrator", "execution", "browser_operator"},
         "confidenceScore": confidence_score,
+        "confidenceBasis": basis or ["limited supporting evidence"],
         "reason": routed["reason"],
         "evidenceNeeds": build_evidence_needs(involved),
     }

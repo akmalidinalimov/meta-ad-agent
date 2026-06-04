@@ -2,6 +2,7 @@ import pytest
 
 from backend.agent_orchestrator import (
     agent_registry,
+    build_agent_decision,
     is_campaign_creation_request,
     orchestrate_agent_chat,
     route_question,
@@ -125,6 +126,24 @@ def test_route_question_does_not_match_age_inside_landing_page():
         route_question("Diagnose whether we lose people before landing page, Telegram START, form, or CRM purchase.")["agentId"]
         == "funnel"
     )
+
+
+def test_confidence_is_evidence_derived_not_field_presence():
+    # A thin single-agent response (sources + next steps but no confident handoffs)
+    # should be moderate, NOT a 95 stamped purely for having non-empty fields.
+    thin = build_agent_decision(
+        {"agentId": "audit", "reason": "Default audit."},
+        {"sources": ["knowledge_base"], "suggestedQuestions": ["What next?"], "agentHandoffs": []},
+    )
+    assert thin["confidenceScore"] < 80
+    assert thin["confidenceBasis"]
+
+    # An execution path with no cited policy/sources should be penalized.
+    weak_exec = build_agent_decision(
+        {"agentId": "execution", "reason": "Execution intent."},
+        {"sources": [], "suggestedQuestions": [], "agentHandoffs": []},
+    )
+    assert weak_exec["confidenceScore"] <= thin["confidenceScore"]
 
 
 def test_orchestrator_handles_multi_specialist_strategy_questions_with_decision_trace():
