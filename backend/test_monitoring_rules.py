@@ -16,6 +16,37 @@ def test_alerts_when_cpl_rises_and_start_rate_falls():
     assert len(alerts[0]["recommendedActions"]) == 3
 
 
+def test_fallback_high_alert_fires_on_cpl_rise_and_lead_rate_drop_without_telegram():
+    # No Telegram START data (the current reality) — the primary high rule can't fire,
+    # but the fallback should catch the cheap-click-low-quality pattern.
+    snapshot = {
+        "campaignId": "cmp_fallback",
+        "campaignName": "Income VSL",
+        "current": {"spend": 200, "leads": 20, "telegramStarts": 0, "clicks": 400},
+        "previous": {"spend": 100, "leads": 40, "telegramStarts": 0, "clicks": 200},
+    }
+
+    alerts = evaluate_monitoring_snapshot(snapshot)
+
+    high = [a for a in alerts if a["severity"] == "high"]
+    assert any("CPL rose while lead quality fell" in a["title"] for a in high)
+
+
+def test_fallback_high_alert_suppressed_when_telegram_signal_present():
+    # When Telegram START data exists, only the primary START-based rule should own the
+    # high-severity quality alarm — the fallback must not double-fire.
+    snapshot = {
+        "campaignId": "cmp_with_tg",
+        "campaignName": "Income VSL",
+        "current": {"spend": 200, "leads": 20, "telegramStarts": 4, "clicks": 400},
+        "previous": {"spend": 100, "leads": 40, "telegramStarts": 24, "clicks": 200},
+    }
+
+    alerts = evaluate_monitoring_snapshot(snapshot)
+
+    assert not any("CPL rose while lead quality fell" in a["title"] for a in alerts)
+
+
 def test_alerts_when_cpc_rises_quickly():
     snapshot = {
         "campaignId": "cmp_2",

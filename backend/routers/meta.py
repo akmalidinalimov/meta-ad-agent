@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter
@@ -40,6 +41,7 @@ async def meta_status() -> dict[str, Any]:
         "pixelConfigured": bool(config.pixel_id),
         "tokenConfigured": bool(config.access_token),
         "tokenPreview": mask_token(config.access_token),
+        "liveWritesEnabled": os.getenv("META_LIVE_WRITES_ENABLED", "").strip().lower() == "true",
         "connected": False,
         "account": None,
         "error": None,

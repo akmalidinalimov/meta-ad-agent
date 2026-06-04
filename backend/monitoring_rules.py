@@ -39,6 +39,38 @@ def evaluate_monitoring_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any
             )
         )
 
+    # Fallback quality alarm for the (current) reality where Telegram START tracking is
+    # not connected, so telegramStarts is structurally 0 and the primary high-severity
+    # rule above can never fire. CPL-rise + lead-rate-drop are signals that DO exist today.
+    # Gated on the absence of any START signal so it never double-fires with the rule above.
+    has_start_signal = bool(current.get("telegramStarts", 0) or previous.get("telegramStarts", 0))
+    if (
+        not has_start_signal
+        and previous_cpl
+        and current_cpl > previous_cpl * 1.35
+        and previous_lead_rate
+        and current_lead_rate < previous_lead_rate * 0.75
+    ):
+        alerts.append(
+            build_alert(
+                snapshot,
+                severity="high",
+                title=f"CPL rose while lead quality fell for {campaign_name}",
+                why_it_matters="Cost per lead is climbing while the click-to-lead rate is dropping — the cheap-click-but-low-quality pattern. (Telegram START tracking is not connected, so this is judged on CPL and lead rate alone.)",
+                metric_deltas={
+                    "currentCpl": current_cpl,
+                    "previousCpl": previous_cpl,
+                    "currentLeadRate": current_lead_rate,
+                    "previousLeadRate": previous_lead_rate,
+                },
+                recommended_actions=[
+                    "Inspect the weakest ad set/placement driving the cheaper, lower-converting clicks.",
+                    "Hold budget increases until the click-to-lead rate recovers.",
+                    "Connect Telegram START tracking so buyer-quality, not just lead rate, can gate scaling.",
+                ],
+            )
+        )
+
     if previous_cpc and current_cpc > previous_cpc * 1.75:
         alerts.append(
             build_alert(

@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
-from .analysis_engine import action_count, as_float, extract_interests, valid_rows
+from .analysis_engine import action_count, action_value, as_float, extract_interests, ratio, valid_rows
 from .campaign_watch import build_campaign_watch
 from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base
 from .meta_client import get_meta_config
@@ -247,6 +247,7 @@ def map_metric_row(row: dict[str, Any], index: int) -> dict[str, Any]:
     landing_visits = action_count(row, "landing_visit")
     leads = action_count(row, "lead") + action_count(row, "registration")
     purchases = action_count(row, "purchase")
+    revenue = action_value(row, "purchase")
     ad_id = str(row.get("ad_id") or f"unknown_ad_{index}")
     creative_id = row.get("creative_id") or (row.get("creative") or {}).get("id")
     return {
@@ -264,7 +265,7 @@ def map_metric_row(row: dict[str, Any], index: int) -> dict[str, Any]:
         "telegramSubscribers": 0,
         "webinarAttendees": 0,
         "purchases": int(purchases),
-        "purchaseRevenueUsd": 0,
+        "purchaseRevenueUsd": round(revenue, 2),
     }
 
 
@@ -502,8 +503,31 @@ def derive_real_kpis(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     spend = summary.get("spend", 0)
     leads = summary.get("leads", 0)
     purchases = summary.get("purchases", 0)
+    revenue = summary.get("revenue", 0)
+    roas = summary.get("roas", 0) or ratio(revenue, spend)
+    # ROAS/MER is the #1 media-buying KPI. When no purchase revenue is attributed we
+    # say so explicitly rather than implying a real return exists.
+    if revenue > 0:
+        roas_card = {
+            "label": "ROAS",
+            "value": f"{roas:.2f}x",
+            "change": f"{money(revenue)} revenue",
+            "helper": f"Blended MER on {money(spend)} spend",
+            "tone": "good" if roas >= 1 else "danger",
+            "icon": "trendingUp",
+        }
+    else:
+        roas_card = {
+            "label": "ROAS",
+            "value": "No revenue",
+            "change": "Lead-quality only",
+            "helper": "No purchase revenue attributed — connect purchase tracking",
+            "tone": "warning",
+            "icon": "trendingUp",
+        }
     return [
         {"label": "Meta Spend", "value": money(spend), "change": f"{summary.get('clicks', 0):,.0f} clicks", "helper": "Real synced Meta data", "tone": "neutral", "icon": "dollar"},
+        roas_card,
         {"label": "Leads", "value": f"{leads:,.0f}", "change": f"{money(summary.get('cpl', 0))} CPL", "helper": "Meta lead/registration events", "tone": "good" if leads else "warning", "icon": "users"},
         {"label": "Purchases", "value": f"{purchases:,.0f}", "change": "Tracking gap" if not purchases else f"{money(summary.get('cpp', 0))} CPP", "helper": "Attributed purchases", "tone": "warning" if not purchases else "good", "icon": "target"},
         {"label": "Quality Score", "value": f"{summary.get('qualityScore', 0):.1f}", "change": f"{summary.get('ctr', 0):.2f}% CTR", "helper": "Lead/click quality proxy", "tone": "warning", "icon": "check"},

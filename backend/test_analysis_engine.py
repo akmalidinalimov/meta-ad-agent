@@ -1,3 +1,10 @@
+from backend.analysis_engine import (
+    action_count,
+    action_value,
+    finalize_metrics,
+    quality_score,
+    summarize_overall,
+)
 from backend.dashboard_service import map_creative, map_metric_row
 
 
@@ -49,3 +56,113 @@ def test_map_metric_row_uses_meta_creative_id_when_available():
     assert metric["adSetId"] == "adset_1"
     assert metric["adId"] == "ad_1"
     assert metric["creativeId"] == "creative_meta_1"
+
+
+def test_action_count_dedupes_overlapping_lead_aliases():
+    # Meta reports the SAME lead under several action types. They must not be summed.
+    row = {
+        "actions": [
+            {"action_type": "onsite_web_lead", "value": "120"},
+            {"action_type": "lead", "value": "120"},
+            {"action_type": "offsite_conversion.fb_pixel_lead", "value": "120"},
+        ]
+    }
+    assert action_count(row, "lead") == 120
+
+
+def test_map_metric_row_does_not_quadruple_count_leads():
+    row = {
+        "date_start": "2026-05-20",
+        "campaign_id": "campaign_1",
+        "adset_id": "adset_1",
+        "ad_id": "ad_1",
+        "spend": "9",
+        "impressions": "1000",
+        "clicks": "100",
+        "actions": [
+            {"action_type": "onsite_web_lead", "value": "4442"},
+            {"action_type": "lead", "value": "4442"},
+            {"action_type": "offsite_conversion.fb_pixel_lead", "value": "4442"},
+            {"action_type": "offsite_lead_add_20_s_calls", "value": "4442"},
+        ],
+    }
+    metric = map_metric_row(row, 0)
+    assert metric["leads"] == 4442
+
+
+def test_map_metric_row_populates_purchase_revenue_from_action_values():
+    row = {
+        "date_start": "2026-05-20",
+        "ad_id": "ad_1",
+        "spend": "100",
+        "impressions": "5000",
+        "clicks": "200",
+        "actions": [{"action_type": "purchase", "value": "5"}],
+        "action_values": [{"action_type": "purchase", "value": "750.50"}],
+    }
+    metric = map_metric_row(row, 0)
+    assert metric["purchases"] == 5
+    assert metric["purchaseRevenueUsd"] == 750.50
+
+
+def test_action_value_reads_purchase_revenue():
+    row = {"action_values": [{"action_type": "omni_purchase", "value": "320"}]}
+    assert action_value(row, "purchase") == 320
+
+
+def test_finalize_metrics_computes_roas_aov_cpm_frequency_linkctr():
+    item = {
+        "spend": 100.0,
+        "impressions": 10000.0,
+        "reach": 4000.0,
+        "clicks": 500.0,
+        "linkClicks": 250.0,
+        "leads": 50.0,
+        "purchases": 4.0,
+        "revenue": 400.0,
+    }
+    finalize_metrics(item)
+    assert item["roas"] == 4.0                      # 400 / 100
+    assert item["aov"] == 100.0                     # 400 / 4
+    assert item["cpm"] == 10.0                      # 100 / 10000 * 1000
+    assert item["frequency"] == 2.5                 # 10000 / 4000
+    assert item["linkCtr"] == 2.5                   # 250 / 10000 * 100
+
+
+def test_quality_score_no_longer_dominated_by_lead_rate_and_rewards_volume():
+    thin = {"leadRateFromClick": 60.0, "ctr": 2.5, "clicks": 80, "purchases": 0}
+    high_volume = {"leadRateFromClick": 60.0, "ctr": 2.5, "clicks": 20000, "purchases": 0}
+    # Same rates, but the high-volume segment must outrank the thin one.
+    assert quality_score(high_volume) > quality_score(thin)
+    # Without purchases, score is capped at the delivery ceiling (<= 70).
+    assert quality_score(high_volume) <= 70.0
+
+
+def test_quality_score_clamps_double_counted_lead_rate():
+    # A >100% lead rate (double-count symptom) must not score higher than a clean 100%.
+    inflated = {"leadRateFromClick": 250.0, "ctr": 2.5, "clicks": 1000, "purchases": 0}
+    clean = {"leadRateFromClick": 100.0, "ctr": 2.5, "clicks": 1000, "purchases": 0}
+    assert quality_score(inflated) == quality_score(clean)
+
+
+def test_finalize_metrics_flags_lead_double_count_risk():
+    item = {"clicks": 100.0, "leads": 150.0, "impressions": 1000.0}
+    finalize_metrics(item)
+    assert item["leadDoubleCountRisk"] is True
+
+
+def test_summarize_overall_exposes_roas_when_revenue_present():
+    rows = [
+        {
+            "spend": "50",
+            "impressions": "2000",
+            "reach": "1000",
+            "clicks": "100",
+            "actions": [{"action_type": "purchase", "value": "2"}],
+            "action_values": [{"action_type": "purchase", "value": "200"}],
+        }
+    ]
+    summary = summarize_overall(rows)
+    assert summary["revenue"] == 200
+    assert summary["roas"] == 4.0
+    assert summary["aov"] == 100.0

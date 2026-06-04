@@ -94,6 +94,7 @@ const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
   dollar: CircleDollarSign,
   target: Target,
   trendingDown: TrendingDownIcon,
+  trendingUp: TrendingUp,
   users: Users,
 }
 
@@ -221,6 +222,12 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
     }
   }
 
+  // Jump from the decision surface into the agent chat, pre-seeded with the question.
+  const askAgentsAbout = (message: string) => {
+    setActiveView('commandCenter')
+    void sendChatMessage(message)
+  }
+
   useEffect(() => {
     void getMetaStatus()
       .then(setMetaStatus)
@@ -282,6 +289,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
               trend={trend}
               placements={placements}
               metrics={filteredMetrics}
+              onAskWhy={askAgentsAbout}
             />
           )}
           {activeView === 'commandCenter' && (
@@ -614,6 +622,7 @@ function Overview({
   trend,
   placements,
   metrics,
+  onAskWhy,
 }: {
   data: DashboardData
   kpis: DashboardKpi[]
@@ -622,10 +631,11 @@ function Overview({
   trend: ReturnType<typeof deriveTrend>
   placements: ReturnType<typeof derivePlacementScores>
   metrics: DailyAdMetric[]
+  onAskWhy: (message: string) => void
 }) {
   return (
     <>
-      <DecisionHero data={data} />
+      <DecisionHero data={data} onAskWhy={onAskWhy} />
       <KpiGrid kpis={kpis} />
       <section className="overview-command-grid">
         <FunnelPanel funnel={funnel} />
@@ -735,7 +745,7 @@ function TopProblemsPanel({ data }: { data: DashboardData }) {
   )
 }
 
-function DecisionHero({ data }: { data: DashboardData }) {
+function DecisionHero({ data, onAskWhy }: { data: DashboardData; onAskWhy: (message: string) => void }) {
   const attentionItems = buildOperatorAttention(data)
   const topItem = attentionItems[0]
   const hasDanger = attentionItems.some((item) => item.tone === 'danger')
@@ -766,7 +776,17 @@ function DecisionHero({ data }: { data: DashboardData }) {
           <small>Risk if ignored</small>
           <strong>{risk}</strong>
         </div>
-        <button className="sync-button secondary" type="button">
+        <button
+          className="sync-button secondary"
+          type="button"
+          onClick={() =>
+            onAskWhy(
+              topItem
+                ? `Why is "${topItem.title}" the top priority right now, and what exactly should I do about it?`
+                : 'What is the most important thing to do with my campaigns right now, and why?',
+            )
+          }
+        >
           <Bot size={16} />
           Ask agents why
         </button>
@@ -1639,7 +1659,7 @@ function CouncilFinalPlan({
   onImplement: () => void
 }) {
   const finalPlan = council.finalPlan
-  const canImplement = finalPlan.executionDecision.canCreatePausedDraft && !isImplementing
+  const canImplement = finalPlan.executionDecision.canCreatePausedDraft && !isImplementing && !implementationResult
   return (
     <div className="council-final-plan">
       <div className="council-plan-summary">
@@ -1703,7 +1723,7 @@ function CouncilFinalPlan({
         </div>
         <button className="sync-button" type="button" onClick={onImplement} disabled={!canImplement}>
           <ClipboardCheck size={16} />
-          {isImplementing ? 'Implementing...' : 'Implemented'}
+          {isImplementing ? 'Creating packet…' : implementationResult ? 'Packet created' : 'Create paused packet'}
         </button>
       </div>
       {implementationResult && (
@@ -2566,9 +2586,68 @@ function InsightsPanel({ data }: { data: DashboardData }) {
   )
 }
 
+function ApprovalGuardrails({ checks }: { checks: ApprovalRequest['guardrailChecks'] }) {
+  if (!checks?.length) {
+    return null
+  }
+  return (
+    <ul className="approval-guardrails">
+      {checks.map((check, index) => {
+        const Icon = check.result === 'pass' ? CheckCircle2 : check.result === 'fail' ? XCircle : AlertTriangle
+        return (
+          <li key={`${check.message}-${index}`} className={`guardrail-${check.result}`}>
+            <Icon size={13} />
+            <span>{check.message}</span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function ApprovalAfterStructure({ after }: { after: ApprovalRequest['after'] }) {
+  const adsets = after.adsets ?? []
+  if (!after.campaign && adsets.length === 0) {
+    return null
+  }
+  const totalDaily = adsets.reduce((total, adset) => total + adset.daily_budget / 100, 0)
+  return (
+    <details className="approval-after">
+      <summary>
+        Review what will be created: {adsets.length} paused ad set(s), {formatCurrency(totalDaily)}/day total
+      </summary>
+      {after.campaign && (
+        <p className="approval-after-campaign">
+          Campaign: <strong>{after.campaign.name}</strong> · {labelRawSetting(after.campaign.objective)} · status {after.campaign.status}
+        </p>
+      )}
+      <ul className="approval-after-adsets">
+        {adsets.map((adset, index) => {
+          const placements = adset.targeting.publisher_platforms ?? []
+          const interests = (adset.targeting.flexible_spec ?? [])
+            .flatMap((spec) => spec.interests ?? [])
+            .map((interest) => interest.name)
+          return (
+            <li key={`${adset.name}-${index}`}>
+              <strong>{adset.name}</strong>
+              <small>
+                {formatCurrency(adset.daily_budget / 100)}/day · {labelRawSetting(adset.optimization_goal)} · status {adset.status}
+              </small>
+              {placements.length > 0 && <small>Placements: {placements.join(', ')}</small>}
+              {interests.length > 0 && <small>Interests: {interests.join(', ')}</small>}
+            </li>
+          )
+        })}
+      </ul>
+    </details>
+  )
+}
+
 function ApprovalQueue({ data }: { data: DashboardData }) {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
   const [message, setMessage] = useState<string | null>(null)
+  // null = unknown (status not yet loaded); drives whether live execution is offered.
+  const [liveWritesEnabled, setLiveWritesEnabled] = useState<boolean | null>(null)
 
   const fetchApprovals = async () => {
     const response = await fetch('/api/approvals')
@@ -2590,6 +2669,18 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
       .catch(() => {
         if (!cancelled) {
           setMessage('Could not load execution approvals.')
+        }
+      })
+    void fetch('/api/meta/status')
+      .then((response) => response.json() as Promise<{ liveWritesEnabled?: boolean }>)
+      .then((status) => {
+        if (!cancelled) {
+          setLiveWritesEnabled(Boolean(status.liveWritesEnabled))
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLiveWritesEnabled(false)
         }
       })
     return () => {
@@ -2677,6 +2768,26 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
     }
   }
 
+  const executeLive = async (approvalId: string) => {
+    setMessage('Creating the paused campaign in Meta…')
+    try {
+      const response = await fetch(`/api/approvals/${approvalId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: false, confirmLive: true }),
+      })
+      const result = (await response.json()) as { result?: { note?: string }; detail?: string }
+      if (!response.ok) {
+        setMessage(result.detail ?? `Live execution failed with ${response.status}`)
+        return
+      }
+      setMessage(result.result?.note ?? 'Created in Meta as PAUSED. Review in Ads Manager before enabling delivery.')
+      setApprovals(await fetchApprovals())
+    } catch {
+      setMessage('Could not create the campaign in Meta.')
+    }
+  }
+
   return (
     <article className="panel">
       <PanelHeading eyebrow="Recommended Actions" title="Approval queue" icon={ClipboardCheck} />
@@ -2688,13 +2799,18 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
                 <strong>{approval.after.campaign?.name ?? approval.actionType}</strong>
                 <p>{approval.reason}</p>
                 <small>
-                  {approval.status} / {approval.guardrailResult} / {approval.executionMethod}
+                  {labelRawSetting(approval.status)} / guardrail {approval.guardrailResult} / {approval.executionMethod}
                 </small>
-                <small>
-                  {(approval.after.adsets ?? []).length} paused ad set(s), budget {formatCurrency((approval.after.adsets ?? []).reduce((total, adset) => total + adset.daily_budget / 100, 0))}/day
-                </small>
+                {approval.expectedImpact && (
+                  <small className="approval-impact">Expected impact: {approval.expectedImpact}</small>
+                )}
+                <ApprovalGuardrails checks={approval.guardrailChecks} />
+                <ApprovalAfterStructure after={approval.after} />
                 {approval.rejectionReason && <small>Rejected reason: {approval.rejectionReason}</small>}
                 {approval.changeRequestNote && <small>Change request: {approval.changeRequestNote}</small>}
+                {approval.status === 'executed' && (
+                  <small className="approval-impact">{approval.lastExecutionResult?.note ?? 'Created in Meta as paused.'}</small>
+                )}
               </div>
               <div className="approval-button-stack">
                 {approval.status === 'needs_review' && (
@@ -2715,6 +2831,26 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
                     Dry run
                   </button>
                 )}
+                {approval.status === 'dry_run_completed' && (
+                  liveWritesEnabled === false ? (
+                    <>
+                      <button className="sync-button" type="button" disabled>
+                        Create paused campaign in Meta
+                      </button>
+                      <small className="approval-impact">Live writes disabled by configuration (set META_LIVE_WRITES_ENABLED=true).</small>
+                    </>
+                  ) : (
+                    <button
+                      className="sync-button"
+                      type="button"
+                      disabled={liveWritesEnabled === null || approval.guardrailResult === 'fail'}
+                      onClick={() => void executeLive(approval.id)}
+                    >
+                      Create paused campaign in Meta
+                    </button>
+                  )
+                )}
+                {approval.status === 'executed' && <span className="status-pill good">Created (paused)</span>}
                 <span>{approval.risk}</span>
               </div>
             </div>

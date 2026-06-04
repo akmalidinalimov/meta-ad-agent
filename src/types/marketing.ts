@@ -7,6 +7,7 @@ export type IconName =
   | 'dollar'
   | 'target'
   | 'trendingDown'
+  | 'trendingUp'
   | 'users'
 
 export type FunnelStage =

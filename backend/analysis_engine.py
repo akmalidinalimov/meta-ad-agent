@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
 
 ACTION_ALIASES = {
-    "lead": {"lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"},
+    # Meta reports the same lead conversion under several overlapping action types
+    # (e.g. `lead`, `onsite_web_lead`, the grouped/pixel variants). They report the
+    # SAME number, so `action_count` takes the max within a group rather than summing
+    # — summing was inflating lead volume (and CPL/lead-rate) several-fold.
+    "lead": {
+        "lead",
+        "onsite_web_lead",
+        "onsite_conversion.lead_grouped",
+        "offsite_conversion.fb_pixel_lead",
+        "offsite_lead_add_20_s_calls",
+    },
     "purchase": {"purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase"},
     "registration": {"complete_registration", "offsite_conversion.fb_pixel_complete_registration"},
     "link_click": {"link_click"},
@@ -71,9 +82,15 @@ def summarize_overall(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         **totals,
         "ctr": ratio(totals["clicks"], totals["impressions"]) * 100,
+        "linkCtr": ratio(totals.get("linkClicks", 0), totals["impressions"]) * 100,
         "cpc": ratio(totals["spend"], totals["clicks"]),
         "cpl": ratio(totals["spend"], totals["leads"]),
         "cpp": ratio(totals["spend"], totals["purchases"]),
+        "cpm": ratio(totals["spend"], totals["impressions"]) * 1000,
+        "frequency": ratio(totals["impressions"], totals.get("reach", 0)),
+        "revenue": totals.get("revenue", 0),
+        "roas": ratio(totals.get("revenue", 0), totals["spend"]),
+        "aov": ratio(totals.get("revenue", 0), totals["purchases"]),
         "leadRateFromClick": ratio(totals["leads"], totals["clicks"]) * 100,
         "purchaseRateFromClick": ratio(totals["purchases"], totals["clicks"]) * 100,
     }
@@ -226,27 +243,68 @@ def merge_metrics(target: dict[str, Any], row: dict[str, Any]) -> None:
     target["leads"] = target.get("leads", 0) + action_count(row, "lead") + action_count(row, "registration")
     target["purchases"] = target.get("purchases", 0) + action_count(row, "purchase")
     target["linkClicks"] = target.get("linkClicks", 0) + action_count(row, "link_click")
+    target["revenue"] = target.get("revenue", 0) + action_value(row, "purchase")
 
 
 def finalize_metrics(item: dict[str, Any]) -> None:
     item["ctr"] = ratio(item.get("clicks", 0), item.get("impressions", 0)) * 100
+    item["linkCtr"] = ratio(item.get("linkClicks", 0), item.get("impressions", 0)) * 100
     item["cpc"] = ratio(item.get("spend", 0), item.get("clicks", 0))
     item["cpl"] = ratio(item.get("spend", 0), item.get("leads", 0))
     item["cpp"] = ratio(item.get("spend", 0), item.get("purchases", 0))
+    item["cpm"] = ratio(item.get("spend", 0), item.get("impressions", 0)) * 1000
+    item["frequency"] = ratio(item.get("impressions", 0), item.get("reach", 0))
+    item["revenue"] = item.get("revenue", 0)
+    item["roas"] = ratio(item.get("revenue", 0), item.get("spend", 0))
+    item["aov"] = ratio(item.get("revenue", 0), item.get("purchases", 0))
     item["leadRateFromClick"] = ratio(item.get("leads", 0), item.get("clicks", 0)) * 100
     item["purchaseRateFromClick"] = ratio(item.get("purchases", 0), item.get("clicks", 0)) * 100
+    # A lead rate above 100% is a structural double-count signal, not a great segment.
+    item["leadDoubleCountRisk"] = item["leadRateFromClick"] > 100
     item["qualityScore"] = quality_score(item)
 
 
 def empty_metrics() -> dict[str, float]:
-    return {"rows": 0, "spend": 0, "impressions": 0, "reach": 0, "clicks": 0, "leads": 0, "purchases": 0, "linkClicks": 0}
+    return {
+        "rows": 0,
+        "spend": 0,
+        "impressions": 0,
+        "reach": 0,
+        "clicks": 0,
+        "leads": 0,
+        "purchases": 0,
+        "linkClicks": 0,
+        "revenue": 0,
+    }
 
 
 def quality_score(item: dict[str, Any]) -> float:
-    lead_score = min(40, item.get("leadRateFromClick", 0) * 2)
-    purchase_score = min(40, item.get("purchaseRateFromClick", 0) * 20)
-    ctr_score = min(20, item.get("ctr", 0) * 2)
-    return round(lead_score + purchase_score + ctr_score, 2)
+    """Composite 0-100 ranking score.
+
+    Rebalanced from the old formula (which gave 40 dead points to an always-zero
+    purchase term, capped CTR at an unreachable 10%, and let a >100% lead rate
+    saturate the score). Now: delivery quality is worth up to 70 (lead rate +
+    realistic link-CTR scale + a volume/confidence term so thin segments don't tie
+    with high-volume ones), and proven buyer activity (purchases / ROAS) is a bonus
+    of up to 30 ON TOP — not a precondition for a high score, but the only way past 70.
+    """
+    lead_rate = min(100.0, item.get("leadRateFromClick", 0))  # clamp double-count inflation
+    ctr = item.get("ctr", 0)
+    clicks = item.get("clicks", 0)
+
+    lead_component = min(40.0, lead_rate * 0.8)                # ~50% lead rate -> 40
+    ctr_component = min(15.0, ctr * 6.0)                       # ~2.5% link CTR -> 15
+    volume_component = min(15.0, math.log10(max(1.0, clicks)) * 5.0)  # 1k clicks -> 15
+    score = lead_component + ctr_component + volume_component
+
+    if item.get("purchases", 0) > 0:
+        purchase_rate = min(100.0, item.get("purchaseRateFromClick", 0))
+        score += min(20.0, purchase_rate * 10.0)              # ~2% purchase rate -> 20
+        roas = item.get("roas", 0)
+        if roas:
+            score += min(10.0, roas * 2.5)                    # ~4x ROAS -> 10
+
+    return round(min(100.0, score), 2)
 
 
 def quality_sort(item: dict[str, Any]) -> tuple[float, float, float]:
@@ -254,12 +312,27 @@ def quality_sort(item: dict[str, Any]) -> tuple[float, float, float]:
 
 
 def action_count(row: dict[str, Any], alias: str) -> float:
+    # Take the MAX across the alias group (not the sum): Meta repeats the same
+    # conversion under multiple overlapping action types, so summing double-counts.
     action_types = ACTION_ALIASES[alias]
-    total = 0.0
-    for action in row.get("actions", []) or []:
-        if action.get("action_type") in action_types:
-            total += as_float(action.get("value"))
-    return total
+    values = [
+        as_float(action.get("value"))
+        for action in row.get("actions", []) or []
+        if action.get("action_type") in action_types
+    ]
+    return max(values, default=0.0)
+
+
+def action_value(row: dict[str, Any], alias: str = "purchase") -> float:
+    # Revenue lives in `action_values` (a list parallel to `actions`). Same max-over-group
+    # dedup logic as action_count. Used to compute ROAS/AOV from purchase revenue.
+    action_types = ACTION_ALIASES[alias]
+    values = [
+        as_float(action.get("value"))
+        for action in row.get("action_values", []) or []
+        if action.get("action_type") in action_types
+    ]
+    return max(values, default=0.0)
 
 
 def extract_interests(targeting: dict[str, Any]) -> list[str]:

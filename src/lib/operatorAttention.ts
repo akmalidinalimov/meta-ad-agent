@@ -18,7 +18,7 @@ export function buildOperatorAttention(data: DashboardData): OperatorAttentionIt
       id: `alert-${alert.id}`,
       source: 'Monitoring',
       title: alert.title,
-      reason: alert.whyItMatters || alert.metricDeltas ? 'Metric movement needs review.' : 'Monitoring rule triggered.',
+      reason: alert.whyItMatters || (alert.metricDeltas ? 'Metric movement needs review.' : 'Monitoring rule triggered.'),
       action: alert.recommendedActions[0] || 'Review this alert before changing budget.',
       tone: alert.severity === 'high' ? 'danger' : alert.severity === 'medium' ? 'warning' : 'neutral',
       priority: alert.severity === 'high' ? 100 : alert.severity === 'medium' ? 80 : 50,
