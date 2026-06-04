@@ -22,6 +22,13 @@ ACTION_ALIASES = {
     "registration": {"complete_registration", "offsite_conversion.fb_pixel_complete_registration"},
     "link_click": {"link_click"},
     "landing_visit": {"landing_page_view", "omni_landing_page_view"},
+    # Video attention action types (present only for video ads when requested by meta_client).
+    "video_thruplay": {"video_thruplay_watched_actions", "thruplay"},
+    "video_3s": {"video_view", "video_3_sec_watched_actions"},
+    "video_p25": {"video_p25_watched_actions"},
+    "video_p50": {"video_p50_watched_actions"},
+    "video_p75": {"video_p75_watched_actions"},
+    "video_p100": {"video_p100_watched_actions"},
 }
 
 
@@ -244,6 +251,15 @@ def merge_metrics(target: dict[str, Any], row: dict[str, Any]) -> None:
     target["purchases"] = target.get("purchases", 0) + action_count(row, "purchase")
     target["linkClicks"] = target.get("linkClicks", 0) + action_count(row, "link_click")
     target["revenue"] = target.get("revenue", 0) + action_value(row, "purchase")
+    # Video attention inputs. Read defensively — Meta only returns these when a video
+    # ad exists and the fields were requested. Summed so hook/hold rates can be computed
+    # against impressions/views after aggregation in finalize_metrics.
+    target["videoThruplays"] = target.get("videoThruplays", 0) + action_count(row, "video_thruplay")
+    target["video3sViews"] = target.get("video3sViews", 0) + video_views_3s(row)
+    target["videoP25"] = target.get("videoP25", 0) + action_count(row, "video_p25")
+    target["videoP50"] = target.get("videoP50", 0) + action_count(row, "video_p50")
+    target["videoP75"] = target.get("videoP75", 0) + action_count(row, "video_p75")
+    target["videoP100"] = target.get("videoP100", 0) + action_count(row, "video_p100")
 
 
 def finalize_metrics(item: dict[str, Any]) -> None:
@@ -261,7 +277,38 @@ def finalize_metrics(item: dict[str, Any]) -> None:
     item["purchaseRateFromClick"] = ratio(item.get("purchases", 0), item.get("clicks", 0)) * 100
     # A lead rate above 100% is a structural double-count signal, not a great segment.
     item["leadDoubleCountRisk"] = item["leadRateFromClick"] > 100
+    finalize_video_attention(item)
     item["qualityScore"] = quality_score(item)
+
+
+def finalize_video_attention(item: dict[str, Any]) -> None:
+    """Hook rate (3s views / impressions) and hold rate (avg % watched).
+
+    Only populated when video inputs exist; otherwise the fields stay None so
+    downstream consumers can degrade gracefully and not confuse 0 with "no data".
+    """
+    impressions = item.get("impressions", 0)
+    three_s = item.get("video3sViews", 0)
+    thruplays = item.get("videoThruplays", 0)
+    p25 = item.get("videoP25", 0)
+    p50 = item.get("videoP50", 0)
+    p75 = item.get("videoP75", 0)
+    p100 = item.get("videoP100", 0)
+    has_video = any([three_s, thruplays, p25, p50, p75, p100])
+
+    item["hookRate"] = round(ratio(three_s, impressions) * 100, 2) if (has_video and impressions) else None
+    item["thruplayRate"] = round(ratio(thruplays, impressions) * 100, 2) if (has_video and impressions) else None
+    # Hold rate: average fraction of the video watched, approximated from the quartile
+    # completion curve relative to 3s/thruplay starts. Uses midpoints of each quartile band.
+    starts = three_s or thruplays or impressions
+    if has_video and starts:
+        # Quartile completion counts weighted by their band midpoints (0-25% -> 12.5%,
+        # 25-50% -> 37.5%, ...). The weighted average approximates avg % watched / hold rate.
+        weighted = p25 * 12.5 + p50 * 37.5 + p75 * 62.5 + p100 * 93.75
+        denominator = p25 + p50 + p75 + p100
+        item["holdRate"] = round(weighted / denominator, 2) if denominator else None
+    else:
+        item["holdRate"] = None
 
 
 def empty_metrics() -> dict[str, float]:
@@ -314,13 +361,25 @@ def quality_sort(item: dict[str, Any]) -> tuple[float, float, float]:
 def action_count(row: dict[str, Any], alias: str) -> float:
     # Take the MAX across the alias group (not the sum): Meta repeats the same
     # conversion under multiple overlapping action types, so summing double-counts.
+    # Video attention metrics are returned by Meta as their own top-level list fields
+    # (e.g. video_p25_watched_actions), so we also scan any same-named top-level field.
     action_types = ACTION_ALIASES[alias]
     values = [
         as_float(action.get("value"))
         for action in row.get("actions", []) or []
         if action.get("action_type") in action_types
     ]
+    for field in action_types:
+        field_value = row.get(field)
+        if isinstance(field_value, list):
+            values.extend(as_float(entry.get("value")) for entry in field_value if isinstance(entry, dict))
+        elif field_value not in (None, ""):
+            values.append(as_float(field_value))
     return max(values, default=0.0)
+
+
+def video_views_3s(row: dict[str, Any]) -> float:
+    return action_count(row, "video_3s")
 
 
 def action_value(row: dict[str, Any], alias: str = "purchase") -> float:

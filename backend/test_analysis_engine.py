@@ -151,6 +151,36 @@ def test_finalize_metrics_flags_lead_double_count_risk():
     assert item["leadDoubleCountRisk"] is True
 
 
+def test_finalize_metrics_computes_hook_and_hold_rate_from_video_fields():
+    item = {
+        "spend": 100.0,
+        "impressions": 10000.0,
+        "clicks": 500.0,
+        "video3sViews": 3000.0,
+        "videoThruplays": 1500.0,
+        "videoP25": 2500.0,
+        "videoP50": 1800.0,
+        "videoP75": 1200.0,
+        "videoP100": 900.0,
+    }
+    finalize_metrics(item)
+    assert item["hookRate"] == 30.0          # 3000 / 10000 * 100
+    assert item["thruplayRate"] == 15.0      # 1500 / 10000 * 100
+    assert item["holdRate"] is not None and 0 < item["holdRate"] < 100
+
+
+def test_finalize_metrics_leaves_video_rates_none_without_video_fields():
+    item = {"spend": 10.0, "impressions": 1000.0, "clicks": 50.0}
+    finalize_metrics(item)
+    assert item["hookRate"] is None
+    assert item["holdRate"] is None
+
+
+def test_action_count_reads_video_fields_from_top_level_list():
+    row = {"video_p25_watched_actions": [{"action_type": "video_p25_watched_actions", "value": "800"}]}
+    assert action_count(row, "video_p25") == 800
+
+
 def test_summarize_overall_exposes_roas_when_revenue_present():
     rows = [
         {
