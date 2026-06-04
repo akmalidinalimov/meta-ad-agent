@@ -1,4 +1,4 @@
-from backend.specialist_findings import creative_findings, placement_findings
+from backend.specialist_findings import audit_findings, creative_findings, placement_findings
 
 
 def _knowledge_with_top_ads(top_ads):
@@ -73,6 +73,48 @@ def test_creative_findings_degrades_without_video_fields():
     assert finding["weakHook"] is None
     assert finding["strongHook"] is None
     assert "hook" not in finding["headline"].lower()
+
+
+def test_audit_findings_labels_cac_as_proxy_without_purchases():
+    knowledge = {
+        "analysis": {},
+        "raw": {
+            "insights": {
+                "base": [
+                    {"spend": "200", "impressions": "5000", "clicks": "1000", "actions": [{"action_type": "lead", "value": "100"}]}
+                ]
+            }
+        },
+    }
+    finding = audit_findings(knowledge)
+    assert finding["cacIsProxy"] is True
+    assert "CPL proxy" in finding["headline"]
+    assert any("CPL proxy" in risk for risk in finding["risks"])
+
+
+def test_audit_findings_reports_true_cac_with_purchases():
+    knowledge = {
+        "analysis": {},
+        "raw": {
+            "insights": {
+                "base": [
+                    {
+                        "spend": "400",
+                        "impressions": "5000",
+                        "clicks": "1000",
+                        "actions": [
+                            {"action_type": "lead", "value": "100"},
+                            {"action_type": "purchase", "value": "10"},
+                        ],
+                    }
+                ]
+            }
+        },
+    }
+    finding = audit_findings(knowledge)
+    assert finding["cacIsProxy"] is False
+    assert finding["costPerAcquisition"] == 40.0
+    assert finding["leadToPurchaseCvr"] == 10.0
 
 
 def _knowledge_with_placements(placements):

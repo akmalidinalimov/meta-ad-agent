@@ -233,14 +233,30 @@ def audit_findings(knowledge: dict[str, Any]) -> Finding:
     risks: list[str] = []
     if summary.get("leads") and not summary.get("purchases"):
         risks.append("Lead events exist but purchases are missing/unattributed — optimize cautiously.")
+    cac = as_float(summary.get("costPerAcquisition"))
+    cac_is_proxy = summary.get("cacIsProxy", True)
+    if cac and cac_is_proxy:
+        risks.append(
+            f"CAC shown is a CPL proxy (${cac:.2f}); connect CRM/purchase data before treating it as a true customer acquisition cost."
+        )
     score = 8.0 if as_float(summary.get("clicks")) >= 1000 else 6.0 if as_float(summary.get("clicks")) >= 200 else 5.0
+    cac_phrase = (
+        f"CAC ${cac:.2f}" + (" (CPL proxy)" if cac_is_proxy else "")
+        if cac
+        else "CAC unavailable"
+    )
+    cvr = summary.get("leadToPurchaseCvr")
+    cvr_phrase = f", lead→purchase {as_float(cvr):.1f}%" if cvr is not None else ""
     return {
         "agent": "audit",
         "headline": (
             f"Account: ${as_float(summary.get('spend')):,.0f} spend, {as_float(summary.get('leads')):,.0f} leads, "
-            f"CPL ${as_float(summary.get('cpl')):.2f}"
+            f"CPL ${as_float(summary.get('cpl')):.2f}, {cac_phrase}{cvr_phrase}"
         ),
         "summary": summary,
+        "leadToPurchaseCvr": cvr,
+        "costPerAcquisition": cac or None,
+        "cacIsProxy": cac_is_proxy,
         "confidence": "high" if as_float(summary.get("clicks")) >= 1000 else "medium",
         "evidenceScore": round(score, 1),
         "risks": risks,

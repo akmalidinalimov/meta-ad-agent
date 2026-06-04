@@ -151,6 +151,32 @@ def test_finalize_metrics_flags_lead_double_count_risk():
     assert item["leadDoubleCountRisk"] is True
 
 
+def test_finalize_metrics_buyer_economics_with_purchases():
+    item = {"spend": 400.0, "clicks": 1000.0, "leads": 100.0, "purchases": 10.0, "impressions": 5000.0}
+    finalize_metrics(item)
+    assert item["leadToPurchaseCvr"] == 10.0      # 10 / 100 * 100
+    assert item["costPerAcquisition"] == 40.0     # 400 / 10
+    assert item["cacIsProxy"] is False
+    assert item["cacBasis"] == "purchase"
+
+
+def test_finalize_metrics_buyer_economics_falls_back_to_cpl_proxy():
+    item = {"spend": 200.0, "clicks": 1000.0, "leads": 100.0, "purchases": 0.0, "impressions": 5000.0}
+    finalize_metrics(item)
+    assert item["leadToPurchaseCvr"] is None
+    assert item["costPerAcquisition"] == 2.0      # CPL proxy = 200 / 100
+    assert item["cacIsProxy"] is True
+    assert item["cacBasis"] == "cpl_proxy"
+
+
+def test_summarize_overall_exposes_buyer_economics_proxy_label():
+    rows = [{"spend": "200", "impressions": "5000", "clicks": "1000", "actions": [{"action_type": "lead", "value": "100"}]}]
+    summary = summarize_overall(rows)
+    assert summary["cacIsProxy"] is True
+    assert summary["costPerAcquisition"] == 2.0
+    assert summary["leadToPurchaseCvr"] is None
+
+
 def test_finalize_metrics_computes_hook_and_hold_rate_from_video_fields():
     item = {
         "spend": 100.0,

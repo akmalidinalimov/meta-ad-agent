@@ -100,6 +100,27 @@ def summarize_overall(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "aov": ratio(totals.get("revenue", 0), totals["purchases"]),
         "leadRateFromClick": ratio(totals["leads"], totals["clicks"]) * 100,
         "purchaseRateFromClick": ratio(totals["purchases"], totals["clicks"]) * 100,
+        **buyer_economics_summary(totals),
+    }
+
+
+def buyer_economics_summary(totals: dict[str, Any]) -> dict[str, Any]:
+    leads = totals.get("leads", 0)
+    purchases = totals.get("purchases", 0)
+    spend = totals.get("spend", 0)
+    if purchases > 0:
+        return {
+            "leadToPurchaseCvr": round(ratio(purchases, leads) * 100, 2) if leads else None,
+            "costPerAcquisition": round(ratio(spend, purchases), 2),
+            "cacIsProxy": False,
+            "cacBasis": "purchase",
+        }
+    cpl = ratio(spend, leads)
+    return {
+        "leadToPurchaseCvr": None,
+        "costPerAcquisition": round(cpl, 2) if cpl else None,
+        "cacIsProxy": True,
+        "cacBasis": "cpl_proxy",
     }
 
 
@@ -275,10 +296,35 @@ def finalize_metrics(item: dict[str, Any]) -> None:
     item["aov"] = ratio(item.get("revenue", 0), item.get("purchases", 0))
     item["leadRateFromClick"] = ratio(item.get("leads", 0), item.get("clicks", 0)) * 100
     item["purchaseRateFromClick"] = ratio(item.get("purchases", 0), item.get("clicks", 0)) * 100
+    finalize_buyer_economics(item)
     # A lead rate above 100% is a structural double-count signal, not a great segment.
     item["leadDoubleCountRisk"] = item["leadRateFromClick"] > 100
     finalize_video_attention(item)
     item["qualityScore"] = quality_score(item)
+
+
+def finalize_buyer_economics(item: dict[str, Any]) -> None:
+    """Lead->purchase conversion and customer acquisition cost.
+
+    When real purchase data exists we report a true CVR and CAC (cost-per-acquisition =
+    spend/purchases). When it does not, we fall back to CPL as a CAC PROXY and label it
+    explicitly (cacIsProxy=True) so downstream consumers never treat a registration cost
+    as a real customer cost.
+    """
+    leads = item.get("leads", 0)
+    purchases = item.get("purchases", 0)
+    spend = item.get("spend", 0)
+    cpl = item.get("cpl", ratio(spend, leads))
+    if purchases > 0:
+        item["leadToPurchaseCvr"] = round(ratio(purchases, leads) * 100, 2) if leads else None
+        item["costPerAcquisition"] = round(ratio(spend, purchases), 2)
+        item["cacIsProxy"] = False
+        item["cacBasis"] = "purchase"
+    else:
+        item["leadToPurchaseCvr"] = None  # no purchase signal yet
+        item["costPerAcquisition"] = round(cpl, 2) if cpl else None
+        item["cacIsProxy"] = True
+        item["cacBasis"] = "cpl_proxy"
 
 
 def finalize_video_attention(item: dict[str, Any]) -> None:
