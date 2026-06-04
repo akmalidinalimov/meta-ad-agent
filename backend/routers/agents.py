@@ -347,8 +347,7 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
                     system_prompt=persona_prompt,
                 )
             else:
-                generic = await generate_chat_answer(question, knowledge_chat_preview(knowledge))
-                llm_answer = None if (not generic or generic.startswith("LLM chat unavailable")) else generic
+                llm_answer = await generate_chat_answer(question, knowledge_chat_preview(knowledge))
         except Exception:
             llm_answer = None
         if llm_answer:

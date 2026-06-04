@@ -170,7 +170,7 @@ async def meta_sync(request: MetaSyncRequest | None = None) -> dict[str, Any]:
             "rawCounts": knowledge["analysis"]["rawCounts"],
             "summary": knowledge["analysis"]["summary"],
             "recommendations": knowledge["analysis"]["recommendations"],
-            "llmEnabled": bool(llm_summary and not llm_summary.startswith("LLM summary unavailable")),
+            "llmEnabled": bool(llm_summary),
         }
     except MetaApiError as error:
         return {"ok": False, "error": str(error)}

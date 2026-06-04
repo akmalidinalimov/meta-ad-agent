@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any
@@ -11,6 +12,8 @@ from dotenv import load_dotenv
 from .meta_client import get_ssl_context
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 def _llm_enabled() -> bool:
@@ -91,6 +94,7 @@ async def refine_text(text: str, *, instruction: str, context: Any = None) -> st
         refined = (response.json()["choices"][0]["message"]["content"] or "").strip()
         return refined or text
     except Exception:
+        logger.exception("refine_text failed; returning deterministic text unchanged")
         return text
 
 
@@ -130,8 +134,9 @@ async def generate_llm_summary(analysis_preview: dict[str, Any]) -> str | None:
             )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
-    except Exception as error:
-        return f"LLM summary unavailable: {error}"
+    except Exception:
+        logger.exception("generate_llm_summary failed")
+        return None
 
 
 async def generate_chat_answer(question: str, analysis_preview: dict[str, Any]) -> str | None:
@@ -176,8 +181,9 @@ async def generate_chat_answer(question: str, analysis_preview: dict[str, Any]) 
             )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
-    except Exception as error:
-        return f"LLM chat unavailable: {error}"
+    except Exception:
+        logger.exception("generate_chat_answer failed")
+        return None
 
 
 async def generate_specialist_answer(

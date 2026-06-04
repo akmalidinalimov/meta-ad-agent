@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import ssl
@@ -83,7 +84,8 @@ def send_telegram_message_sync(text: str, **kwargs: Any) -> dict[str, Any]:
 
 
 async def send_telegram_message(text: str, **kwargs: Any) -> dict[str, Any]:
-    return send_telegram_message_sync(text, **kwargs)
+    # Offload the blocking urllib call to a thread so it never stalls the event loop.
+    return await asyncio.to_thread(send_telegram_message_sync, text, **kwargs)
 
 
 def ssl_context() -> ssl.SSLContext | None:

@@ -7,6 +7,11 @@ routers and the service modules they depend on.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,7 +28,51 @@ from .routers import planning as planning_router
 from .routers import tasks as tasks_router
 from .routers import telegram as telegram_router
 
-app = FastAPI(title="Meta Ad Agent API")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
+logger = logging.getLogger(__name__)
+
+
+async def _monitoring_loop() -> None:
+    """In-process monitoring trigger.
+
+    The monitoring rules only fire when something invokes run_scheduled_monitoring;
+    by default nothing did, so the '4-hourly check' was dormant. This optional loop
+    drives it. It is OFF by default (MONITORING_SCHEDULER_ENABLED) — in production an
+    external cron POSTing /api/monitoring/scheduled is preferred (safer with the
+    file-based stores). run_scheduled_monitoring keeps its own 4h debounce, so the
+    poll interval here only sets how often we check.
+    """
+    from .dashboard_service import build_dashboard
+    from .monitoring_scheduler import run_scheduled_monitoring
+    from .telegram_outbound import send_telegram_message_sync
+
+    interval = int(os.getenv("MONITORING_INTERVAL_SECONDS", "3600"))
+    while True:
+        try:
+            await asyncio.to_thread(
+                run_scheduled_monitoring,
+                build_dashboard,
+                send_alert=send_telegram_message_sync,
+            )
+        except Exception:
+            logger.exception("Scheduled monitoring iteration failed")
+        await asyncio.sleep(interval)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task: asyncio.Task | None = None
+    if os.getenv("MONITORING_SCHEDULER_ENABLED", "").strip().lower() == "true":
+        logger.info("Starting in-process monitoring scheduler")
+        task = asyncio.create_task(_monitoring_loop())
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+
+
+app = FastAPI(title="Meta Ad Agent API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
