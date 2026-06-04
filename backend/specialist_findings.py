@@ -92,10 +92,15 @@ def creative_findings(knowledge: dict[str, Any]) -> Finding:
         default=None,
     )
     weak_buyer = next((ad for ad in top_ads if as_float(ad.get("leads")) > 0 and as_float(ad.get("purchases")) == 0), None)
+    attention = _attention_signals(top_ads)
     risks: list[str] = []
     if weak_buyer is not None:
         risks.append(f"{_label(weak_buyer)} drives registrations but no attributed purchases — audit buyer quality.")
+    for note in attention.get("risks", []):
+        risks.append(note)
     headline = f"Top creative: {_label(best)}" if best else "No creative-level evidence yet."
+    if best is not None and best.get("hookRate") is not None:
+        headline += f" (hook {as_float(best.get('hookRate')):.0f}%, hold {as_float(best.get('holdRate')):.0f}%)"
     return {
         "agent": "creative",
         "headline": headline,
@@ -103,10 +108,55 @@ def creative_findings(knowledge: dict[str, Any]) -> Finding:
         "best": best,
         "trafficMagnet": traffic_magnet,
         "weakBuyer": weak_buyer,
+        "weakHook": attention.get("weakHook"),
+        "weakHold": attention.get("weakHold"),
+        "strongHook": attention.get("strongHook"),
         "confidence": confidence_for(best),
         "evidenceScore": evidence_score(best, len(top_ads)),
         "risks": risks,
     }
+
+
+# Standard short-form thresholds: a >25% hook (3s view rate) and >50% hold (avg % watched)
+# are healthy; below ~20% hook / ~30% hold flags weak attention worth a creative refresh.
+HOOK_RATE_WEAK = 20.0
+HOLD_RATE_WEAK = 30.0
+HOOK_RATE_STRONG = 25.0
+
+
+def _attention_signals(ads: list[dict[str, Any]]) -> dict[str, Any]:
+    """Hook/hold-rate observations over video creatives. Degrades to empty when the
+    video fields are absent (non-video account or fields not requested)."""
+    with_video = [ad for ad in ads if ad.get("hookRate") is not None]
+    if not with_video:
+        return {}
+    weak_hook = next(
+        (ad for ad in with_video if as_float(ad.get("hookRate")) < HOOK_RATE_WEAK),
+        None,
+    )
+    weak_hold = next(
+        (ad for ad in with_video if ad.get("holdRate") is not None and as_float(ad.get("holdRate")) < HOLD_RATE_WEAK),
+        None,
+    )
+    strong_hook = max(with_video, key=lambda ad: as_float(ad.get("hookRate")), default=None)
+    if strong_hook is not None and as_float(strong_hook.get("hookRate")) < HOOK_RATE_STRONG:
+        strong_hook = None
+    risks: list[str] = []
+    if weak_hook is not None:
+        risks.append(
+            f"{_label(weak_hook)} has a weak hook rate ({as_float(weak_hook.get('hookRate')):.0f}%) — the first 3s are not stopping the scroll."
+        )
+    if weak_hold is not None:
+        risks.append(
+            f"{_label(weak_hold)} has a weak hold rate ({as_float(weak_hold.get('holdRate')):.0f}%) — viewers drop off before the offer."
+        )
+    return {"weakHook": weak_hook, "weakHold": weak_hold, "strongHook": strong_hook, "risks": risks}
+
+
+# A placement is only called "waste" when its CPL is materially worse than the best
+# placement AND it is itself significant enough to trust the comparison. Below the margin
+# it is within noise; below significance the CPL is not yet reliable.
+PLACEMENT_WASTE_CPL_MARGIN = 1.4  # >40% worse CPL than the best placement
 
 
 def placement_findings(knowledge: dict[str, Any]) -> Finding:
@@ -114,11 +164,32 @@ def placement_findings(knowledge: dict[str, Any]) -> Finding:
     min_spend = max(5.0, analysis.get("summary", {}).get("spend", 0) * 0.02)
     placements = [p for p in (analysis.get("placements", []) or []) if _meaningful(p, min_spend)]
     best = placements[0] if placements else None
-    weak = max(placements, key=lambda p: (as_float(p.get("cpl")) or 1e9, as_float(p.get("spend"))), default=None)
+    candidate = max(placements, key=lambda p: (as_float(p.get("cpl")) or 1e9, as_float(p.get("spend"))), default=None)
+
+    # Significance gating: only flag the candidate as waste when (a) it is a different
+    # placement than the best, (b) it clears the same confidence tiers used elsewhere
+    # (not low), and (c) its CPL exceeds the best by a meaningful margin. Otherwise we
+    # explicitly say there is no clear waste rather than naming a noisy loser.
+    weak = None
     risks: list[str] = []
-    if best and weak and best is not weak:
-        risks.append(f"Isolate {weak['label']} — weaker cost/quality than {best['label']}.")
-    headline = f"Best placement: {best['label']}" if best else "No placement breakdown synced yet."
+    if best is not None and candidate is not None and candidate is not best:
+        best_cpl = as_float(best.get("cpl"))
+        candidate_cpl = as_float(candidate.get("cpl"))
+        significant = confidence_for(candidate) != "low"
+        meaningful_margin = bool(best_cpl) and candidate_cpl > best_cpl * PLACEMENT_WASTE_CPL_MARGIN
+        if significant and meaningful_margin:
+            weak = candidate
+            risks.append(
+                f"Isolate {weak['label']} — CPL ${candidate_cpl:.2f} is more than "
+                f"{int((PLACEMENT_WASTE_CPL_MARGIN - 1) * 100)}% above {best['label']} (${best_cpl:.2f})."
+            )
+
+    if best is None:
+        headline = "No placement breakdown synced yet."
+    elif weak is not None:
+        headline = f"Best placement: {best['label']}"
+    else:
+        headline = f"Best placement: {best['label']} — no clear placement waste yet."
     return {
         "agent": "placement",
         "headline": headline,
@@ -162,14 +233,30 @@ def audit_findings(knowledge: dict[str, Any]) -> Finding:
     risks: list[str] = []
     if summary.get("leads") and not summary.get("purchases"):
         risks.append("Lead events exist but purchases are missing/unattributed — optimize cautiously.")
+    cac = as_float(summary.get("costPerAcquisition"))
+    cac_is_proxy = summary.get("cacIsProxy", True)
+    if cac and cac_is_proxy:
+        risks.append(
+            f"CAC shown is a CPL proxy (${cac:.2f}); connect CRM/purchase data before treating it as a true customer acquisition cost."
+        )
     score = 8.0 if as_float(summary.get("clicks")) >= 1000 else 6.0 if as_float(summary.get("clicks")) >= 200 else 5.0
+    cac_phrase = (
+        f"CAC ${cac:.2f}" + (" (CPL proxy)" if cac_is_proxy else "")
+        if cac
+        else "CAC unavailable"
+    )
+    cvr = summary.get("leadToPurchaseCvr")
+    cvr_phrase = f", lead→purchase {as_float(cvr):.1f}%" if cvr is not None else ""
     return {
         "agent": "audit",
         "headline": (
             f"Account: ${as_float(summary.get('spend')):,.0f} spend, {as_float(summary.get('leads')):,.0f} leads, "
-            f"CPL ${as_float(summary.get('cpl')):.2f}"
+            f"CPL ${as_float(summary.get('cpl')):.2f}, {cac_phrase}{cvr_phrase}"
         ),
         "summary": summary,
+        "leadToPurchaseCvr": cvr,
+        "costPerAcquisition": cac or None,
+        "cacIsProxy": cac_is_proxy,
         "confidence": "high" if as_float(summary.get("clicks")) >= 1000 else "medium",
         "evidenceScore": round(score, 1),
         "risks": risks,

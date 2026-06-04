@@ -34,6 +34,11 @@ def build_campaign_watch(dashboard_data: dict[str, Any], *, stale_days: int = 7)
         current = aggregate(by_date[current_date])
         previous = aggregate(by_date[previous_date]) if previous_date else {}
         campaign = campaigns.get(campaign_id, {})
+        daily_budget = number(campaign.get("dailyBudgetUsd"))
+        # Rolling conversion volume across the observed window is the learning-phase proxy
+        # (Meta exits learning around ~50 conversions/ad set per week; leads stand in for
+        # conversions until CRM purchase data lands).
+        rolling_leads = sum(aggregate(by_date[date]).get("leads", 0) for date in dates)
         watch_rows.append(
             {
                 "campaignId": campaign_id,
@@ -42,14 +47,27 @@ def build_campaign_watch(dashboard_data: dict[str, Any], *, stale_days: int = 7)
                 "currentDate": current_date,
                 "previousDate": previous_date,
                 "daysObserved": len(dates),
-                **metrics_for(current, previous),
+                **metrics_for(
+                    current,
+                    previous,
+                    daily_budget=daily_budget,
+                    rolling_leads=rolling_leads,
+                    days_observed=len(dates),
+                ),
             }
         )
 
     return sorted(watch_rows, key=lambda row: severity_rank(row["tone"]), reverse=True)[:12]
 
 
-def metrics_for(current: dict[str, float], previous: dict[str, float]) -> dict[str, Any]:
+def metrics_for(
+    current: dict[str, float],
+    previous: dict[str, float],
+    *,
+    daily_budget: float = 0,
+    rolling_leads: float = 0,
+    days_observed: int = 1,
+) -> dict[str, Any]:
     cpc = ratio(current.get("spend"), current.get("clicks"))
     cpl = ratio(current.get("spend"), current.get("leads"))
     lead_rate = ratio(current.get("leads"), current.get("clicks"))
@@ -57,6 +75,8 @@ def metrics_for(current: dict[str, float], previous: dict[str, float]) -> dict[s
     previous_cpl = ratio(previous.get("spend"), previous.get("leads"))
     previous_lead_rate = ratio(previous.get("leads"), previous.get("clicks"))
     previous_start_rate = ratio(previous.get("telegramStarts"), previous.get("leads"))
+    pacing = pacing_signal(current.get("spend", 0), daily_budget)
+    learning = learning_status(rolling_leads, days_observed)
     decision = campaign_decision(
         current=current,
         cpl=cpl,
@@ -65,6 +85,7 @@ def metrics_for(current: dict[str, float], previous: dict[str, float]) -> dict[s
         previous_lead_rate=previous_lead_rate,
         start_rate=start_rate,
         previous_start_rate=previous_start_rate,
+        learning=learning,
     )
     return {
         "spendUsd": round(current.get("spend", 0), 2),
@@ -77,10 +98,63 @@ def metrics_for(current: dict[str, float], previous: dict[str, float]) -> dict[s
         "telegramStartRatePercent": start_rate * 100,
         "previousCpl": previous_cpl,
         "previousLeadRatePercent": previous_lead_rate * 100,
+        "dailyBudgetUsd": round(daily_budget, 2),
+        "pacing": pacing,
+        "learning": learning,
         "decision": decision["decision"],
         "reason": decision["reason"],
         "tone": decision["tone"],
         "nextActions": decision["nextActions"],
+    }
+
+
+# Meta budget utilization band: <70% spend of the daily budget is under-delivery
+# (often a too-tight bid, narrow audience, or low relevance), which should be fixed
+# before any scaling decision.
+UNDER_DELIVERY_THRESHOLD = 0.70
+# Rolling conversions needed to consider an ad set out of the learning phase. Meta uses
+# ~50 conversions/week; leads proxy for conversions until CRM purchase data is connected.
+LEARNING_EXIT_CONVERSIONS = 50
+
+
+def pacing_signal(spend: float, daily_budget: float) -> dict[str, Any]:
+    if not daily_budget:
+        return {"status": "unknown", "utilizationPercent": None, "note": "No daily budget on the campaign to measure pacing."}
+    utilization = ratio(spend, daily_budget)
+    if utilization < UNDER_DELIVERY_THRESHOLD:
+        return {
+            "status": "under_delivering",
+            "utilizationPercent": round(utilization * 100, 1),
+            "note": "Spending well below the daily budget — check bid, audience size, and creative relevance before changing budget.",
+        }
+    if utilization > 1.2:
+        return {
+            "status": "over_pacing",
+            "utilizationPercent": round(utilization * 100, 1),
+            "note": "Spending above the nominal daily budget (normal for CBO/averaging), but watch cost stability.",
+        }
+    return {
+        "status": "on_pace",
+        "utilizationPercent": round(utilization * 100, 1),
+        "note": "Delivery is pacing close to the daily budget.",
+    }
+
+
+def learning_status(rolling_leads: float, days_observed: int) -> dict[str, Any]:
+    # Pro-rate the weekly conversion target to the observed window so a short window is
+    # not falsely judged "learning complete" off a single strong day.
+    weekly_target = LEARNING_EXIT_CONVERSIONS
+    in_learning = rolling_leads < weekly_target
+    return {
+        "phase": "learning" if in_learning else "active",
+        "rollingConversions": round(rolling_leads),
+        "exitTarget": weekly_target,
+        "daysObserved": days_observed,
+        "note": (
+            "Still in the learning phase (rolling conversions below the exit target); avoid scale/kill changes that reset learning."
+            if in_learning
+            else "Past the learning-phase conversion target; scale/kill decisions are more reliable."
+        ),
     }
 
 
@@ -93,7 +167,9 @@ def campaign_decision(
     previous_lead_rate: float,
     start_rate: float,
     previous_start_rate: float,
+    learning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    in_learning = bool(learning and learning.get("phase") == "learning")
     if current.get("spend", 0) >= 50 and current.get("clicks", 0) >= 150 and not current.get("leads", 0):
         return decision(
             "Fix tracking or landing page before scaling",
@@ -143,6 +219,17 @@ def campaign_decision(
         )
 
     if current.get("leads", 0) >= 10 and (not previous_start_rate or start_rate >= previous_start_rate * 0.8):
+        if in_learning:
+            return decision(
+                "Let learning finish before scaling",
+                "Lead flow looks healthy, but the ad set is still in the learning phase, so scaling or killing now would reset Meta's optimization.",
+                "good",
+                [
+                    "Hold budget flat until the learning-phase conversion target is reached.",
+                    "Do not scale or kill yet — a budget change restarts learning.",
+                    "Re-evaluate scaling once rolling conversions clear the exit target.",
+                ],
+            )
         return decision(
             "Continue monitoring",
             "Lead flow is present and Telegram START quality is not collapsing.",

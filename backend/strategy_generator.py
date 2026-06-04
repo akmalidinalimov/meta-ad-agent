@@ -67,15 +67,38 @@ def generate_launch_strategy(playbook: dict[str, Any], knowledge: dict[str, Any]
     return strategy
 
 
+# Frequency/CPM kill thresholds mirror the monitoring layer so the strategy's stop rule
+# and the live alerts agree on what "fatigue" means.
+FREQUENCY_KILL_THRESHOLD = 2.8
+CPM_RISE_KILL_PERCENT = 40
+# Learning needs enough daily conversions to exit promptly; a budget that funds at least
+# this many target-CPA conversions per day keeps an ad set from stalling in learning.
+LEARNING_DAILY_CONVERSION_TARGET = 7
+
+
 def build_segment_strategy(segment: dict[str, Any], analysis: dict[str, Any], default_budget: float) -> dict[str, Any]:
     recommended_placements = choose_placements(segment, analysis)
     interests = choose_interests(segment, analysis)
     locations = segment.get("locations") or ["Uzbekistan"]
-    budget = as_float(segment.get("startingBudgetUsd"), default_budget)
+    requested_budget = as_float(segment.get("startingBudgetUsd"), default_budget)
+    target_cpa = max(as_float(analysis.get("summary", {}).get("cpl"), 1), 0.01)
+    min_learning_budget = round(target_cpa * LEARNING_DAILY_CONVERSION_TARGET, 2)
+    budget = round(max(requested_budget, min_learning_budget), 2)
     return {
         "id": str(segment.get("id") or slug(segment.get("name", "segment"))),
         "name": segment.get("name") or "Unnamed segment",
         "budgetUsd": budget,
+        "requestedBudgetUsd": requested_budget,
+        "minLearningBudgetUsd": min_learning_budget,
+        "budgetRationale": (
+            f"Floor of ${min_learning_budget:.2f}/day funds ~{LEARNING_DAILY_CONVERSION_TARGET} conversions/day "
+            f"at the ${target_cpa:.2f} target CPA so the ad set can exit the learning phase; "
+            + (
+                "requested budget already clears the floor."
+                if requested_budget >= min_learning_budget
+                else f"raised from the requested ${requested_budget:.2f}/day to protect learning."
+            )
+        ),
         "audienceHypothesis": segment.get("targetAudienceNotes") or infer_audience_hypothesis(segment),
         "offerAngle": segment.get("offerAngle") or "Watch the free AI income video and enter the Telegram funnel.",
         "ageRange": segment.get("ageRange") or recommended_age_range(analysis),
@@ -85,8 +108,38 @@ def build_segment_strategy(segment: dict[str, Any], analysis: dict[str, Any], de
         "interestStrategy": interests,
         "creativeAngles": build_creative_angles(segment),
         "funnelReadiness": funnel_readiness(segment),
+        "budgetStrategy": choose_budget_strategy(segment),
         "scaleRule": "Increase budget by the configured step only after Telegram START and qualified-lead cost stay stable for a full review window.",
-        "stopRule": "Pause or reduce spend when clicks rise but Telegram START, form clicks, or sales quality falls below the segment benchmark.",
+        "stopRule": (
+            "Pause or reduce spend when clicks rise but Telegram START, form clicks, or sales quality falls below the segment benchmark, "
+            f"or when frequency climbs above {FREQUENCY_KILL_THRESHOLD} (cold fatigue) or CPM rises more than {CPM_RISE_KILL_PERCENT}% "
+            "over the comparison window — both signal audience saturation before CPL moves."
+        ),
+    }
+
+
+def choose_budget_strategy(segment: dict[str, Any]) -> dict[str, Any]:
+    """Recommend CBO for scaling proven winners and ABO for controlled testing.
+
+    A segment that already carries proven tracking links / winning hypotheses is a
+    scaling candidate (CBO lets Meta shift budget to the best ad set). A fresh test
+    segment uses ABO so each ad set gets a guaranteed, equal learning budget.
+    """
+    is_test = not (segment.get("landingPageUrl") and segment.get("telegramBotUrl"))
+    if is_test:
+        return {
+            "mode": "ABO",
+            "rationale": (
+                "Use ABO (ad-set budget optimization) for this test segment so each audience/creative ad set "
+                "gets a guaranteed, equal learning budget and the comparison stays clean."
+            ),
+        }
+    return {
+        "mode": "CBO",
+        "rationale": (
+            "Use CBO (campaign budget optimization) when scaling this proven segment so Meta can shift budget "
+            "toward the best-performing ad set automatically."
+        ),
     }
 
 

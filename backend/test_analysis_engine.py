@@ -1,6 +1,7 @@
 from backend.analysis_engine import (
     action_count,
     action_value,
+    analyze_interests,
     finalize_metrics,
     quality_score,
     summarize_overall,
@@ -149,6 +150,95 @@ def test_finalize_metrics_flags_lead_double_count_risk():
     item = {"clicks": 100.0, "leads": 150.0, "impressions": 1000.0}
     finalize_metrics(item)
     assert item["leadDoubleCountRisk"] is True
+
+
+def test_analyze_interests_flags_shared_attribution_for_stacked_interests():
+    adsets = [
+        {
+            "id": "as_multi",
+            "targeting": {"interests": [{"name": "Artificial intelligence"}, {"name": "Freelancing"}]},
+        },
+        {
+            "id": "as_single",
+            "targeting": {"interests": [{"name": "Graphic design"}]},
+        },
+    ]
+    base_rows = [
+        {"adset_id": "as_multi", "spend": "100", "impressions": "5000", "clicks": "300", "actions": [{"action_type": "lead", "value": "40"}]},
+        {"adset_id": "as_single", "spend": "80", "impressions": "4000", "clicks": "250", "actions": [{"action_type": "lead", "value": "30"}]},
+    ]
+    interests = analyze_interests(adsets, base_rows)
+    by_label = {item["label"]: item for item in interests}
+
+    ai = by_label["Artificial intelligence"]
+    freelancing = by_label["Freelancing"]
+    design = by_label["Graphic design"]
+
+    # Stacked interests share attribution and tie on inherited metrics.
+    assert ai["sharedAttribution"] is True
+    assert ai["independentlyRanked"] is False
+    assert "present in winning ad sets" in ai["attributionCaveat"]
+    assert ai["leads"] == freelancing["leads"]  # inherited identical metric
+
+    # The single-interest ad set is independently attributable.
+    assert design["sharedAttribution"] is False
+    assert design["independentlyRanked"] is True
+
+
+def test_finalize_metrics_buyer_economics_with_purchases():
+    item = {"spend": 400.0, "clicks": 1000.0, "leads": 100.0, "purchases": 10.0, "impressions": 5000.0}
+    finalize_metrics(item)
+    assert item["leadToPurchaseCvr"] == 10.0      # 10 / 100 * 100
+    assert item["costPerAcquisition"] == 40.0     # 400 / 10
+    assert item["cacIsProxy"] is False
+    assert item["cacBasis"] == "purchase"
+
+
+def test_finalize_metrics_buyer_economics_falls_back_to_cpl_proxy():
+    item = {"spend": 200.0, "clicks": 1000.0, "leads": 100.0, "purchases": 0.0, "impressions": 5000.0}
+    finalize_metrics(item)
+    assert item["leadToPurchaseCvr"] is None
+    assert item["costPerAcquisition"] == 2.0      # CPL proxy = 200 / 100
+    assert item["cacIsProxy"] is True
+    assert item["cacBasis"] == "cpl_proxy"
+
+
+def test_summarize_overall_exposes_buyer_economics_proxy_label():
+    rows = [{"spend": "200", "impressions": "5000", "clicks": "1000", "actions": [{"action_type": "lead", "value": "100"}]}]
+    summary = summarize_overall(rows)
+    assert summary["cacIsProxy"] is True
+    assert summary["costPerAcquisition"] == 2.0
+    assert summary["leadToPurchaseCvr"] is None
+
+
+def test_finalize_metrics_computes_hook_and_hold_rate_from_video_fields():
+    item = {
+        "spend": 100.0,
+        "impressions": 10000.0,
+        "clicks": 500.0,
+        "video3sViews": 3000.0,
+        "videoThruplays": 1500.0,
+        "videoP25": 2500.0,
+        "videoP50": 1800.0,
+        "videoP75": 1200.0,
+        "videoP100": 900.0,
+    }
+    finalize_metrics(item)
+    assert item["hookRate"] == 30.0          # 3000 / 10000 * 100
+    assert item["thruplayRate"] == 15.0      # 1500 / 10000 * 100
+    assert item["holdRate"] is not None and 0 < item["holdRate"] < 100
+
+
+def test_finalize_metrics_leaves_video_rates_none_without_video_fields():
+    item = {"spend": 10.0, "impressions": 1000.0, "clicks": 50.0}
+    finalize_metrics(item)
+    assert item["hookRate"] is None
+    assert item["holdRate"] is None
+
+
+def test_action_count_reads_video_fields_from_top_level_list():
+    row = {"video_p25_watched_actions": [{"action_type": "video_p25_watched_actions", "value": "800"}]}
+    assert action_count(row, "video_p25") == 800
 
 
 def test_summarize_overall_exposes_roas_when_revenue_present():

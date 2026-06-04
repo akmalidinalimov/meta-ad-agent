@@ -134,6 +134,40 @@ def test_generate_launch_strategy_filters_non_instagram_noise_from_primary_place
     assert strategy["knowledgeUsed"]["bestPlacements"][0] == "instagram / reels"
 
 
+def test_stop_rule_includes_frequency_and_cpm_kill_criteria():
+    strategy = generate_launch_strategy(sample_playbook(), sample_knowledge())
+    stop_rule = strategy["segments"][0]["stopRule"].lower()
+    assert "frequency" in stop_rule
+    assert "cpm" in stop_rule
+
+
+def test_segment_enforces_minimum_learning_budget_from_target_cpa():
+    playbook = sample_playbook()
+    # Tiny requested budget; a high target CPA must raise the budget to protect learning.
+    playbook["segments"] = [dict(playbook["segments"][0], startingBudgetUsd=5)]
+    knowledge = sample_knowledge()
+    knowledge["analysis"]["summary"]["cpl"] = 10.0  # target CPA -> floor 70/day
+
+    strategy = generate_launch_strategy(playbook, knowledge)
+    segment = strategy["segments"][0]
+
+    assert segment["minLearningBudgetUsd"] == 70.0
+    assert segment["budgetUsd"] == 70.0  # raised from the requested 5
+    assert segment["requestedBudgetUsd"] == 5
+    assert "learning" in segment["budgetRationale"].lower()
+
+
+def test_segment_recommends_cbo_for_proven_and_abo_for_test():
+    strategy = generate_launch_strategy(sample_playbook(), sample_knowledge())
+    by_id = {segment["id"]: segment for segment in strategy["segments"]}
+
+    # "income" has no tracking links -> test segment -> ABO.
+    assert by_id["income"]["budgetStrategy"]["mode"] == "ABO"
+    # "business" has landing + telegram links -> proven/scaling segment -> CBO.
+    assert by_id["business"]["budgetStrategy"]["mode"] == "CBO"
+    assert "rationale" in by_id["income"]["budgetStrategy"]
+
+
 def test_generate_launch_strategy_includes_complete_launch_packet():
     strategy = generate_launch_strategy(sample_playbook(), sample_knowledge())
     packet = strategy["launchPacket"]
