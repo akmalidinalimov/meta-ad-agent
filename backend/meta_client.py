@@ -328,11 +328,18 @@ def extract_meta_error(response: httpx.Response) -> str:
     message = error.get("message") or "Unknown Meta API error."
     code = error.get("code")
     subcode = error.get("error_subcode")
+    # Meta's user-facing fields carry the actionable reason (e.g. which field/value is
+    # wrong); surface them so the operator/logs see WHY, not just "Invalid parameter".
+    user_title = error.get("error_user_title")
+    user_msg = error.get("error_user_msg")
     parts = [message]
+    if user_title:
+        parts.append(f"- {user_title}")
+    if user_msg:
+        parts.append(f": {user_msg}")
     if code is not None:
-        parts.append(f"code={code}")
-    if subcode is not None:
-        parts.append(f"subcode={subcode}")
+        parts.append(f"(code={code}")
+        parts.append(f"subcode={subcode})" if subcode is not None else ")")
     return " ".join(parts)
 
 

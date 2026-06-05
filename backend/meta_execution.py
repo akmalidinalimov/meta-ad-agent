@@ -56,6 +56,9 @@ def build_campaign_payload(playbook: dict[str, Any]) -> dict[str, Any]:
         "status": "PAUSED",
         "special_ad_categories": [],
         "buying_type": "AUCTION",
+        # ABO (ad-set budgets): Graph v23 requires this be set explicitly when the
+        # campaign has no budget. False = ad sets do not share budget.
+        "is_adset_budget_sharing_enabled": False,
     }
 
 
@@ -112,6 +115,9 @@ def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any], *, pi
         "status": "PAUSED",
         "daily_budget": budget,
         "billing_event": "IMPRESSIONS",
+        # ABO autobid: lowest cost without a cap needs no bid amount; Graph v23 requires
+        # the strategy be explicit on the ad set when the campaign has no budget.
+        "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
         "destination_type": "WEBSITE",
         "targeting": {
             "geo_locations": geo_locations(segment.get("locations") or ["Uzbekistan"]),
@@ -119,6 +125,9 @@ def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any], *, pi
             "age_max": age_max(segment.get("ageRange")),
             "publisher_platforms": ["instagram"],
             "instagram_positions": instagram_positions(segment.get("placements") or []),
+            # Graph v23 requires the Advantage+ audience flag be explicit. 0 = respect the
+            # geo/age targeting as set (no algorithmic expansion).
+            "targeting_automation": {"advantage_audience": 0},
         },
     }
     if pixel_id:

@@ -41,6 +41,7 @@ def test_build_campaign_creation_approval_creates_paused_api_payloads():
     assert request["after"]["campaign"]["status"] == "PAUSED"
     assert request["after"]["campaign"]["objective"] == "OUTCOME_LEADS"
     assert request["after"]["campaign"]["special_ad_categories"] == []
+    assert request["after"]["campaign"]["is_adset_budget_sharing_enabled"] is False
     assert len(request["after"]["adsets"]) == 2
     assert all(adset["status"] == "PAUSED" for adset in request["after"]["adsets"])
     assert all(adset["targeting"]["publisher_platforms"] == ["instagram"] for adset in request["after"]["adsets"])

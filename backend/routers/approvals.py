@@ -24,6 +24,7 @@ from ..api_models import (
 from ..dashboard_service import first_playbook_with_segments
 from ..knowledge_base import load_knowledge_base
 from ..meta_client import (
+    MetaApiError,
     create_ad as meta_create_ad,
     create_ad_set as meta_create_ad_set,
     create_campaign as meta_create_campaign,
@@ -125,18 +126,22 @@ async def execute_approval_request(approval_id: str, request: ApprovalExecutionR
                 return {"ok": True, "approval": approval, "result": entry.get("result"), "idempotent": True}
 
     config = get_meta_config()
-    if approval.get("actionType") == "create_paused_campaign_structure":
-        result = await execute_campaign_creation_approval(
-            approval,
-            dry_run=request.dryRun,
-            confirm_live=request.confirmLive,
-            live_writes_enabled=live_writes_enabled(),
-            create_campaign=lambda payload: meta_create_campaign(config, payload),
-            create_ad_set=lambda payload: meta_create_ad_set(config, payload),
-            create_ad=lambda payload: meta_create_ad(config, payload),
-        )
-    else:
-        result = await execute_meta_action_approval_request(approval, request, config)
+    try:
+        if approval.get("actionType") == "create_paused_campaign_structure":
+            result = await execute_campaign_creation_approval(
+                approval,
+                dry_run=request.dryRun,
+                confirm_live=request.confirmLive,
+                live_writes_enabled=live_writes_enabled(),
+                create_campaign=lambda payload: meta_create_campaign(config, payload),
+                create_ad_set=lambda payload: meta_create_ad_set(config, payload),
+                create_ad=lambda payload: meta_create_ad(config, payload),
+            )
+        else:
+            result = await execute_meta_action_approval_request(approval, request, config)
+    except MetaApiError as error:
+        # Surface Meta's actual rejection reason to the operator instead of a 500.
+        raise HTTPException(status_code=502, detail=f"Meta API rejected the write: {error}") from error
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error") or result.get("blockedReason") or "Execution failed.")
 
