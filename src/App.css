@@ -144,6 +144,23 @@
   border-color: #fecaca;
 }
 
+.campaign-chat-view {
+  display: grid;
+  gap: 16px;
+}
+
+.campaign-chat-intro p {
+  margin: 8px 0 12px;
+  color: #475569;
+  max-width: 70ch;
+}
+
+.campaign-chat-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .status-pill.good {
   border-color: var(--accent-soft-border);
   color: var(--accent);

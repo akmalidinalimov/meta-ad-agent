@@ -22,7 +22,9 @@ from ..api_models import (
     CampaignExecutionPlanRequest,
 )
 from ..dashboard_service import first_playbook_with_segments
+from ..knowledge_base import load_knowledge_base
 from ..meta_client import (
+    create_ad as meta_create_ad,
     create_ad_set as meta_create_ad_set,
     create_campaign as meta_create_campaign,
     get_meta_config,
@@ -60,6 +62,7 @@ def prepare_campaign_execution(request: CampaignExecutionPlanRequest) -> dict[st
         playbook,
         account_id=account_id,
         reason=request.reason or "Prepare a paused Meta campaign structure for review.",
+        knowledge=load_knowledge_base(),
     )
     saved_approval = approval_store.create_approval_request(approval)
     telegram = telegram_outbound.send_approval_notification(saved_approval)
@@ -128,6 +131,7 @@ async def execute_approval_request(approval_id: str, request: ApprovalExecutionR
             live_writes_enabled=live_writes_enabled(),
             create_campaign=lambda payload: meta_create_campaign(config, payload),
             create_ad_set=lambda payload: meta_create_ad_set(config, payload),
+            create_ad=lambda payload: meta_create_ad(config, payload),
         )
     else:
         result = await execute_meta_action_approval_request(approval, request, config)

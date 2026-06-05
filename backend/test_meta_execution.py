@@ -128,3 +128,69 @@ def test_execute_campaign_creation_calls_meta_creators_with_paused_payloads():
     assert len([call for call in calls if call[0] == "adset"]) == 2
     assert all(call[1]["status"] == "PAUSED" for call in calls)
     assert all(call[1].get("campaign_id") == "cmp_123" for call in calls if call[0] == "adset")
+
+
+def _knowledge_with_creatives():
+    return {
+        "analysis": {
+            "topAds": [
+                {"label": "VID - 24", "creative": {"id": "26274347335541753"}},
+                {"label": "VID - 22", "creative": {"id": "953285077179242"}},
+            ]
+        }
+    }
+
+
+def test_approval_attaches_winning_creatives_as_paused_ads_from_knowledge():
+    request = build_campaign_creation_approval(
+        sample_playbook(),
+        account_id="act_123",
+        knowledge=_knowledge_with_creatives(),
+    )
+    adsets = request["after"]["adsets"]
+    # One winning creative attached per ad set, cycling the pool.
+    assert adsets[0]["ads"][0]["creativeId"] == "26274347335541753"
+    assert adsets[1]["ads"][0]["creativeId"] == "953285077179242"
+    assert all(ad["status"] == "PAUSED" for adset in adsets for ad in adset["ads"])
+    assert any("Create PAUSED ad" in step for step in request["operationPreview"]["steps"])
+
+
+def test_execute_creates_paused_ads_reusing_creative_ids():
+    request = build_campaign_creation_approval(
+        sample_playbook(),
+        account_id="act_123",
+        knowledge=_knowledge_with_creatives(),
+    )
+    request["status"] = "approved"
+    created_ads = []
+
+    async def create_campaign(payload):
+        return {"id": "cmp_123"}
+
+    async def create_ad_set(payload):
+        # The packet-only `ads` key must never be sent to Meta's ad-set endpoint.
+        assert "ads" not in payload
+        return {"id": "as_1"}
+
+    async def create_ad(payload):
+        created_ads.append(payload)
+        assert payload["status"] == "PAUSED"
+        assert "creative_id" in payload["creative"]
+        return {"id": f"ad_{len(created_ads)}"}
+
+    result = asyncio.run(
+        execute_campaign_creation_approval(
+            request,
+            dry_run=False,
+            confirm_live=True,
+            live_writes_enabled=True,
+            create_campaign=create_campaign,
+            create_ad_set=create_ad_set,
+            create_ad=create_ad,
+        )
+    )
+
+    assert result["ok"] is True
+    ad_results = [item for item in result["created"] if item["level"] == "ad"]
+    assert len(ad_results) == 2
+    assert {ad["creative"]["creative_id"] for ad in created_ads} == {"26274347335541753", "953285077179242"}

@@ -11,9 +11,20 @@ def build_campaign_creation_approval(
     *,
     account_id: str,
     reason: str = "Create a paused Meta campaign structure from the approved playbook.",
+    knowledge: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     campaign = build_campaign_payload(playbook)
-    adsets = [build_adset_payload(segment, playbook) for segment in playbook.get("segments", [])]
+    # Reuse the account's best historical creatives (from synced knowledge) as paused
+    # ads, distributed one-per-ad-set — the same "apply the winners" move a media buyer
+    # makes by hand. Empty when no knowledge is synced, so the packet degrades to
+    # campaign + ad sets only (the prior behavior).
+    creatives_pool = extract_top_creatives(knowledge)
+    segments = playbook.get("segments", [])
+    adsets = []
+    for index, segment in enumerate(segments):
+        adset = build_adset_payload(segment, playbook)
+        adset["ads"] = build_ad_payloads(segment, creatives_pool, index)
+        adsets.append(adset)
     checks = guardrail_checks(playbook, adsets)
     guardrail_result = rollup_guardrail(checks)
     approval = {
@@ -48,13 +59,19 @@ def build_campaign_payload(playbook: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_operation_preview(campaign: dict[str, Any], adsets: list[dict[str, Any]]) -> dict[str, Any]:
+    ad_steps = [
+        f"Create PAUSED ad: {ad.get('name')} (reuse creative {ad.get('creativeId')})"
+        for adset in adsets
+        for ad in (adset.get("ads") or [])
+    ]
     return {
         "publishBlocked": True,
         "liveSpendRisk": "none_while_paused",
         "steps": [
             f"Create PAUSED campaign: {campaign.get('name')}",
             *[f"Create PAUSED ad set: {adset.get('name')} with ${float(adset.get('daily_budget', 0)) / 100:,.2f}/day" for adset in adsets],
-            "Stop before ads/publishing until the human approves the exact next action.",
+            *ad_steps,
+            "All objects remain PAUSED until you approve activation separately.",
         ],
         "safetyNotes": [
             "All generated Meta objects must remain PAUSED.",
@@ -97,6 +114,38 @@ def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any]) -> di
     }
 
 
+def extract_top_creatives(knowledge: dict[str, Any] | None, *, limit: int = 3) -> list[dict[str, Any]]:
+    """Pull the account's best historical creatives (with a real Meta creative id) from
+    the synced analysis, ranked best-first by topAds order (quality-sorted upstream)."""
+    analysis = (knowledge or {}).get("analysis", {})
+    creatives: list[dict[str, Any]] = []
+    for ad in analysis.get("topAds", []) or []:
+        creative = ad.get("creative") or {}
+        creative_id = creative.get("id")
+        if not creative_id:
+            continue
+        creatives.append({
+            "creativeId": str(creative_id),
+            "name": ad.get("label") or creative.get("name") or "Winning creative",
+        })
+        if len(creatives) >= limit:
+            break
+    return creatives
+
+
+def build_ad_payloads(segment: dict[str, Any], creatives_pool: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
+    """Attach one proven creative per ad set, cycling through the pool (mirrors a buyer
+    leading each audience with a known winner). Empty pool -> no ads (structure only)."""
+    if not creatives_pool:
+        return []
+    chosen = creatives_pool[index % len(creatives_pool)]
+    return [{
+        "name": f"{chosen['name']} - {segment.get('name', 'Segment')}",
+        "creativeId": chosen["creativeId"],
+        "status": "PAUSED",
+    }]
+
+
 async def execute_campaign_creation_approval(
     approval_request: dict[str, Any],
     *,
@@ -105,6 +154,7 @@ async def execute_campaign_creation_approval(
     live_writes_enabled: bool = False,
     create_campaign: MetaCreateFn | None = None,
     create_ad_set: MetaCreateFn | None = None,
+    create_ad: MetaCreateFn | None = None,
 ) -> dict[str, Any]:
     if not is_execution_approved_status(approval_request.get("status")):
         return {"ok": False, "error": "Specific approval is required before execution."}
@@ -145,7 +195,10 @@ async def execute_campaign_creation_approval(
         "name": campaign_payload.get("name"),
     })
     for adset_payload in adset_payloads:
-        next_payload = {**adset_payload, "campaign_id": campaign_id}
+        # `ads` is our packet metadata, not a Meta ad-set field — strip before sending.
+        ads_to_create = adset_payload.get("ads") or []
+        next_payload = {key: value for key, value in adset_payload.items() if key != "ads"}
+        next_payload["campaign_id"] = campaign_id
         adset_result = await create_ad_set(next_payload)
         adset_id = adset_result.get("id")
         if not adset_id:
@@ -162,11 +215,38 @@ async def execute_campaign_creation_approval(
             "name": next_payload.get("name"),
         })
 
+        # Create the proven creatives as PAUSED ads under this ad set (reusing existing
+        # creative IDs). Skipped when no create_ad fn is wired or no ads are attached.
+        if create_ad:
+            for ad in ads_to_create:
+                ad_payload = {
+                    "name": ad.get("name", "Winning creative"),
+                    "adset_id": adset_id,
+                    "creative": {"creative_id": ad["creativeId"]},
+                    "status": "PAUSED",
+                }
+                ad_result = await create_ad(ad_payload)
+                ad_id = ad_result.get("id")
+                if not ad_id:
+                    return {
+                        "ok": False,
+                        "dryRun": False,
+                        "created": created,
+                        "error": "Meta ad creation did not return an ad ID.",
+                        "rawResult": ad_result,
+                    }
+                created.append({
+                    "level": "ad",
+                    "id": ad_id,
+                    "name": ad_payload["name"],
+                    "creativeId": ad["creativeId"],
+                })
+
     return {
         "ok": True,
         "dryRun": False,
         "created": created,
-        "note": "Live Meta write completed. Created objects are paused by default.",
+        "note": "Live Meta write completed. Created objects (campaign, ad sets, ads) are paused by default.",
     }
 
 

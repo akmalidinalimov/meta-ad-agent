@@ -104,7 +104,8 @@ import type {
 } from '../types/marketing'
 
 const navItems = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'chat', label: 'Chat', icon: Send },
+  { id: 'overview', label: 'Monitor', icon: LayoutDashboard },
   { id: 'commandCenter', label: 'Command Center', icon: Bot },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings },
@@ -116,6 +117,8 @@ type ViewId = (typeof navItems)[number]['id']
 // the document outline) reflect where they are, not a fixed title.
 function viewHeading(view: ViewId): string {
   switch (view) {
+    case 'chat':
+      return 'Set up a campaign by chatting'
     case 'commandCenter':
       return 'Agent Command Center'
     case 'rankings':
@@ -145,7 +148,7 @@ const defaultFilters: DashboardFilters = {
 }
 
 export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardProps) {
-  const [activeView, setActiveView] = useState<ViewId>('overview')
+  const [activeView, setActiveView] = useState<ViewId>('chat')
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -303,7 +306,20 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
         </div>
       )}
 
-      <Filters data={data} filters={filters} onChange={setFilters} />
+      {activeView !== 'chat' && <Filters data={data} filters={filters} onChange={setFilters} />}
+
+      {/* Chat-first front door: set up a campaign by chatting; the agent drafts a
+          paused packet and the approval cards execute it — all on one screen. */}
+      {activeView === 'chat' && (
+        <CampaignChatView
+          data={data}
+          chatMessages={chatMessages}
+          chatInput={chatInput}
+          isChatLoading={isChatLoading}
+          onChatInputChange={setChatInput}
+          onChatSend={sendChatMessage}
+        />
+      )}
 
       {/* Empty state is scoped to the data-driven Overview only, so an over-narrow
           filter never hides Settings (reconnect) or Command Center (ask the agent). */}
@@ -553,6 +569,65 @@ function Filters({
         </label>
       </div>
     </details>
+  )
+}
+
+const CHAT_STARTER_PROMPTS = [
+  'Draft a paused campaign using my best audiences and creatives',
+  'Plan a 3-VSL launch at $100/day optimized for Telegram START',
+  'Which audience should I scale next, and why?',
+  'What are my best creatives right now?',
+]
+
+function CampaignChatView({
+  data,
+  chatMessages,
+  chatInput,
+  isChatLoading,
+  onChatInputChange,
+  onChatSend,
+}: {
+  data: DashboardData
+  chatMessages: ChatMessage[]
+  chatInput: string
+  isChatLoading: boolean
+  onChatInputChange: (value: string) => void
+  onChatSend: (message: string) => void
+}) {
+  return (
+    <section className="campaign-chat-view">
+      <section className="panel campaign-chat-intro">
+        <PanelHeading eyebrow="Front door" title="Set up a campaign by chatting" icon={Send} />
+        <p>
+          Describe what you want and the agent drafts an approval-safe, paused campaign — reusing your
+          best audiences and winning creatives. Review it in the approval card below, then create it in
+          Meta. Nothing goes live without your explicit approval.
+        </p>
+        <div className="campaign-chat-starters">
+          {CHAT_STARTER_PROMPTS.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              className="sync-button secondary"
+              disabled={isChatLoading}
+              onClick={() => onChatSend(prompt)}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <AgentChatPanel
+        messages={chatMessages}
+        input={chatInput}
+        isLoading={isChatLoading}
+        onInputChange={onChatInputChange}
+        onSend={onChatSend}
+      />
+
+      <ApprovalQueue data={data} />
+    </section>
   )
 }
 
@@ -2140,10 +2215,12 @@ function ApprovalAfterStructure({ after }: { after: ApprovalRequest['after'] }) 
     return null
   }
   const totalDaily = adsets.reduce((total, adset) => total + adset.daily_budget / 100, 0)
+  const totalAds = adsets.reduce((total, adset) => total + (adset.ads?.length ?? 0), 0)
   return (
     <details className="approval-after">
       <summary>
-        Review what will be created: {adsets.length} paused ad set(s), {formatCurrency(totalDaily)}/day total
+        Review what will be created: {adsets.length} paused ad set(s)
+        {totalAds > 0 ? `, ${totalAds} ad(s)` : ''}, {formatCurrency(totalDaily)}/day total
       </summary>
       {after.campaign && (
         <p className="approval-after-campaign">
@@ -2164,6 +2241,11 @@ function ApprovalAfterStructure({ after }: { after: ApprovalRequest['after'] }) 
               </small>
               {placements.length > 0 && <small>Placements: {placements.join(', ')}</small>}
               {interests.length > 0 && <small>Interests: {interests.join(', ')}</small>}
+              {(adset.ads ?? []).length > 0 && (
+                <small>
+                  Ads: {(adset.ads ?? []).map((ad) => `${ad.name} (creative ${ad.creativeId})`).join('; ')}
+                </small>
+              )}
             </li>
           )
         })}

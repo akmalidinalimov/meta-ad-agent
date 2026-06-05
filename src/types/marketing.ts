@@ -591,6 +591,11 @@ export interface ApprovalRequest {
           interests?: Array<{ name: string }>
         }>
       }
+      ads?: Array<{
+        name: string
+        creativeId: string
+        status: string
+      }>
     }>
   }
   reason: string
