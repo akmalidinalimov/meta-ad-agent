@@ -1425,6 +1425,85 @@
   color: #b91c1c;
 }
 
+.approval-proactive {
+  border-left: 3px solid var(--accent, #0f766e);
+  padding-left: 12px;
+}
+
+.approval-suggested-badge {
+  margin-bottom: 8px;
+}
+
+.approval-opportunity {
+  margin: 8px 0;
+  display: grid;
+  gap: 8px;
+}
+
+.approval-opportunity-rationale {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.approval-opportunity-section {
+  display: grid;
+  gap: 4px;
+}
+
+.approval-opportunity-label {
+  font-size: 11px;
+  font-weight: var(--weight-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.approval-opportunity-audiences,
+.approval-opportunity-hooks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.approval-opportunity-audiences li {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  font-size: 12px;
+}
+
+.approval-opportunity-score {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+}
+
+.approval-opportunity-mirror {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.approval-opportunity-reuse {
+  font-size: 12px;
+}
+
+.approval-opportunity-hooks li {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.funnel-context-chip {
+  margin: 0 0 12px;
+}
+
 .approval-after {
   margin-top: 8px;
 }

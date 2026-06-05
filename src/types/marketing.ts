@@ -308,6 +308,8 @@ export interface DashboardData {
   campaignWatch?: CampaignWatchItem[]
   approvalActions: ApprovalAction[]
   glossary: MetricGlossaryItem[]
+  // Live funnel signal (rates/eventSteps/totalEvents). Optional — surfaced as KPI context.
+  funnelSummary?: FunnelEventSummary
   dataSource?: {
     kind: 'mock' | 'meta' | 'imported'
     label: string
@@ -565,9 +567,69 @@ export interface DraftCampaignProposal {
   evidence: LaunchStrategy['knowledgeUsed']
 }
 
+export interface ProactiveOpportunityAudience {
+  label: string
+  ageRange?: string
+  gender?: string
+  locations?: string[]
+  interests?: string[]
+  qualityScore?: number
+  spend?: number
+  leads?: number
+  telegramSubscribers?: number
+  rationale?: string
+}
+
+export interface ProactiveOpportunityCreativeReuse {
+  creativeId: string
+  name: string
+  format?: string
+  theme?: string
+  hookType?: string
+  qualityScore?: number
+  rationale?: string
+}
+
+export interface ProactiveOpportunityCreativeBrief {
+  angle: string
+  hook: string
+  format?: string
+  whyItMightWork?: string
+}
+
+export interface ProactiveOpportunityCreative {
+  segment: string
+  reuseExisting?: ProactiveOpportunityCreativeReuse[]
+  newAngleBriefs?: ProactiveOpportunityCreativeBrief[]
+}
+
+export interface ProactiveOpportunitySourceTemplate {
+  sourceCampaignId?: string
+  sourceCampaignName?: string
+  config?: {
+    objective?: string
+    optimizationGoal?: string
+    bidStrategy?: string
+    budgetMode?: string
+    billingEvent?: string
+  }
+}
+
+export interface ProactiveOpportunity {
+  rationale?: string
+  audiences?: ProactiveOpportunityAudience[]
+  creatives?: ProactiveOpportunityCreative[]
+  sourceTemplate?: ProactiveOpportunitySourceTemplate
+}
+
 export interface ApprovalRequest {
   id: string
   actionType: string
+  // When 'proactive', the agent surfaced this unprompted as a "suggested for you" opportunity.
+  source?: string
+  // Proactive recommendation context: top audiences, recommended creatives, and the
+  // mirrored source-campaign config. All optional — only present on proactive approvals.
+  opportunity?: ProactiveOpportunity
   target: {
     level: string
     id: string

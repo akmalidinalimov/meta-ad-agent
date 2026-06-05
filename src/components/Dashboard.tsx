@@ -67,6 +67,7 @@ import {
   formatCurrency,
   formatDateTime,
   formatPercent,
+  formatRate,
   getDashboardAnchorDate,
   labelPlacement,
   labelRawSetting,
@@ -91,6 +92,7 @@ import type {
   CampaignPlaybook,
   CampaignPlaybookSegment,
   ApprovalRequest,
+  ProactiveOpportunity,
   Creative,
   DashboardData,
   DashboardFilters,
@@ -598,6 +600,11 @@ function CampaignChatView({
     <section className="campaign-chat-view">
       <section className="panel campaign-chat-intro">
         <PanelHeading eyebrow="Front door" title="Set up a campaign by chatting" icon={Send} />
+        {typeof data.funnelSummary?.rates?.telegramStartRate === 'number' && (
+          <span className="provenance-chip rule funnel-context-chip">
+            Live funnel · Telegram START rate {formatRate(data.funnelSummary.rates.telegramStartRate)}
+          </span>
+        )}
         <p>
           Describe what you want and the agent drafts an approval-safe, paused campaign — reusing your
           best audiences and winning creatives. Review it in the approval card below, then create it in
@@ -2254,7 +2261,67 @@ function ApprovalAfterStructure({ after }: { after: ApprovalRequest['after'] }) 
   )
 }
 
-function ApprovalQueue({ data }: { data: DashboardData }) {
+function ProactiveOpportunityDetails({ opportunity }: { opportunity: ProactiveOpportunity }) {
+  const audiences = (opportunity.audiences ?? []).slice(0, 3)
+  const creatives = opportunity.creatives ?? []
+  const sourceTemplate = opportunity.sourceTemplate
+  const config = sourceTemplate?.config
+  const reuseNames = creatives.flatMap((creative) =>
+    (creative.reuseExisting ?? []).map((item) => item.name),
+  )
+  const newHooks = creatives.flatMap((creative) =>
+    (creative.newAngleBriefs ?? []).map((brief) => brief.hook),
+  )
+
+  return (
+    <div className="approval-opportunity">
+      {opportunity.rationale && <p className="approval-opportunity-rationale">{opportunity.rationale}</p>}
+
+      {audiences.length > 0 && (
+        <div className="approval-opportunity-section">
+          <span className="approval-opportunity-label">Top audiences</span>
+          <ul className="approval-opportunity-audiences">
+            {audiences.map((audience, index) => (
+              <li key={`${audience.label}-${index}`}>
+                <strong>{audience.label}</strong>
+                {typeof audience.qualityScore === 'number' && (
+                  <small className="approval-opportunity-score">Quality {audience.qualityScore}</small>
+                )}
+                {audience.rationale && <small>{audience.rationale}</small>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {config && (
+        <p className="approval-opportunity-mirror">
+          Mirrors <strong>{sourceTemplate?.sourceCampaignName ?? 'top campaign'}</strong>
+          {config.objective ? `: ${labelRawSetting(config.objective)}` : ''}
+          {config.optimizationGoal ? ` / ${labelRawSetting(config.optimizationGoal)}` : ''}
+        </p>
+      )}
+
+      {(reuseNames.length > 0 || newHooks.length > 0) && (
+        <div className="approval-opportunity-section">
+          <span className="approval-opportunity-label">Recommended creatives</span>
+          {reuseNames.length > 0 && (
+            <small className="approval-opportunity-reuse">Reuse: {reuseNames.join(', ')}</small>
+          )}
+          {newHooks.length > 0 && (
+            <ul className="approval-opportunity-hooks">
+              {newHooks.map((hook, index) => (
+                <li key={`${hook}-${index}`}>{hook}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function ApprovalQueue({ data }: { data: DashboardData }) {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
   const [message, setMessage] = useState<string | null>(null)
   // null = unknown (status not yet loaded); drives whether live execution is offered.
@@ -2414,9 +2481,17 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
       <PanelHeading eyebrow="Recommended Actions" title="Approval queue" icon={ClipboardCheck} />
       {approvals.length > 0 && (
         <div className="action-list execution-approval-list">
-          {approvals.map((approval) => (
-            <div className={`action-item ${approval.risk}`} key={approval.id}>
+          {approvals.map((approval) => {
+            const isProactive = approval.source === 'proactive'
+            return (
+            <div
+              className={`action-item ${approval.risk}${isProactive ? ' approval-proactive' : ''}`}
+              key={approval.id}
+            >
               <div>
+                {isProactive && (
+                  <span className="provenance-chip llm approval-suggested-badge">🤖 Suggested for you</span>
+                )}
                 <strong>{approval.after.campaign?.name ?? approval.actionType}</strong>
                 <p>{approval.reason}</p>
                 <small>
@@ -2424,6 +2499,9 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
                 </small>
                 {approval.expectedImpact && (
                   <small className="approval-impact">Expected impact: {approval.expectedImpact}</small>
+                )}
+                {isProactive && approval.opportunity && (
+                  <ProactiveOpportunityDetails opportunity={approval.opportunity} />
                 )}
                 <ApprovalGuardrails checks={approval.guardrailChecks} />
                 <ApprovalAfterStructure after={approval.after} />
@@ -2475,7 +2553,8 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
                 <span>{approval.risk}</span>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
       {message && <small className="sync-message">{message}</small>}
