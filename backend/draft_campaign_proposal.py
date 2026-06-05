@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .analysis_engine import rank_audiences_for_next_campaign
+from .creative_recommender import build_recommended_creatives
 from .meta_execution import build_campaign_creation_approval
 from .strategy_generator import generate_launch_strategy
 
@@ -50,6 +51,12 @@ def build_draft_campaign_proposal(
         # field so nothing existing changes shape.
         "recommendedAudiences": build_recommended_audiences(strategy),
         "recommendedAudiencesTopThree": build_top_three_audiences(analysis, playbook),
+        # Per-audience creative plan: best existing creatives to reuse + new-angle
+        # briefs to produce. Deterministic generator only (build stays sync); the
+        # LLM-enhanced briefs are an opt-in async path for the proactive engine.
+        "recommendedCreatives": build_recommended_creatives(
+            analysis, [segment["name"] for segment in strategy.get("segments", [])]
+        ),
         "recommendedPlacements": build_recommended_placements(strategy),
         "avoidPlacements": build_avoid_placements(knowledge),
         "budgetPlan": strategy["budget"],

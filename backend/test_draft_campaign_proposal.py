@@ -14,6 +14,10 @@ def test_build_draft_campaign_proposal_is_review_only_and_uses_historical_eviden
     assert proposal["draftCampaign"]["status"] == "PAUSED"
     assert proposal["draftCampaign"]["name"].endswith(" - DRAFT")
     assert proposal["recommendedAudiences"][0]["segmentName"] == "AI income"
+    # Per-audience creative plan is surfaced additively, one block per proposed segment.
+    creatives = proposal["recommendedCreatives"]
+    assert [block["segment"] for block in creatives] == ["AI income", "Business automation"]
+    assert all(len(block["newAngleBriefs"]) >= 2 for block in creatives)
     assert "instagram_reels" in proposal["recommendedPlacements"]
     assert "facebook_feed" in proposal["avoidPlacements"]
     assert proposal["budgetPlan"]["totalDailyBudgetUsd"] == 250
