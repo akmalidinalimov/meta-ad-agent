@@ -5,6 +5,7 @@ from backend.analysis_engine import (
     build_meta_analysis,
     finalize_metrics,
     quality_score,
+    rank_audiences_for_next_campaign,
     summarize_overall,
 )
 from backend.dashboard_service import map_creative, map_metric_row
@@ -382,3 +383,52 @@ def test_map_metric_row_injects_telegram_starts_for_matching_campaign_date():
     # A different date for the same campaign has no START rows joined.
     other_day = map_metric_row({"date_start": "2026-05-21", "campaign_id": "cmp_1", "ad_id": "ad_2"}, 1, telegram_starts=starts)
     assert other_day["telegramSubscribers"] == 0
+
+
+def _analysis_with_audiences():
+    return {
+        "audience": {
+            "ageGender": [{"label": "25-34 / female", "qualityScore": 58}],
+            "regions": [{"label": "Tashkent Region", "qualityScore": 62}, {"label": "Fergana", "qualityScore": 44}],
+            "interests": [
+                {"label": "Graphic design", "qualityScore": 66, "spend": 260, "leads": 330},
+                {"label": "Artificial intelligence", "qualityScore": 57, "spend": 220, "leads": 260},
+                {"label": "Digital marketing", "qualityScore": 50, "spend": 120, "leads": 90},
+                {"label": "Online education", "qualityScore": 40, "spend": 60, "leads": 30},
+            ],
+        }
+    }
+
+
+def test_rank_audiences_returns_at_most_n_and_excludes_labels():
+    audiences = rank_audiences_for_next_campaign(
+        _analysis_with_audiences(),
+        exclude_labels=["graphic design"],  # case-insensitive exclusion
+        n=3,
+    )
+    assert len(audiences) <= 3
+    labels = [a["label"] for a in audiences]
+    assert "Graphic design" not in labels
+    # Highest remaining quality (Artificial intelligence) ranks first.
+    assert labels[0] == "Artificial intelligence"
+    # Broad demographic/geo hints are attached from the best-ranked signals.
+    assert audiences[0]["ageRange"] == "25-34"
+    assert audiences[0]["gender"] == "female"
+    assert audiences[0]["locations"] == ["Tashkent Region", "Fergana"]
+    assert audiences[0]["interests"] == ["Artificial intelligence"]
+
+
+def test_rank_audiences_prefers_live_telegram_start_signal():
+    analysis = _analysis_with_audiences()
+    # A lower-quality interest that carries a live Telegram-START signal must outrank a
+    # higher-quality interest with no START signal.
+    analysis["audience"]["interests"][3]["telegramSubscribers"] = 120
+    audiences = rank_audiences_for_next_campaign(analysis, n=3)
+    assert audiences[0]["label"] == "Online education"
+    assert audiences[0]["telegramSubscribers"] == 120
+    assert "Telegram-START" in audiences[0]["rationale"]
+
+
+def test_rank_audiences_is_defensive_on_empty_analysis():
+    assert rank_audiences_for_next_campaign({}, n=3) == []
+    assert rank_audiences_for_next_campaign(None, exclude_labels=None, n=3) == []

@@ -13,8 +13,9 @@ def build_campaign_creation_approval(
     reason: str = "Create a paused Meta campaign structure from the approved playbook.",
     knowledge: dict[str, Any] | None = None,
     pixel_id: str | None = None,
+    template: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    campaign = build_campaign_payload(playbook)
+    campaign = build_campaign_payload(playbook, template=template)
     # Reuse the account's best historical creatives (from synced knowledge) as paused
     # ads, distributed one-per-ad-set — the same "apply the winners" move a media buyer
     # makes by hand. Empty when no knowledge is synced, so the packet degrades to
@@ -23,7 +24,7 @@ def build_campaign_creation_approval(
     segments = playbook.get("segments", [])
     adsets = []
     for index, segment in enumerate(segments):
-        adset = build_adset_payload(segment, playbook, pixel_id=pixel_id)
+        adset = build_adset_payload(segment, playbook, pixel_id=pixel_id, template=template)
         adset["ads"] = build_ad_payloads(segment, creatives_pool, index)
         adsets.append(adset)
     checks = guardrail_checks(playbook, adsets)
@@ -49,8 +50,16 @@ def build_campaign_creation_approval(
     return approval
 
 
-def build_campaign_payload(playbook: dict[str, Any]) -> dict[str, Any]:
-    return {
+def build_campaign_payload(playbook: dict[str, Any], *, template: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build the PAUSED campaign payload.
+
+    With template=None this returns the exact LIVE-VALIDATED hardcoded shape (Graph v23,
+    proven against the real account) and MUST stay byte-identical — the live-valid tests
+    lock it. When a `template` (a WS-G `config` block from a past WINNING campaign) is
+    supplied, mirror its objective/buyingType/budgetMode/specialAdCategories so a new test
+    inherits what already works on this account instead of the defaults.
+    """
+    payload = {
         "name": f"{playbook.get('name', 'Meta Agent Campaign')} - DRAFT",
         "objective": "OUTCOME_LEADS",
         "status": "PAUSED",
@@ -60,6 +69,29 @@ def build_campaign_payload(playbook: dict[str, Any]) -> dict[str, Any]:
         # campaign has no budget. False = ad sets do not share budget.
         "is_adset_budget_sharing_enabled": False,
     }
+    if not template:
+        return payload
+
+    objective = template.get("objective")
+    if objective:
+        payload["objective"] = objective
+    buying_type = template.get("buyingType")
+    if buying_type:
+        payload["buying_type"] = buying_type
+    special_categories = template.get("specialAdCategories")
+    if special_categories is not None:
+        payload["special_ad_categories"] = special_categories
+    # CBO mirrors campaign-level budget sharing; ABO (or unknown) keeps the ad-set model.
+    # We never set a live budget here (paused review shell), only the sharing flag intent.
+    if template.get("budgetMode") == "CBO":
+        payload["is_adset_budget_sharing_enabled"] = True
+    payload["_templateSource"] = "mirrored_from_winning_campaign_config"
+    return payload
+
+
+def _strip_private_keys(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop packet-only annotation keys (underscore-prefixed) before any Meta write."""
+    return {key: value for key, value in payload.items() if not str(key).startswith("_")}
 
 
 def build_operation_preview(campaign: dict[str, Any], adsets: list[dict[str, Any]]) -> dict[str, Any]:
@@ -99,7 +131,13 @@ def build_execution_readiness(approval: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any], *, pixel_id: str | None = None) -> dict[str, Any]:
+def build_adset_payload(
+    segment: dict[str, Any],
+    playbook: dict[str, Any],
+    *,
+    pixel_id: str | None = None,
+    template: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build a LIVE-VALID paused ad-set matching the account's proven pattern.
 
     With a pixel: OUTCOME_LEADS + OFFSITE_CONVERSIONS optimizing the website-registration
@@ -108,6 +146,11 @@ def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any], *, pi
     Instagram only — we deliberately omit interest targeting because Meta requires real
     interest IDs (name-only flexible_spec is rejected), and broad/Advantage+ is the
     account's best-performing approach anyway.
+
+    With template=None this output is byte-identical to the prior live-validated shape and
+    MUST stay so. When a `template` (a past WINNING campaign's `config` block) is supplied,
+    mirror its billingEvent/bidStrategy, and — when a pixel is wired — its optimizationGoal
+    and pixel, so a new test inherits the proven settings instead of the defaults.
     """
     budget = int(round(float(segment.get("startingBudgetUsd") or playbook.get("rules", {}).get("startingBudgetUsd") or 100) * 100))
     payload: dict[str, Any] = {
@@ -130,12 +173,30 @@ def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any], *, pi
             "targeting_automation": {"advantage_audience": 0},
         },
     }
-    if pixel_id:
+    template_pixel = template.get("promotedObjectPixelId") if template else None
+    effective_pixel = pixel_id or template_pixel
+    if effective_pixel:
         payload["optimization_goal"] = "OFFSITE_CONVERSIONS"
-        payload["promoted_object"] = {"pixel_id": str(pixel_id), "custom_event_type": "COMPLETE_REGISTRATION"}
+        payload["promoted_object"] = {"pixel_id": str(effective_pixel), "custom_event_type": "COMPLETE_REGISTRATION"}
     else:
         # No pixel wired -> a goal that needs no promoted_object, so the create still validates.
         payload["optimization_goal"] = "LINK_CLICKS"
+
+    if template:
+        # Mirror the proven ad-set settings from the winning campaign's config. Only override
+        # when the template actually carries a value, so missing fields keep the safe defaults.
+        billing_event = template.get("billingEvent")
+        if billing_event:
+            payload["billing_event"] = billing_event
+        bid_strategy = template.get("bidStrategy")
+        if bid_strategy:
+            payload["bid_strategy"] = bid_strategy
+        optimization_goal = template.get("optimizationGoal")
+        # Only mirror the optimization goal when we have a pixel to back it — otherwise an
+        # OFFSITE_CONVERSIONS-style goal with no promoted_object would fail Graph validation.
+        if optimization_goal and effective_pixel:
+            payload["optimization_goal"] = optimization_goal
+        payload["_templateSource"] = "mirrored_from_winning_campaign_config"
     return payload
 
 
@@ -203,7 +264,9 @@ async def execute_campaign_creation_approval(
     campaign_payload = after.get("campaign") or {}
     adset_payloads = after.get("adsets") or []
     created = []
-    campaign_result = await create_campaign(campaign_payload)
+    # Strip packet-only metadata (underscore-prefixed, e.g. _templateSource) before any
+    # Meta write; these are our annotations, not Graph fields, and would fail validation.
+    campaign_result = await create_campaign(_strip_private_keys(campaign_payload))
     campaign_id = campaign_result.get("id")
     if not campaign_id:
         return {
@@ -220,9 +283,10 @@ async def execute_campaign_creation_approval(
         "name": campaign_payload.get("name"),
     })
     for adset_payload in adset_payloads:
-        # `ads` is our packet metadata, not a Meta ad-set field — strip before sending.
+        # `ads` and any underscore-prefixed key (e.g. _templateSource) are our packet
+        # metadata, not Meta ad-set fields — strip before sending.
         ads_to_create = adset_payload.get("ads") or []
-        next_payload = {key: value for key, value in adset_payload.items() if key != "ads"}
+        next_payload = _strip_private_keys({key: value for key, value in adset_payload.items() if key != "ads"})
         next_payload["campaign_id"] = campaign_id
         adset_result = await create_ad_set(next_payload)
         adset_id = adset_result.get("id")

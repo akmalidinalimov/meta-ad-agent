@@ -3,8 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from .analysis_engine import rank_audiences_for_next_campaign
 from .meta_execution import build_campaign_creation_approval
 from .strategy_generator import generate_launch_strategy
+
+try:  # Optional: recent-playbook exclusion degrades gracefully if storage is unavailable.
+    from .playbook_store import load_playbooks
+except Exception:  # pragma: no cover - defensive import guard
+    load_playbooks = None  # type: ignore[assignment]
 
 
 def build_draft_campaign_proposal(
@@ -14,10 +20,19 @@ def build_draft_campaign_proposal(
     account_id: str,
 ) -> dict[str, Any]:
     strategy = generate_launch_strategy(playbook, knowledge)
+    analysis = (knowledge or {}).get("analysis", {}) or {}
+    # Pick the template = best ranked campaign that actually carries a config block, so a
+    # proposed test inherits the objective/optimization/bid/budget-mode that already wins
+    # on this account. None when no winner has config -> the live-validated defaults apply.
+    source_template = select_source_template(analysis)
+    template_config = source_template.get("config") if source_template else None
+
     approval = build_campaign_creation_approval(
         playbook,
         account_id=account_id,
         reason="Prepare a paused campaign proposal for review. Do not publish or spend.",
+        knowledge=knowledge,
+        template=template_config,
     )
     return {
         "id": f"proposal_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
@@ -30,15 +45,60 @@ def build_draft_campaign_proposal(
         "strategyId": strategy["id"],
         "draftCampaign": approval["after"]["campaign"],
         "draftAdSets": approval["after"]["adsets"],
+        # recommendedAudiences keeps its existing list shape (frontend contract). The new
+        # "top 3 audiences to run next" lives in the additive recommendedAudiencesTopThree
+        # field so nothing existing changes shape.
         "recommendedAudiences": build_recommended_audiences(strategy),
+        "recommendedAudiencesTopThree": build_top_three_audiences(analysis, playbook),
         "recommendedPlacements": build_recommended_placements(strategy),
         "avoidPlacements": build_avoid_placements(knowledge),
         "budgetPlan": strategy["budget"],
+        "sourceTemplate": source_template,
         "trackingReadiness": build_tracking_readiness(strategy),
         "approvalPacket": approval,
         "operatorChecklist": build_operator_checklist(strategy, approval),
         "evidence": strategy.get("knowledgeUsed", {}),
     }
+
+
+def select_source_template(analysis: dict[str, Any]) -> dict[str, Any] | None:
+    """Best ranked campaign carrying a non-empty config block, described for the operator.
+
+    topCampaigns is already quality-ranked upstream, so the first entry whose config has
+    at least one real (non-null) field is the proven winner to mirror. Returns None when
+    no campaign carries config (partial/synthetic knowledge), so defaults stay in force.
+    """
+    for campaign in analysis.get("topCampaigns", []) or []:
+        config = campaign.get("config") or {}
+        if any(value not in (None, "", [], {}) for value in config.values()):
+            keys = campaign.get("keys", {}) or {}
+            return {
+                "sourceCampaignId": keys.get("campaign_id"),
+                "sourceCampaignName": keys.get("campaign_name") or campaign.get("label"),
+                "config": config,
+            }
+    return None
+
+
+def recent_playbook_interest_labels(playbook: dict[str, Any]) -> list[str]:
+    """Interests already used by recent playbooks + the current one, so suggestions skip
+    audiences we have already tested. Defensive: empty list if storage is unavailable."""
+    labels: list[str] = []
+
+    def collect(book: dict[str, Any]) -> None:
+        for segment in book.get("segments", []) or []:
+            for interest in segment.get("interests", []) or []:
+                if interest:
+                    labels.append(str(interest))
+
+    collect(playbook or {})
+    if load_playbooks is not None:
+        try:
+            for book in load_playbooks()[:5]:
+                collect(book)
+        except Exception:  # pragma: no cover - storage best-effort
+            pass
+    return list(dict.fromkeys(labels))
 
 
 def build_recommended_audiences(strategy: dict[str, Any]) -> list[dict[str, Any]]:
@@ -57,6 +117,19 @@ def build_recommended_audiences(strategy: dict[str, Any]) -> list[dict[str, Any]
             }
         )
     return rows
+
+
+def build_top_three_audiences(
+    analysis: dict[str, Any] | None,
+    playbook: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The additive "top 3 audiences to run next", excluding recently-tested interests."""
+    exclude_labels = recent_playbook_interest_labels(playbook or {})
+    audiences = rank_audiences_for_next_campaign(analysis or {}, exclude_labels=exclude_labels, n=3)
+    return {
+        "audiences": audiences,
+        "excludedRecentlyTested": exclude_labels,
+    }
 
 
 def build_recommended_placements(strategy: dict[str, Any]) -> list[str]:

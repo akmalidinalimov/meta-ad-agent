@@ -281,6 +281,134 @@ def analyze_interests(adsets: list[dict[str, Any]], base_rows: list[dict[str, An
     return sorted(ranked, key=quality_sort, reverse=True)[:25]
 
 
+def rank_audiences_for_next_campaign(
+    analysis: dict[str, Any],
+    exclude_labels: Any = None,
+    n: int = 3,
+) -> list[dict[str, Any]]:
+    """Return up to `n` best audiences to test next, NOT already in `exclude_labels`.
+
+    Reuses the same ranked interest evidence that analyze_interests/rank_dimension/
+    quality_score produced upstream (analysis["audience"]["interests"]), so this never
+    recomputes ranking math — it only selects, annotates, and de-dupes. The best
+    age/gender and region signals are attached as broad targeting hints.
+
+    Preference order: audiences carrying a live Telegram-START signal
+    (telegramSubscribers > 0) rank above the rest; within each band the existing
+    qualityScore ordering is preserved. Everything is read with .get so partial or
+    synthetic knowledge bases never crash.
+    """
+    audience = (analysis or {}).get("audience", {}) or {}
+    interests = audience.get("interests", []) or []
+
+    excluded = {
+        _normalize_label(label)
+        for label in (exclude_labels or [])
+        if _normalize_label(label)
+    }
+
+    # Broad supporting signals shared across the suggested audiences. These are the
+    # account's best-ranked demographic/geo hints, used only as defaults — never to
+    # override anything the interest evidence already implies.
+    best_age = _first_label(audience.get("ageGender", []))
+    age_range, gender = _split_age_gender(best_age)
+    top_regions = [
+        item.get("label")
+        for item in (audience.get("regions", []) or [])[:3]
+        if item.get("label")
+    ]
+    locations = top_regions or None
+
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in interests:
+        label = item.get("label")
+        norm = _normalize_label(label)
+        if not norm or norm in excluded or norm in seen:
+            continue
+        seen.add(norm)
+        telegram = _telegram_subscribers(item)
+        candidates.append(
+            {
+                "label": label,
+                "ageRange": age_range,
+                "gender": gender,
+                "locations": locations,
+                "interests": [label],
+                "qualityScore": item.get("qualityScore", 0),
+                "spend": item.get("spend", 0),
+                "leads": item.get("leads", 0),
+                "telegramSubscribers": telegram,
+                "rationale": _audience_rationale(item, telegram),
+                "_hasTelegram": telegram is not None and telegram > 0,
+            }
+        )
+
+    # Stable sort: Telegram-START signal first, then the upstream quality ordering
+    # (qualityScore desc) the interests already arrived in.
+    ordered = sorted(
+        enumerate(candidates),
+        key=lambda pair: (
+            1 if pair[1]["_hasTelegram"] else 0,
+            as_float(pair[1].get("qualityScore")),
+            -pair[0],
+        ),
+        reverse=True,
+    )
+    result = []
+    for _, candidate in ordered[: max(0, int(n or 0))]:
+        candidate.pop("_hasTelegram", None)
+        result.append(candidate)
+    return result
+
+
+def _telegram_subscribers(item: dict[str, Any]) -> float | None:
+    # Rows may carry a live Telegram-START count now; read it defensively from any of
+    # the known field spellings. Absent -> None (not 0) so "no data" is distinguishable.
+    for key in ("telegramSubscribers", "telegramStarts", "telegram_start"):
+        value = item.get(key)
+        if value not in (None, ""):
+            return as_float(value)
+    return None
+
+
+def _audience_rationale(item: dict[str, Any], telegram: float | None) -> str:
+    quality = item.get("qualityScore", 0)
+    spend = as_float(item.get("spend"))
+    leads = as_float(item.get("leads"))
+    if telegram is not None and telegram > 0:
+        return (
+            f"Live Telegram-START signal ({telegram:,.0f} starts) on '{item.get('label')}' "
+            f"with quality score {quality}; untested in recent playbooks, so prioritize it next."
+        )
+    return (
+        f"Quality score {quality} on '{item.get('label')}' (spend ${spend:,.2f}, leads {leads:,.0f}); "
+        "untested in recent playbooks, so a strong next-test candidate."
+    )
+
+
+def _normalize_label(label: Any) -> str:
+    return str(label or "").strip().lower()
+
+
+def _split_age_gender(label: Any) -> tuple[str | None, str | None]:
+    if not label or "/" not in str(label):
+        return None, None
+    age_part, _, gender_part = str(label).partition("/")
+    age = age_part.strip() or None
+    gender = gender_part.strip().lower() or None
+    if gender in {"unknown", ""}:
+        gender = None
+    return age, gender
+
+
+def _first_label(items: list[dict[str, Any]]) -> str | None:
+    for item in items or []:
+        if item.get("label"):
+            return str(item["label"])
+    return None
+
+
 def enrich_ads(items: list[dict[str, Any]], ads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ad_lookup = {ad.get("id"): ad for ad in ads}
     for item in items:
