@@ -86,7 +86,7 @@ async def get_campaigns(config: MetaConfig) -> list[dict[str, Any]]:
 
     url = f"https://graph.facebook.com/{config.api_version}/{config.ad_account_id}/campaigns"
     params = {
-        "fields": "id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time",
+        "fields": "id,name,status,effective_status,objective,buying_type,special_ad_categories,bid_strategy,daily_budget,lifetime_budget,start_time,stop_time",
         "limit": 500,
         "access_token": config.access_token,
     }
@@ -117,7 +117,7 @@ async def get_ad_sets(config: MetaConfig) -> list[dict[str, Any]]:
         config,
         f"/{config.ad_account_id}/adsets",
         {
-            "fields": "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,daily_budget,lifetime_budget,targeting,start_time,end_time",
+            "fields": "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_strategy,bid_amount,promoted_object,daily_budget,lifetime_budget,targeting,start_time,end_time",
             "limit": 500,
         },
     )

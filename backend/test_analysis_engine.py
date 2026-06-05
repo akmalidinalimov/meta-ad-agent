@@ -2,6 +2,7 @@ from backend.analysis_engine import (
     action_count,
     action_value,
     analyze_interests,
+    build_meta_analysis,
     finalize_metrics,
     quality_score,
     summarize_overall,
@@ -69,6 +70,116 @@ def test_action_count_dedupes_overlapping_lead_aliases():
         ]
     }
     assert action_count(row, "lead") == 120
+
+
+def test_top_campaigns_carry_config_block_from_synced_raw():
+    # A campaign with no campaign-level budget but an ad set that carries the budget,
+    # an offsite-conversion optimization goal, a pixel promoted_object, and a bid
+    # strategy. The config block must surface these for later "mirror past winners".
+    raw = {
+        "campaigns": [
+            {
+                "id": "cmp_1",
+                "name": "Winning VSL",
+                "objective": "OUTCOME_LEADS",
+                "buying_type": "AUCTION",
+                "special_ad_categories": [],
+            }
+        ],
+        "adsets": [
+            {
+                "id": "as_1",
+                "campaign_id": "cmp_1",
+                "optimization_goal": "OFFSITE_CONVERSIONS",
+                "billing_event": "IMPRESSIONS",
+                "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                "daily_budget": "5000",
+                "promoted_object": {"pixel_id": "pixel_123", "custom_event_type": "LEAD"},
+            }
+        ],
+        "insights": {
+            "base": [
+                {
+                    "campaign_id": "cmp_1",
+                    "campaign_name": "Winning VSL",
+                    "spend": "100",
+                    "impressions": "10000",
+                    "clicks": "500",
+                    "actions": [{"action_type": "lead", "value": "60"}],
+                }
+            ]
+        },
+    }
+
+    result = build_meta_analysis(raw)
+    top = result["analysis"]["topCampaigns"]
+    assert top, "expected at least one ranked campaign"
+    config = top[0]["config"]
+    assert config["objective"] == "OUTCOME_LEADS"
+    assert config["buyingType"] == "AUCTION"
+    assert config["optimizationGoal"] == "OFFSITE_CONVERSIONS"
+    assert config["billingEvent"] == "IMPRESSIONS"
+    assert config["bidStrategy"] == "LOWEST_COST_WITHOUT_CAP"
+    # Budget lives on the ad set, not the campaign -> ABO.
+    assert config["budgetMode"] == "ABO"
+    assert config["promotedObjectPixelId"] == "pixel_123"
+
+
+def test_top_campaigns_config_is_null_ish_without_config_fields():
+    # Old/partial fixtures (no campaign/adset config) must not crash; config is
+    # present but null-ish.
+    raw = {
+        "insights": {
+            "base": [
+                {
+                    "campaign_id": "cmp_x",
+                    "campaign_name": "Bare campaign",
+                    "spend": "10",
+                    "impressions": "1000",
+                    "clicks": "50",
+                    "actions": [{"action_type": "lead", "value": "5"}],
+                }
+            ]
+        }
+    }
+
+    result = build_meta_analysis(raw)
+    config = result["analysis"]["topCampaigns"][0]["config"]
+    assert config["objective"] is None
+    assert config["budgetMode"] is None
+    assert config["optimizationGoal"] is None
+    assert config["promotedObjectPixelId"] is None
+
+
+def test_top_campaigns_config_detects_cbo_campaign_budget():
+    raw = {
+        "campaigns": [
+            {
+                "id": "cmp_cbo",
+                "name": "CBO campaign",
+                "objective": "OUTCOME_SALES",
+                "bid_strategy": "COST_CAP",
+                "lifetime_budget": "200000",
+            }
+        ],
+        "adsets": [{"id": "as_2", "campaign_id": "cmp_cbo", "optimization_goal": "OFFSITE_CONVERSIONS"}],
+        "insights": {
+            "base": [
+                {
+                    "campaign_id": "cmp_cbo",
+                    "campaign_name": "CBO campaign",
+                    "spend": "100",
+                    "impressions": "5000",
+                    "clicks": "200",
+                    "actions": [{"action_type": "purchase", "value": "4"}],
+                }
+            ]
+        },
+    }
+
+    config = build_meta_analysis(raw)["analysis"]["topCampaigns"][0]["config"]
+    assert config["budgetMode"] == "CBO"
+    assert config["bidStrategy"] == "COST_CAP"
 
 
 def test_map_metric_row_does_not_quadruple_count_leads():

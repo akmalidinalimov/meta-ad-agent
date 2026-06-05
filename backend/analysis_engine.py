@@ -48,7 +48,11 @@ def build_meta_analysis(raw: dict[str, Any], llm_summary: str | None = None) -> 
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "window": "last_90d",
         "summary": summarize_overall(summary_rows),
-        "topCampaigns": rank_dimension(summary_rows, ["campaign_id", "campaign_name"], limit=10),
+        "topCampaigns": attach_campaign_config(
+            rank_dimension(summary_rows, ["campaign_id", "campaign_name"], limit=10),
+            raw.get("campaigns", []),
+            adsets,
+        ),
         "topAds": enrich_ads(rank_dimension(summary_rows, ["ad_id", "ad_name"], limit=15), ads),
         "audience": {
             "ageGender": rank_dimension(age_gender_rows, ["age", "gender"], limit=20),
@@ -139,6 +143,97 @@ def rank_dimension(rows: list[dict[str, Any]], keys: list[str], limit: int = 10)
         ranked.append(item)
 
     return sorted(ranked, key=quality_sort, reverse=True)[:limit]
+
+
+def attach_campaign_config(
+    items: list[dict[str, Any]],
+    campaigns: list[dict[str, Any]],
+    adsets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach a compact, defensive `config` block to each ranked campaign.
+
+    Captures the real Meta campaign/ad-set settings (objective, buying type, budget
+    mode, optimization goal, etc.) so a later workstream can "mirror past winners".
+    This is purely additive — it never changes ranking or existing fields, and it
+    tolerates missing fields (old/partial/synthetic fixtures) by emitting nulls.
+    """
+    campaign_lookup = {
+        str(campaign.get("id")): campaign
+        for campaign in valid_rows(campaigns)
+        if campaign.get("id") is not None
+    }
+    adsets_by_campaign: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for adset in valid_rows(adsets):
+        adsets_by_campaign[str(adset.get("campaign_id") or "")].append(adset)
+
+    for item in items:
+        campaign_id = str(item.get("keys", {}).get("campaign_id") or "")
+        campaign = campaign_lookup.get(campaign_id, {})
+        item["config"] = build_campaign_config(campaign, adsets_by_campaign.get(campaign_id, []))
+    return items
+
+
+def build_campaign_config(
+    campaign: dict[str, Any],
+    campaign_adsets: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compact config snapshot for one campaign (+ its ad sets).
+
+    Everything is read with .get and defaults to None when absent, so partial Meta
+    payloads or synthetic fixtures never crash the analysis build.
+    """
+    # Budget mode: a campaign carrying its own budget runs CBO (Campaign Budget
+    # Optimization); otherwise budgets live on the ad sets, i.e. ABO. When neither
+    # the campaign nor any ad set reports a budget we cannot tell, so leave it null.
+    campaign_has_budget = _has_budget(campaign)
+    adset_has_budget = any(_has_budget(adset) for adset in campaign_adsets)
+    if campaign_has_budget:
+        budget_mode = "CBO"
+    elif adset_has_budget:
+        budget_mode = "ABO"
+    else:
+        budget_mode = None
+
+    # Ad-set-level config is taken from the first ad set that reports each field so a
+    # single representative settings snapshot is surfaced alongside the campaign.
+    optimization_goal = _first_adset_value(campaign_adsets, "optimization_goal")
+    billing_event = _first_adset_value(campaign_adsets, "billing_event")
+    # bid_strategy can live on the campaign (CBO) or the ad set (ABO); prefer the
+    # campaign's, then fall back to an ad set's.
+    bid_strategy = campaign.get("bid_strategy") or _first_adset_value(campaign_adsets, "bid_strategy")
+
+    return {
+        "objective": campaign.get("objective"),
+        "buyingType": campaign.get("buying_type"),
+        "specialAdCategories": campaign.get("special_ad_categories") or None,
+        "budgetMode": budget_mode,
+        "optimizationGoal": optimization_goal,
+        "billingEvent": billing_event,
+        "bidStrategy": bid_strategy,
+        "promotedObjectPixelId": _promoted_object_pixel_id(campaign_adsets),
+    }
+
+
+def _has_budget(entity: dict[str, Any]) -> bool:
+    return as_float(entity.get("daily_budget")) > 0 or as_float(entity.get("lifetime_budget")) > 0
+
+
+def _first_adset_value(adsets: list[dict[str, Any]], key: str) -> Any:
+    for adset in adsets:
+        value = adset.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _promoted_object_pixel_id(adsets: list[dict[str, Any]]) -> Any:
+    for adset in adsets:
+        promoted = adset.get("promoted_object")
+        if isinstance(promoted, dict):
+            pixel_id = promoted.get("pixel_id")
+            if pixel_id not in (None, ""):
+                return pixel_id
+    return None
 
 
 def analyze_interests(adsets: list[dict[str, Any]], base_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
