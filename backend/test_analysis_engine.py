@@ -256,3 +256,18 @@ def test_summarize_overall_exposes_roas_when_revenue_present():
     assert summary["revenue"] == 200
     assert summary["roas"] == 4.0
     assert summary["aov"] == 100.0
+
+
+def test_map_metric_row_defaults_telegram_subscribers_to_zero():
+    row = {"date_start": "2026-05-20", "campaign_id": "cmp_1", "ad_id": "ad_1"}
+    metric = map_metric_row(row, 0)
+    assert metric["telegramSubscribers"] == 0
+
+
+def test_map_metric_row_injects_telegram_starts_for_matching_campaign_date():
+    starts = {("cmp_1", "2026-05-20"): 9, ("cmp_2", "2026-05-20"): 3}
+    matched = map_metric_row({"date_start": "2026-05-20", "campaign_id": "cmp_1", "ad_id": "ad_1"}, 0, telegram_starts=starts)
+    assert matched["telegramSubscribers"] == 9
+    # A different date for the same campaign has no START rows joined.
+    other_day = map_metric_row({"date_start": "2026-05-21", "campaign_id": "cmp_1", "ad_id": "ad_2"}, 1, telegram_starts=starts)
+    assert other_day["telegramSubscribers"] == 0

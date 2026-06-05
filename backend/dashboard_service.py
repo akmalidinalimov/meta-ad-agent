@@ -10,10 +10,16 @@ from __future__ import annotations
 import threading
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from .analysis_engine import action_count, action_value, as_float, extract_interests, ratio, valid_rows
 from .campaign_watch import build_campaign_watch
+from .funnel_events import (
+    STORAGE_DIR as FUNNEL_STORAGE_DIR,
+    build_funnel_summary,
+    telegram_starts_by_campaign_date,
+)
 from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base
 from .meta_client import get_meta_config
 from .monitoring_runner import ALERTS_PATH, list_monitoring_alerts
@@ -114,7 +120,9 @@ def derive_kpis(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
+def dashboard_from_knowledge_base(
+    knowledge: dict[str, Any], *, funnel_storage_dir: Path = FUNNEL_STORAGE_DIR
+) -> dict[str, Any]:
     raw = knowledge.get("raw", {})
     analysis = knowledge.get("analysis", {})
     snapshot = knowledge.get("snapshot", {})
@@ -131,7 +139,14 @@ def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
     adsets_real = [map_adset(row) for row in raw_adsets[:150]]
     analyses_real = build_creative_analyses(analysis)
     enrich_metric_rows_with_ads(metric_rows, raw_ads)
-    metrics_real = [map_metric_row(row, index) for index, row in enumerate(metric_rows)]
+    # Join ingested Telegram START (bot_start) events back onto the per-(campaign, date)
+    # rows so the account's primary success metric is live in the dashboard + monitoring.
+    telegram_starts = telegram_starts_by_campaign_date(storage_dir=funnel_storage_dir)
+    funnel_summary = build_funnel_summary(storage_dir=funnel_storage_dir)
+    metrics_real = [
+        map_metric_row(row, index, telegram_starts=telegram_starts)
+        for index, row in enumerate(metric_rows)
+    ]
     ads_real = complete_ads([map_ad(row) for row in raw_ads], metrics_real)
     creatives_real = complete_creatives([map_creative(row) for row in raw_ads], metrics_real, analysis)
     audience_real = build_audience_scores(analysis)
@@ -156,6 +171,7 @@ def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
         "insights": insights_real,
         "experiments": experiments_real,
         "trackingHealth": tracking_real,
+        "funnelSummary": funnel_summary,
         "monitoringAlerts": list_monitoring_alerts(),
         "campaignWatch": build_campaign_watch(
             {
@@ -241,7 +257,11 @@ def map_creative(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def map_metric_row(row: dict[str, Any], index: int) -> dict[str, Any]:
+def map_metric_row(
+    row: dict[str, Any],
+    index: int,
+    telegram_starts: dict[tuple[str, str], int] | None = None,
+) -> dict[str, Any]:
     clicks = as_float(row.get("clicks"))
     link_clicks = action_count(row, "link_click")
     landing_visits = action_count(row, "landing_visit")
@@ -250,9 +270,14 @@ def map_metric_row(row: dict[str, Any], index: int) -> dict[str, Any]:
     revenue = action_value(row, "purchase")
     ad_id = str(row.get("ad_id") or f"unknown_ad_{index}")
     creative_id = row.get("creative_id") or (row.get("creative") or {}).get("id")
+    date = row.get("date_start") or row.get("date_stop") or "2026-01-01"
+    campaign_id = str(row.get("campaign_id") or "")
+    # Telegram START is not a Meta action, so it can only come from the funnel join.
+    # Without it (no funnel events / direct callers) this stays 0 as before.
+    telegram_subscribers = telegram_starts.get((campaign_id, date), 0) if telegram_starts else 0
     return {
-        "date": row.get("date_start") or row.get("date_stop") or "2026-01-01",
-        "campaignId": str(row.get("campaign_id") or ""),
+        "date": date,
+        "campaignId": campaign_id,
         "adSetId": str(row.get("adset_id") or ""),
         "adId": ad_id,
         "creativeId": creative_id_for_ad(ad_id, creative_id),
@@ -262,7 +287,7 @@ def map_metric_row(row: dict[str, Any], index: int) -> dict[str, Any]:
         "clicks": int(clicks),
         "landingPageViews": int(landing_visits or link_clicks or clicks),
         "leads": int(leads),
-        "telegramSubscribers": 0,
+        "telegramSubscribers": telegram_subscribers,
         "webinarAttendees": 0,
         "purchases": int(purchases),
         "purchaseRevenueUsd": round(revenue, 2),

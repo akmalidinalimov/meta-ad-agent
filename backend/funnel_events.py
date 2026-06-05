@@ -105,6 +105,32 @@ def load_funnel_events(*, storage_dir: Path = STORAGE_DIR) -> list[dict[str, Any
     return events
 
 
+def telegram_starts_by_campaign_date(*, storage_dir: Path = STORAGE_DIR) -> dict[tuple[str, str], int]:
+    """Count Telegram START (bot_start) events per (campaignId, date).
+
+    This is the join key that lets ingested funnel events feed the per-(campaign, date)
+    metric rows the dashboard and 4-hourly monitoring consume. The date is taken from
+    each event's receivedAt as UTC YYYY-MM-DD, which matches the Meta insight rows'
+    date_start format used in dashboard_service.map_metric_row.
+
+    Caveat: receivedAt is UTC while Meta date_start is in the ad-account timezone, so a
+    START near local midnight can land one day off. Accepted for now; a future
+    FUNNEL_EVENT_TZ_OFFSET_HOURS knob can correct it. Only events carrying a campaignId
+    are counted so each START attaches to a specific campaign's row; un-attributed
+    starts are intentionally dropped here (they cannot be joined).
+    """
+    counts: Counter[tuple[str, str]] = Counter()
+    for event in load_funnel_events(storage_dir=storage_dir):
+        if event.get("eventName") != "bot_start":
+            continue
+        campaign_id = event.get("campaignId")
+        date = str(event.get("receivedAt") or "")[:10]
+        if not campaign_id or not date:
+            continue
+        counts[(str(campaign_id), date)] += 1
+    return dict(counts)
+
+
 def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
     events = load_funnel_events(storage_dir=storage_dir)
     by_name = Counter(event.get("eventName", "unknown") for event in events)
