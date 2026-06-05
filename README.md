@@ -108,6 +108,38 @@ platform access layer (Cloudflare Access, the host's password protection, or bas
 at the proxy) so the operator console isn't exposed publicly. Keep
 `META_LIVE_WRITES_ENABLED=false` until the live-write path is trusted.
 
+## Make the agent proactive (go live)
+
+The dashboard + chat work as soon as the Meta account is synced. To get the agent
+**watching every 4 hours and reasoning from real downstream quality** (Telegram START,
+website visit→lead), connect the funnel signals and turn the loop on. The event
+ingestion is already built — see `docs/FUNNEL_EVENT_TRACKING.md` for exact payloads.
+
+1. **Track the website.** Drop `public/landing-tracker.js` on each landing page and set
+   `window.MetaAdAgentTracker = { endpoint: 'https://<your-app>/api/funnel/events', segment, vslId }`.
+   It emits `landing_view` / `telegram_link_click` / `form_button_click` with campaign
+   attribution and a persistent `visitorId`, and decorates the Telegram CTA with
+   `?start=<visitorId>`. Add your landing domains to `FUNNEL_ALLOWED_ORIGINS`.
+2. **Connect the Telegram bot START.** Configure the bot / ChatPlace automation to POST a
+   `bot_start` event to `https://<your-app>/api/chatplace/events`, passing the `start`
+   payload (the visitor) plus the `campaign_id`. This lights up Telegram START per campaign
+   — the account's primary success metric and the trigger for the high-severity quality
+   alarm. Set `CHATPLACE_WEBHOOK_SECRET`.
+3. **Turn on the 4-hourly loop.** Either set `MONITORING_SCHEDULER_ENABLED=true` (in-process)
+   or point an external scheduler at `POST /api/monitoring/scheduled` every hour (preferred —
+   it keeps its own 4-hour debounce). Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ADMIN_CHAT_ID`
+   and register the bot webhook so suggestions arrive in Telegram with **Approve / Reject /
+   Needs-changes** buttons (and in the web chat).
+4. **Verify go-live.** Send one real `bot_start`; `GET /api/funnel/summary` shows it and
+   `telegramStartRate`. Trigger `POST /api/monitoring/scheduled` over two days of data and
+   confirm an alert reaches Telegram. Tap **Approve** in Telegram and confirm the approval
+   is recorded (execution stays a separate, guarded step while `META_LIVE_WRITES_ENABLED=false`).
+
+> Not yet wired: purchase/ROAS (no payments tracked yet — the agent honestly uses the
+> Telegram-START + lead-quality proxy until a `full_payment` event or CRM won-deal is
+> connected) and auto-execution (approvals are recorded, not auto-applied). Both are
+> documented follow-ups.
+
 ## API
 
 Health:
