@@ -69,6 +69,27 @@ docker run --rm -p 8000:8000 --env-file .env meta-ad-agent
 The bundled `render.yaml` is a Render Blueprint; the same `Dockerfile` deploys
 directly on Railway and Fly.io. The platform injects `$PORT`; uvicorn binds to it.
 
+**Deploy on Render (one path):** push this branch to GitHub → New → Blueprint →
+pick the repo (Render reads `render.yaml`) → set the secret env vars it prompts for
+(`META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID`, `META_PIXEL_ID`, `OPENAI_API_KEY`, and
+`FUNNEL_ALLOWED_ORIGINS` = your Render URL). `META_LIVE_WRITES_ENABLED` stays `false`
+and `AGENT_API_KEY` is generated for you. Railway/Fly: point the service at the
+`Dockerfile` and set the same env vars.
+
+### Smoke-test after deploy
+
+Against the live URL (replace `$APP`):
+
+1. `curl https://$APP/api/health` → `{"status":"ok"}`.
+2. Open `https://$APP/` → the chat front door loads; the browser console shows **no**
+   CORS errors (same-origin) and no "backend unreachable" banner.
+3. Send a chat message (or click a starter prompt) → the agent replies.
+4. With `META_LIVE_WRITES_ENABLED=false`, draft a campaign and dry-run an approval:
+   the "Create paused campaign in Meta" button is **disabled with a reason** — confirming
+   no live write can happen.
+5. Check the platform logs: request lines do **not** contain `access_token=` (the
+   HTTP-client loggers are quieted so the Meta token never reaches logs).
+
 ### Configuration
 
 Copy `.env.example` to `.env` and set the values you need. Deployment-relevant flags:

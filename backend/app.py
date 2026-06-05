@@ -34,6 +34,13 @@ from .routers import telegram as telegram_router
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger(__name__)
 
+# httpx logs every request line at INFO, including the full URL — and Meta Graph
+# calls carry ?access_token=... in the query string, so INFO logs would leak the
+# long-lived token to the platform's log stream once deployed. Quiet the HTTP
+# client loggers so tokens never reach logs; our own logging carries no secrets.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 
 async def _monitoring_loop() -> None:
     """In-process monitoring trigger.
