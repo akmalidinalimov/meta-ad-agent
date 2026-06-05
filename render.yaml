@@ -1,0 +1,36 @@
+# Render Blueprint — one-unit deploy of the Meta Ad Agent.
+# The same Dockerfile also works on Railway and Fly.io (they detect it directly).
+# Render injects $PORT; the Dockerfile's uvicorn CMD binds to it.
+services:
+  - type: web
+    name: meta-ad-agent
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      # Safety: live Meta writes stay OFF until you flip this in the dashboard.
+      - key: META_LIVE_WRITES_ENABLED
+        value: "false"
+      # Generated once; required so non-GET routes need an X-API-Key header.
+      - key: AGENT_API_KEY
+        generateValue: true
+      # Same-origin deploy — point this at your Render URL once known.
+      - key: FUNNEL_ALLOWED_ORIGINS
+        sync: false
+      - key: MONITORING_SCHEDULER_ENABLED
+        value: "false"
+      # Secrets — set in the Render dashboard, not committed here.
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_AD_ACCOUNT_ID
+        sync: false
+      - key: META_BUSINESS_ID
+        sync: false
+      - key: META_API_VERSION
+        value: v23.0
+      - key: META_PIXEL_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

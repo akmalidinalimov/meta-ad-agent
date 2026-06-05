@@ -11,9 +11,12 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import allowed_origins
 from .routers import agents as agents_router
@@ -101,3 +104,45 @@ for module in (
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# --- Single-process deployment: serve the built SPA same-origin ---------------
+#
+# When the Vite build (dist/) is present, FastAPI also serves the frontend so the
+# whole app ships as ONE unit with no CORS / base-URL juggling — apiUrl() in the
+# frontend already returns relative /api/... off-localhost. The mount is guarded so
+# a missing dist/ (API-only local dev, e.g. `npm run dev` + uvicorn) doesn't crash.
+#
+# Routing order matters: the /api routers and /api/health above are registered
+# first, so they always win; everything else falls through to the SPA below.
+SPA_DIST_DIR = Path(os.getenv("SPA_DIST_DIR") or Path(__file__).resolve().parent.parent / "dist")
+
+if (SPA_DIST_DIR / "index.html").is_file():
+    logger.info("Serving built SPA from %s", SPA_DIST_DIR)
+
+    if (SPA_DIST_DIR / "assets").is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(SPA_DIST_DIR / "assets")),
+            name="spa-assets",
+        )
+
+    _spa_index = SPA_DIST_DIR / "index.html"
+
+    @app.get("/", include_in_schema=False)
+    async def spa_root() -> FileResponse:
+        return FileResponse(_spa_index)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> FileResponse:
+        # Unknown /api/* paths should 404 as API calls, not silently return HTML.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        # Serve real build files (favicon.svg, icons.svg, landing-tracker.js, ...).
+        candidate = (SPA_DIST_DIR / full_path).resolve()
+        if candidate.is_file() and SPA_DIST_DIR.resolve() in candidate.parents:
+            return FileResponse(candidate)
+        # Otherwise this is a client-side route — hand back the SPA shell.
+        return FileResponse(_spa_index)
+else:
+    logger.info("SPA build not found at %s — running API-only.", SPA_DIST_DIR)
