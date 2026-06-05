@@ -27,6 +27,7 @@ from .routers import funnel as funnel_router
 from .routers import meta as meta_router
 from .routers import meta_ai as meta_ai_router
 from .routers import monitoring as monitoring_router
+from .routers import opportunities as opportunities_router
 from .routers import planning as planning_router
 from .routers import tasks as tasks_router
 from .routers import telegram as telegram_router
@@ -51,10 +52,20 @@ async def _monitoring_loop() -> None:
     external cron POSTing /api/monitoring/scheduled is preferred (safer with the
     file-based stores). run_scheduled_monitoring keeps its own 4h debounce, so the
     poll interval here only sets how often we check.
+
+    The same loop also drives the PROACTIVE opportunity engine (WS-E). Monitoring
+    alerts keep their 4h cadence; opportunities run daily — each function keeps its
+    own debounce (monitoring 4h, opportunities 24h), so the shared poll interval
+    only sets how often both are checked. The opportunity engine is SUGGEST-ONLY:
+    it never executes a Meta change, it only creates needs_review approvals.
     """
     from .dashboard_service import build_dashboard
+    from .knowledge_base import load_knowledge_base
+    from .meta_client import get_meta_config
     from .monitoring_scheduler import run_scheduled_monitoring
-    from .telegram_outbound import send_telegram_message_sync
+    from .opportunity_finder import run_scheduled_opportunities
+    from .playbook_store import load_playbooks
+    from .telegram_outbound import send_approval_notification, send_telegram_message_sync
 
     interval = int(os.getenv("MONITORING_INTERVAL_SECONDS", "3600"))
     while True:
@@ -66,6 +77,16 @@ async def _monitoring_loop() -> None:
             )
         except Exception:
             logger.exception("Scheduled monitoring iteration failed")
+        try:
+            config = get_meta_config()
+            await run_scheduled_opportunities(
+                load_knowledge_base,
+                load_playbooks=load_playbooks,
+                account_id=config.ad_account_id or "unconfigured_ad_account",
+                send_alert=send_approval_notification,
+            )
+        except Exception:
+            logger.exception("Scheduled opportunity iteration failed")
         await asyncio.sleep(interval)
 
 
@@ -99,6 +120,7 @@ for module in (
     crm_router,
     dashboard_router,
     monitoring_router,
+    opportunities_router,
     approvals_router,
     tasks_router,
     telegram_router,

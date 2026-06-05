@@ -82,6 +82,18 @@ class ScheduledMonitoringRequest(BaseModel):
     force: bool = False
 
 
+class ScheduledOpportunityRequest(BaseModel):
+    # External cron hits the debounced endpoint with force=False; manual/testing
+    # callers pass force=True to bypass the 24h cooldown.
+    force: bool = False
+
+
+class GenerateOpportunityRequest(BaseModel):
+    # Force-generate now (manual/testing). Optional overrides degrade to defaults.
+    accountId: str | None = None
+    perSegmentBudgetUsd: float | None = None
+
+
 class FunnelEventRequest(BaseModel):
     event: dict[str, Any]
 
