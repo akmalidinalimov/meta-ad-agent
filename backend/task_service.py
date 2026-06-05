@@ -89,10 +89,13 @@ def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
             plan["generatedStrategy"]["playbookId"] = saved_playbook["id"]
 
         if request.prepareApproval:
+            config = get_meta_config()
             approval = build_campaign_creation_approval(
                 saved_playbook,
-                account_id=get_meta_config().ad_account_id or "unconfigured_ad_account",
+                account_id=config.ad_account_id or "unconfigured_ad_account",
                 reason=f"Task {task['id']}: prepare paused Meta campaign structure from command.",
+                knowledge=load_knowledge_base(),
+                pixel_id=config.pixel_id or None,
             )
             saved_approval = approval_store.create_approval_request(approval)
             plan["telegramNotification"] = telegram_outbound.send_approval_notification(saved_approval)

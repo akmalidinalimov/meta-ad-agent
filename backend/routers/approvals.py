@@ -57,12 +57,14 @@ def prepare_campaign_execution(request: CampaignExecutionPlanRequest) -> dict[st
     if not playbook:
         raise HTTPException(status_code=400, detail="Save a playbook with at least one segment before preparing execution.")
 
-    account_id = get_meta_config().ad_account_id or "unconfigured_ad_account"
+    config = get_meta_config()
+    account_id = config.ad_account_id or "unconfigured_ad_account"
     approval = build_campaign_creation_approval(
         playbook,
         account_id=account_id,
         reason=request.reason or "Prepare a paused Meta campaign structure for review.",
         knowledge=load_knowledge_base(),
+        pixel_id=config.pixel_id or None,
     )
     saved_approval = approval_store.create_approval_request(approval)
     telegram = telegram_outbound.send_approval_notification(saved_approval)

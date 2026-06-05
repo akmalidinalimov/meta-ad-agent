@@ -1,10 +1,28 @@
 import asyncio
 
 from backend.meta_execution import (
+    build_adset_payload,
     build_campaign_creation_approval,
     execute_campaign_creation_approval,
 )
 from backend.test_strategy_generator import sample_playbook
+
+
+def test_adset_payload_is_live_valid_with_pixel():
+    segment = {"name": "Income", "locations": ["Uzbekistan"], "ageRange": "20-45"}
+    payload = build_adset_payload(segment, sample_playbook(), pixel_id="123456789")
+    assert payload["optimization_goal"] == "OFFSITE_CONVERSIONS"
+    assert payload["promoted_object"] == {"pixel_id": "123456789", "custom_event_type": "COMPLETE_REGISTRATION"}
+    assert payload["destination_type"] == "WEBSITE"
+    assert payload["targeting"]["publisher_platforms"] == ["instagram"]
+    # Name-only interest targeting is omitted (Meta rejects flexible_spec without real IDs).
+    assert "flexible_spec" not in payload["targeting"]
+
+
+def test_adset_payload_falls_back_to_link_clicks_without_pixel():
+    payload = build_adset_payload({"name": "Seg"}, sample_playbook())
+    assert payload["optimization_goal"] == "LINK_CLICKS"
+    assert "promoted_object" not in payload
 
 
 def test_build_campaign_creation_approval_creates_paused_api_payloads():

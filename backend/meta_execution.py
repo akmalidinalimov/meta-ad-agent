@@ -12,6 +12,7 @@ def build_campaign_creation_approval(
     account_id: str,
     reason: str = "Create a paused Meta campaign structure from the approved playbook.",
     knowledge: dict[str, Any] | None = None,
+    pixel_id: str | None = None,
 ) -> dict[str, Any]:
     campaign = build_campaign_payload(playbook)
     # Reuse the account's best historical creatives (from synced knowledge) as paused
@@ -22,7 +23,7 @@ def build_campaign_creation_approval(
     segments = playbook.get("segments", [])
     adsets = []
     for index, segment in enumerate(segments):
-        adset = build_adset_payload(segment, playbook)
+        adset = build_adset_payload(segment, playbook, pixel_id=pixel_id)
         adset["ads"] = build_ad_payloads(segment, creatives_pool, index)
         adsets.append(adset)
     checks = guardrail_checks(playbook, adsets)
@@ -95,23 +96,38 @@ def build_execution_readiness(approval: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any]) -> dict[str, Any]:
+def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any], *, pixel_id: str | None = None) -> dict[str, Any]:
+    """Build a LIVE-VALID paused ad-set matching the account's proven pattern.
+
+    With a pixel: OUTCOME_LEADS + OFFSITE_CONVERSIONS optimizing the website-registration
+    event (what produces the account's ~$0.07 registrations). Without a pixel: LINK_CLICKS,
+    which needs no promoted_object and always validates. Targeting is broad geo + age on
+    Instagram only — we deliberately omit interest targeting because Meta requires real
+    interest IDs (name-only flexible_spec is rejected), and broad/Advantage+ is the
+    account's best-performing approach anyway.
+    """
     budget = int(round(float(segment.get("startingBudgetUsd") or playbook.get("rules", {}).get("startingBudgetUsd") or 100) * 100))
-    return {
+    payload: dict[str, Any] = {
         "name": f"{segment.get('name', 'Segment')} - DRAFT",
         "status": "PAUSED",
         "daily_budget": budget,
         "billing_event": "IMPRESSIONS",
-        "optimization_goal": "LEAD_GENERATION",
+        "destination_type": "WEBSITE",
         "targeting": {
             "geo_locations": geo_locations(segment.get("locations") or ["Uzbekistan"]),
             "age_min": age_min(segment.get("ageRange")),
             "age_max": age_max(segment.get("ageRange")),
             "publisher_platforms": ["instagram"],
             "instagram_positions": instagram_positions(segment.get("placements") or []),
-            "flexible_spec": flexible_spec(segment.get("interests") or []),
         },
     }
+    if pixel_id:
+        payload["optimization_goal"] = "OFFSITE_CONVERSIONS"
+        payload["promoted_object"] = {"pixel_id": str(pixel_id), "custom_event_type": "COMPLETE_REGISTRATION"}
+    else:
+        # No pixel wired -> a goal that needs no promoted_object, so the create still validates.
+        payload["optimization_goal"] = "LINK_CLICKS"
+    return payload
 
 
 def extract_top_creatives(knowledge: dict[str, Any] | None, *, limit: int = 3) -> list[dict[str, Any]]:
