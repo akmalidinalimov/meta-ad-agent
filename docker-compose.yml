@@ -1,0 +1,37 @@
+# Always-on deploy for a single VM (e.g. Oracle Cloud Always Free).
+# `docker compose up -d --build` runs the agent 24/7 behind Caddy.
+#
+# HTTP (Stage 1):  leave SITE_ADDRESS unset -> Caddy serves http on :80.
+# HTTPS (Stage 2): set SITE_ADDRESS=yourname.duckdns.org in .env -> Caddy
+#                  auto-provisions a Let's Encrypt cert (needed for the Telegram webhook).
+services:
+  app:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      # Persist synced knowledge base + approvals across restarts/rebuilds.
+      - app_storage:/app/storage
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # ":80" = plain HTTP (Stage 1). A bare hostname = auto-HTTPS (Stage 2).
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  app_storage:
+  caddy_data:
+  caddy_config:

@@ -32,8 +32,10 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend ./backend
 COPY --from=frontend /app/dist ./dist
 
-# Run as a non-root user.
+# Run as a non-root user. Pre-create the storage dir owned by appuser so a mounted
+# named volume (docker-compose) inherits that ownership and the app can write to it.
 RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/storage \
     && chown -R appuser:appuser /app
 USER appuser
 
