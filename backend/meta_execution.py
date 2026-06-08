@@ -81,10 +81,13 @@ def build_campaign_payload(playbook: dict[str, Any], *, template: dict[str, Any]
     special_categories = template.get("specialAdCategories")
     if special_categories is not None:
         payload["special_ad_categories"] = special_categories
-    # CBO mirrors campaign-level budget sharing; ABO (or unknown) keeps the ad-set model.
-    # We never set a live budget here (paused review shell), only the sharing flag intent.
-    if template.get("budgetMode") == "CBO":
-        payload["is_adset_budget_sharing_enabled"] = True
+    # The winning campaign may be CBO, but the generated test draft keeps ABO (each
+    # audience gets its own ad-set budget). That is both the right way to A/B test new
+    # audiences — CBO would let Meta starve the untested ones — AND required for a valid
+    # write: enabling ad-set budget sharing needs a campaign-level budget + bid strategy
+    # that a paused review shell never sets, so Meta rejects the combination (Invalid
+    # parameter, subcode 4834005). We still mirror objective / buying type / categories,
+    # and each ad set mirrors the winner's optimization, billing, and bid strategy.
     payload["_templateSource"] = "mirrored_from_winning_campaign_config"
     return payload
 

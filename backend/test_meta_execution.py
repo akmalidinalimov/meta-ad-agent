@@ -69,8 +69,10 @@ def test_campaign_payload_inherits_objective_and_budget_mode_from_template():
     payload = build_campaign_payload(sample_playbook(), template=_winning_template())
     assert payload["objective"] == "OUTCOME_SALES"
     assert payload["buying_type"] == "AUCTION"
-    # CBO template -> campaign-level budget sharing enabled.
-    assert payload["is_adset_budget_sharing_enabled"] is True
+    # Even a CBO winner produces an ABO test draft: ad-set budget sharing stays OFF so the
+    # paused campaign is a valid Meta write (sharing needs a campaign budget + bid strategy
+    # we don't set) and each test audience keeps its own budget.
+    assert payload["is_adset_budget_sharing_enabled"] is False
     assert payload["_templateSource"] == "mirrored_from_winning_campaign_config"
     assert payload["status"] == "PAUSED"
 
