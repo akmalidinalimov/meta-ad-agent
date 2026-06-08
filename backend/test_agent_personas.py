@@ -12,6 +12,8 @@ def test_specialist_prompt_includes_role_and_house_strategy():
     # this account's buyer, not a generic Meta analyst.
     assert HOUSE_STRATEGY.split("\n", 1)[0] in prompt
     assert "Telegram START" in prompt
+    # The presentation directive is appended so chat answers render readably.
+    assert "Output format" in prompt
 
 
 def test_specialist_prompt_none_for_non_persona_agents():

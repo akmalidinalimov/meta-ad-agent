@@ -33,6 +33,18 @@ _NUMBER_RE = re.compile(r"\d[\d,]*\.?\d*")
 # callers never display the sentinel to the operator.
 _UNAVAILABLE_PREFIX = "LLM reasoning unavailable"
 
+# Shared presentation directive appended to chat-facing prompts so answers are
+# scannable for a human operator. It only governs FORMAT — the evidence/grounding
+# rules in each prompt (and answer_is_grounded) still own factual correctness.
+_OUTPUT_FORMAT = (
+    "Output format: Lead with the direct answer in 1-2 sentences. Then use short "
+    "paragraphs separated by a blank line. Use bullet points (lines starting with "
+    "'- ') for any list or ranking. Bold the single key number or entity per point "
+    "using **double asterisks**. Keep it tight: no preamble, no filler. Stay strictly "
+    "fact-based: use only real numbers from the provided data and never invent a figure "
+    "to fill the format."
+)
+
 
 def _usable(result: str | None) -> str | None:
     """Normalize a reason() result to usable prose or None.
@@ -108,7 +120,10 @@ async def generate_llm_summary(analysis_preview: dict[str, Any]) -> str | None:
     if not _llm_enabled():
         return None
 
-    system = "You are a rigorous conversion-focused Meta ads analyst. Do not overclaim; mention when purchase tracking is missing."
+    system = (
+        "You are a rigorous conversion-focused Meta ads analyst. Do not overclaim; mention when purchase tracking is missing. "
+        + _OUTPUT_FORMAT
+    )
     user = (
         "You are a senior Meta ads strategist for online AI courses. Analyze this Meta ad account summary. "
         "Explain what worked, what did not, recommended audiences, age/gender, country vs region strategy, "
@@ -131,7 +146,8 @@ async def generate_chat_answer(question: str, analysis_preview: dict[str, Any]) 
         "If landing visits are higher than clicks, explain that Meta action counts are attributed events and can exceed click count because they are not always one-to-one unique click sessions. "
         "Compare campaigns, ad sets, creatives, audiences, placements, regions, interests, and funnel metrics when relevant. "
         "Do not give generic marketing advice. Do not repeat a canned answer. "
-        "When purchases are missing or zero, clearly say recommendations are based on lead/click quality, not buyer proof."
+        "When purchases are missing or zero, clearly say recommendations are based on lead/click quality, not buyer proof. "
+        + _OUTPUT_FORMAT
     )
     user = (
         f"Question: {question}\n\n"

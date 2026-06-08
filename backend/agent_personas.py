@@ -32,6 +32,17 @@ _EVIDENCE_RULES = (
     "When purchases/revenue are zero, label all rankings as lead/click-quality only, not buyer-proven."
 )
 
+# Presentation directive appended to every specialist prompt so chat answers are
+# readable for a human operator. It governs FORMAT only; _EVIDENCE_RULES (above)
+# still owns factual correctness and is ordered first so it keeps priority.
+_OUTPUT_FORMAT = (
+    "Output format: Lead with the direct answer in 1-2 sentences. Then use short paragraphs "
+    "separated by a blank line. Use bullet points (lines starting with '- ') for any list or "
+    "ranking. Bold the single key number or entity per point using **double asterisks**. Keep it "
+    "tight: no preamble, no filler. Stay strictly fact-based: use only real numbers from the "
+    "provided data and never invent a figure to fill the format."
+)
+
 SYSTEM_INSTRUCTIONS: dict[str, str] = {
     "audit": (
         "You are a senior Meta ads auditor for this account. Explain what worked, what failed, and WHY, "
@@ -104,4 +115,4 @@ def specialist_system_prompt(agent_id: str) -> str | None:
     role = SYSTEM_INSTRUCTIONS.get(agent_id)
     if not role:
         return None
-    return f"{HOUSE_STRATEGY}\n{role}"
+    return f"{HOUSE_STRATEGY}\n{role}\n{_OUTPUT_FORMAT}"
