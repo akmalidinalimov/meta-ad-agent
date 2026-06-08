@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import {
   AlertTriangle,
   BarChart3,
@@ -8,7 +8,6 @@ import {
   CircleDollarSign,
   ClipboardCheck,
   Film,
-  Gauge,
   LayoutDashboard,
   ListChecks,
   MousePointerClick,
@@ -17,7 +16,6 @@ import {
   Settings,
   ShieldAlert,
   SlidersHorizontal,
-  Target,
   TrendingUp,
   Users,
   XCircle,
@@ -76,21 +74,13 @@ import {
   sumBy,
 } from '../lib/format'
 import { buildOperatorAttention } from '../lib/operatorAttention'
-import {
-  buildEmptySegment,
-  buildPlaybookDraft,
-  parseCsvList,
-  summarizePlaybookReadiness,
-} from '../lib/playbookBuilder'
-import { askAgent, runAgentCouncil } from '../services/agentChatProvider'
-import { createAgentTask, getAgentCommandCenter } from '../services/agentTaskProvider'
+import { askAgent } from '../services/agentChatProvider'
+import { getAgentCommandCenter } from '../services/agentTaskProvider'
 import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
 import type {
   AgentSpec,
   AgentCouncilSession,
   AgentTask,
-  CampaignPlaybook,
-  CampaignPlaybookSegment,
   ApprovalRequest,
   ProactiveOpportunity,
   Creative,
@@ -98,7 +88,6 @@ import type {
   DashboardFilters,
   DashboardKpi,
   DailyAdMetric,
-  SystemChecklist,
   Tone,
   TrackingHealthItem,
 } from '../types/marketing'
@@ -106,7 +95,6 @@ import type {
 const navItems = [
   { id: 'chat', label: 'Chat', icon: Send },
   { id: 'overview', label: 'Monitor', icon: LayoutDashboard },
-  { id: 'commandCenter', label: 'Command Center', icon: Bot },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings },
 ] as const
@@ -119,8 +107,6 @@ function viewHeading(view: ViewId): string {
   switch (view) {
     case 'chat':
       return 'Set up a campaign by chatting'
-    case 'commandCenter':
-      return 'Agent Command Center'
     case 'rankings':
       return 'Performance Rankings'
     case 'settings':
@@ -161,7 +147,6 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
   const [chatInput, setChatInput] = useState('')
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [filters, setFilters] = useState<DashboardFilters>(defaultFilters)
-  const [latestCouncil, setLatestCouncil] = useState<AgentCouncilSession | null>(null)
 
   const filteredMetrics = useMemo(() => {
     const window = getDateWindow(filters.dateRange, getDashboardAnchorDate(data))
@@ -213,9 +198,6 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
 
     try {
       const response = await askAgent(cleanMessage)
-      if (response.agentCouncil) {
-        setLatestCouncil(response.agentCouncil)
-      }
       setChatMessages((current) => [
         ...current,
         {
@@ -248,7 +230,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
 
   // Jump from the decision surface into the agent chat, pre-seeded with the question.
   const askAgentsAbout = (message: string) => {
-    setActiveView('commandCenter')
+    setActiveView('chat')
     void sendChatMessage(message)
   }
 
@@ -337,18 +319,6 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
         ) : (
           <EmptyState onReset={() => setFilters(defaultFilters)} />
         ))}
-      {activeView === 'commandCenter' && (
-        <CommandCenterView
-          data={data}
-          latestCouncil={latestCouncil}
-          onCouncilReady={setLatestCouncil}
-          chatMessages={chatMessages}
-          chatInput={chatInput}
-          isChatLoading={isChatLoading}
-          onChatInputChange={setChatInput}
-          onChatSend={sendChatMessage}
-        />
-      )}
       {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
       {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} onDashboardRefresh={onRefresh} />}
     </main>
@@ -593,6 +563,32 @@ function CampaignChatView({
   onChatInputChange: (value: string) => void
   onChatSend: (message: string) => void
 }) {
+  const [tasks, setTasks] = useState<AgentTask[]>([])
+  const [agents, setAgents] = useState<AgentSpec[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    void getAgentCommandCenter()
+      .then((result) => {
+        if (!cancelled) {
+          setTasks(result.tasks)
+          setAgents(result.agents)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTasks([])
+          setAgents([])
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const approvalAgents = agents.filter((agent) => agent.requiresApproval).length
+  const pendingTasks = tasks.filter((task) => task.status === 'planning' || task.status === 'needs_approval').length
+
   return (
     <section className="campaign-chat-view">
       <section className="panel campaign-chat-intro">
@@ -631,6 +627,56 @@ function CampaignChatView({
       />
 
       <ApprovalQueue data={data} />
+
+      <details className="overview-details">
+        <summary>Agent activity</summary>
+        <article className="panel">
+          <PanelHeading eyebrow="Task Queue" title="Recent orchestrator work" icon={ListChecks} />
+          <div className="builder-summary command-summary">
+            <MiniMetric label="Tasks" value={tasks.length.toString()} />
+            <MiniMetric label="Pending" value={pendingTasks.toString()} />
+            <MiniMetric label="Agents" value={agents.length.toString()} />
+            <MiniMetric label="Approval agents" value={approvalAgents.toString()} />
+          </div>
+          <div className="task-list">
+            {tasks.length > 0 ? tasks.slice(0, 8).map((task) => (
+              <div className={`task-item ${task.status}`} key={task.id}>
+                <div>
+                  <strong>{task.requestedAction || 'Untitled task'}</strong>
+                  <p>{task.plan?.answer ? shortText(task.plan.answer, 180) : 'The orchestrator has captured this task.'}</p>
+                  <small>{task.source} / {task.activeAgent ?? 'orchestrator'} / {formatDateTime(task.updatedAt)}</small>
+                  {task.approvalId && <small>Approval: {task.approvalId}</small>}
+                  {task.approvalStatus && <small>Approval status: {labelRawSetting(task.approvalStatus)}</small>}
+                  {task.approvalDecision?.rejectionReason && <small>Rejected: {task.approvalDecision.rejectionReason}</small>}
+                  {task.approvalDecision?.changeRequestNote && <small>Needs changes: {task.approvalDecision.changeRequestNote}</small>}
+                </div>
+                <span>{labelRawSetting(task.status)}</span>
+              </div>
+            )) : (
+              <EmptyState compact />
+            )}
+          </div>
+        </article>
+
+        <article className="panel">
+          <PanelHeading eyebrow="Agent Availability" title="Specialists and execution safety" icon={ShieldAlert} />
+          <div className="agent-status-grid">
+            {agents.map((agent) => (
+              <div className={`agent-status-card ${agentStatusTone(agent)}`} key={agent.id}>
+                <div>
+                  <strong>{agent.name}</strong>
+                  <p>{agent.purpose}</p>
+                </div>
+                <span>{agent.readinessStatus ? labelRawSetting(agent.readinessStatus) : agent.requiresApproval ? 'Approval required' : 'Analysis ready'}</span>
+                {agent.blockedReasons && agent.blockedReasons.length > 0 && (
+                  <small>{agent.blockedReasons.map(labelRawSetting).join(', ')}</small>
+                )}
+              </div>
+            ))}
+            {agents.length === 0 && <EmptyState compact />}
+          </div>
+        </article>
+      </details>
     </section>
   )
 }
@@ -1063,803 +1109,6 @@ function SpendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
   )
 }
 
-function CommandCenterView({
-  data,
-  latestCouncil,
-  onCouncilReady,
-  chatMessages,
-  chatInput,
-  isChatLoading,
-  onChatInputChange,
-  onChatSend,
-}: {
-  data: DashboardData
-  latestCouncil: AgentCouncilSession | null
-  onCouncilReady: (council: AgentCouncilSession) => void
-  chatMessages: ChatMessage[]
-  chatInput: string
-  isChatLoading: boolean
-  onChatInputChange: (value: string) => void
-  onChatSend: (message: string) => void
-}) {
-  const [tasks, setTasks] = useState<AgentTask[]>([])
-  const [agents, setAgents] = useState<AgentSpec[]>([])
-  const [systemChecklist, setSystemChecklist] = useState<SystemChecklist | null>(null)
-  const [command, setCommand] = useState('Create a campaign with 3 VSLs: income, business automation, content creators. Use $100 each and optimize for Telegram START.')
-  const [source, setSource] = useState<'dashboard' | 'telegram' | 'codex'>('dashboard')
-  const [campaignGroupId, setCampaignGroupId] = useState('next-launch')
-  const [segmentIds, setSegmentIds] = useState('income, business, creators')
-  const [prepareApproval, setPrepareApproval] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isSendingTelegramTest, setIsSendingTelegramTest] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
-
-  const loadCommandCenter = async () => {
-    const [result, checklist] = await Promise.all([
-      getAgentCommandCenter(),
-      fetch('/api/system/checklist')
-        .then((response) => response.ok ? response.json() : null)
-        .catch(() => null),
-    ])
-    setTasks(result.tasks)
-    setAgents(result.agents)
-    setSystemChecklist(checklist as SystemChecklist | null)
-  }
-
-  useEffect(() => {
-    let cancelled = false
-    void Promise.all([
-      getAgentCommandCenter(),
-      fetch('/api/system/checklist')
-        .then((response) => response.ok ? response.json() : null)
-        .catch(() => null),
-    ])
-      .then(([result, checklist]) => {
-        if (!cancelled) {
-          setTasks(result.tasks)
-          setAgents(result.agents)
-          setSystemChecklist(checklist as SystemChecklist | null)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setMessage('Could not load the command center. Make sure the backend is running.')
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const submitTask = async () => {
-    if (!command.trim() || isSubmitting) {
-      return
-    }
-
-    setIsSubmitting(true)
-    setMessage('Sending command to the orchestrator...')
-    try {
-      const result = await createAgentTask({
-        source,
-        command,
-        campaignGroupId: campaignGroupId.trim() || undefined,
-        segmentIds: parseCsvList(segmentIds),
-        prepareApproval,
-      })
-      setTasks((current) => [result.task, ...current.filter((task) => task.id !== result.task.id)])
-      setMessage(
-        result.task.approvalId
-          ? 'Task planned and approval request created. It will still not publish or spend.'
-          : 'Task planned. Review the plan before turning it into an approval request.',
-      )
-      await loadCommandCenter()
-    } catch {
-      setMessage('Could not create the task. Check the backend task endpoint.')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const recentCampaigns = data.campaigns.slice(0, 8)
-  const approvalAgents = agents.filter((agent) => agent.requiresApproval).length
-  const pendingTasks = tasks.filter((task) => task.status === 'planning' || task.status === 'needs_approval').length
-
-  const sendTelegramTest = async () => {
-    if (isSendingTelegramTest) {
-      return
-    }
-
-    setIsSendingTelegramTest(true)
-    setMessage('Sending Telegram test message...')
-    try {
-      const response = await fetch('/api/telegram/test-message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'Meta Agent Telegram test: outbound messages are connected.' }),
-      })
-      const result = (await response.json()) as { telegram?: { ok?: boolean; error?: string } }
-      setMessage(result.telegram?.ok ? 'Telegram test message sent.' : result.telegram?.error ?? `Telegram test failed with ${response.status}`)
-    } catch {
-      setMessage('Could not reach the Telegram test endpoint.')
-    } finally {
-      setIsSendingTelegramTest(false)
-    }
-  }
-
-  return (
-    <section className="command-center-layout">
-      <article className="panel panel-wide mission-control-hero">
-        <PanelHeading eyebrow="Command Center" title="Tell the agent what outcome you want" icon={Bot} />
-        <p>
-          Use natural language for strategy, campaign setup, edits, A/B tests, or monitoring decisions. The orchestrator can route the work to specialists, show their debate, and prepare a paused campaign packet for approval.
-        </p>
-        <div className="mission-control-examples">
-          <button type="button" onClick={() => onChatSend('Plan the best paused VSL campaign from the last 180 days using top audiences and top 3 creatives.')} disabled={isChatLoading}>
-            Plan paused VSL campaign
-          </button>
-          <button type="button" onClick={() => onChatSend('Which audience, creative, and placement should we scale next, and what should we stop?')} disabled={isChatLoading}>
-            Find scale and stop decisions
-          </button>
-          <button type="button" onClick={() => onChatSend('Create an A/B test plan that protects budget and optimizes for Telegram START quality.')} disabled={isChatLoading}>
-            Build A/B test plan
-          </button>
-        </div>
-      </article>
-
-      <AgentChatPanel
-        messages={chatMessages}
-        input={chatInput}
-        isLoading={isChatLoading}
-        onInputChange={onChatInputChange}
-        onSend={onChatSend}
-      />
-
-      <AgentOfficeView latestCouncil={latestCouncil} onCouncilReady={onCouncilReady} />
-
-      <article className="panel">
-        <PanelHeading eyebrow="Task Queue" title="Recent orchestrator work" icon={ListChecks} />
-        <div className="builder-summary command-summary">
-          <MiniMetric label="Tasks" value={tasks.length.toString()} />
-          <MiniMetric label="Pending" value={pendingTasks.toString()} />
-          <MiniMetric label="Agents" value={agents.length.toString()} />
-          <MiniMetric label="Approval agents" value={approvalAgents.toString()} />
-        </div>
-        <div className="task-list">
-          {tasks.length > 0 ? tasks.slice(0, 8).map((task) => (
-            <div className={`task-item ${task.status}`} key={task.id}>
-              <div>
-                <strong>{task.requestedAction || 'Untitled task'}</strong>
-                <p>{task.plan?.answer ? shortText(task.plan.answer, 180) : 'The orchestrator has captured this task.'}</p>
-                <small>{task.source} / {task.activeAgent ?? 'orchestrator'} / {formatDateTime(task.updatedAt)}</small>
-                {task.approvalId && <small>Approval: {task.approvalId}</small>}
-                {task.approvalStatus && <small>Approval status: {labelRawSetting(task.approvalStatus)}</small>}
-                {task.approvalDecision?.rejectionReason && <small>Rejected: {task.approvalDecision.rejectionReason}</small>}
-                {task.approvalDecision?.changeRequestNote && <small>Needs changes: {task.approvalDecision.changeRequestNote}</small>}
-              </div>
-              <span>{labelRawSetting(task.status)}</span>
-            </div>
-          )) : (
-            <EmptyState compact />
-          )}
-        </div>
-      </article>
-
-      <article className="panel">
-        <PanelHeading eyebrow="Agent Availability" title="Specialists and execution safety" icon={ShieldAlert} />
-        <div className="agent-status-grid">
-          {agents.map((agent) => (
-            <div className={`agent-status-card ${agentStatusTone(agent)}`} key={agent.id}>
-              <div>
-                <strong>{agent.name}</strong>
-                <p>{agent.purpose}</p>
-              </div>
-              <span>{agent.readinessStatus ? labelRawSetting(agent.readinessStatus) : agent.requiresApproval ? 'Approval required' : 'Analysis ready'}</span>
-              {agent.blockedReasons && agent.blockedReasons.length > 0 && (
-                <small>{agent.blockedReasons.map(labelRawSetting).join(', ')}</small>
-              )}
-            </div>
-          ))}
-          {agents.length === 0 && <EmptyState compact />}
-        </div>
-      </article>
-
-      <ApprovalQueue data={data} />
-
-      <details className="advanced-command-section">
-        <summary>Edit campaign playbook and task metadata</summary>
-        <article className="panel panel-wide">
-          <PanelHeading eyebrow="Advanced Command" title="Structured task controls" icon={SlidersHorizontal} />
-          <div className="command-grid">
-            <label className="command-field-wide">
-              <span>Command</span>
-              <textarea value={command} onChange={(event) => setCommand(event.target.value)} />
-            </label>
-            <label>
-              <span>Input source</span>
-              <select value={source} onChange={(event) => setSource(event.target.value as typeof source)}>
-                <option value="dashboard">Dashboard</option>
-                <option value="telegram">Telegram bot</option>
-                <option value="codex">Codex chat</option>
-              </select>
-            </label>
-            <label>
-              <span>Campaign group ID</span>
-              <input value={campaignGroupId} onChange={(event) => setCampaignGroupId(event.target.value)} />
-            </label>
-            <label>
-              <span>Segment / VSL IDs</span>
-              <input value={segmentIds} onChange={(event) => setSegmentIds(event.target.value)} />
-            </label>
-          </div>
-          <div className="command-actions">
-            <label className="approval-toggle">
-              <input
-                type="checkbox"
-                checked={prepareApproval}
-                onChange={(event) => setPrepareApproval(event.target.checked)}
-              />
-              <span>Create approval request if campaign plan is complete</span>
-            </label>
-            <button className="sync-button" type="button" onClick={submitTask} disabled={isSubmitting || !command.trim()}>
-              <Send size={16} />
-              {isSubmitting ? 'Planning...' : 'Send structured task'}
-            </button>
-            {message && <small className="sync-message">{message}</small>}
-          </div>
-        </article>
-        <CampaignBuilderView />
-      </details>
-
-      <details className="advanced-command-section">
-        <summary>Operational diagnostics</summary>
-        <article className="panel">
-          <PanelHeading eyebrow="Regression Checklist" title="Completion readiness" icon={CheckCircle2} />
-          {systemChecklist ? (
-            <>
-              <div className="builder-summary command-summary">
-                <MiniMetric label="Ready" value={`${systemChecklist.summary.ready}/${systemChecklist.summary.total}`} />
-                <MiniMetric label="Partial" value={systemChecklist.summary.partial.toString()} />
-                <MiniMetric label="Needs work" value={systemChecklist.summary.needs_attention.toString()} />
-              </div>
-              <div className="task-list">
-                {systemChecklist.items.slice(0, 10).map((item) => (
-                  <div className={`task-item ${item.status}`} key={item.id}>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <p>{item.evidence}</p>
-                    </div>
-                    <span>{labelRawSetting(item.status)}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <EmptyState compact />
-          )}
-        </article>
-
-        <article className="panel panel-wide">
-          <PanelHeading eyebrow="Campaign Mapping" title="Connect Meta campaigns to reusable launch groups" icon={Target} />
-          <div className="campaign-map-grid">
-            <div className="mapping-note">
-              <strong>Mapping rule</strong>
-              <p>
-                Use a stable campaign group ID plus segment/VSL IDs. The same structure works for one VSL, three VSLs, or five VSLs later.
-              </p>
-            </div>
-            {recentCampaigns.map((campaign) => (
-              <div className="campaign-map-row" key={campaign.id}>
-                <strong>{campaign.name}</strong>
-                <span>{campaign.id}</span>
-                <small>{campaign.objective} / {campaign.status} / {formatCurrency(campaign.dailyBudgetUsd)}/day</small>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="panel panel-wide">
-          <PanelHeading eyebrow="Telegram Control" title="Bot command wiring" icon={Bot} />
-          <div className="telegram-command-grid">
-            <div>
-              <strong>Command webhook</strong>
-              <code>POST /api/telegram/command</code>
-              <p>Send Telegram message updates here to create orchestrator tasks from bot commands.</p>
-            </div>
-            <div>
-              <strong>Shared secret</strong>
-              <code>x-telegram-agent-secret</code>
-              <p>Set `TELEGRAM_COMMAND_SECRET` in the backend and send the same value in this header.</p>
-            </div>
-            <div>
-              <strong>Approval button data</strong>
-              <code>approve:approval_id</code>
-              <p>Approval buttons can approve a request, but publishing or spend still needs the execution endpoint and guardrails.</p>
-            </div>
-          </div>
-          <div className="command-actions">
-            <button className="sync-button secondary" type="button" onClick={sendTelegramTest} disabled={isSendingTelegramTest}>
-              <Send size={16} />
-              {isSendingTelegramTest ? 'Sending...' : 'Send test message'}
-            </button>
-          </div>
-        </article>
-      </details>
-    </section>
-  )
-}
-
-function AgentOfficeView({
-  latestCouncil,
-  onCouncilReady,
-}: {
-  latestCouncil: AgentCouncilSession | null
-  onCouncilReady: (council: AgentCouncilSession) => void
-}) {
-  const [command, setCommand] = useState(
-    'Run strategy council: agents talk to each other, challenge weak assumptions, and create the best paused VSL campaign plan from the last 180 days.',
-  )
-  const [isRunning, setIsRunning] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [isImplementing, setIsImplementing] = useState(false)
-  const [activeEventIndex, setActiveEventIndex] = useState(0)
-  const [message, setMessage] = useState<string | null>(null)
-  const [implementationResult, setImplementationResult] = useState<{
-    approvalId: string
-    status: string
-    guardrail: string
-  } | null>(null)
-  const agents = latestCouncil?.agents ?? fallbackCouncilAgents()
-  const events = latestCouncil?.events ?? []
-  const safeActiveEventIndex = events.length ? Math.min(activeEventIndex, events.length - 1) : 0
-  const activeEvent = events[safeActiveEventIndex]
-  const activeRound = latestCouncil?.rounds.find((round) => activeEvent && round.events.some((event) => event.id === activeEvent.id))
-  const fromPosition = getAgentDeskPosition(activeEvent?.fromAgent)
-  const toPosition = getAgentApproachPosition(activeEvent?.fromAgent, activeEvent?.toAgent)
-  const activeAgentIds = new Set(activeEvent ? [activeEvent.fromAgent, activeEvent.toAgent] : ['orchestrator'])
-  const movingAgentName = activeEvent ? agentNameForId(agents, activeEvent.fromAgent) : 'Orchestrator'
-  const progressLabel = latestCouncil
-    ? `${Math.min(safeActiveEventIndex + 1, events.length)} of ${events.length} exchanges`
-    : 'Waiting for a council session'
-
-  useEffect(() => {
-    if (!isPlaying || events.length <= 1) {
-      return undefined
-    }
-
-    const timer = window.setInterval(() => {
-      setActiveEventIndex((current) => {
-        if (current >= events.length - 1) {
-          window.clearInterval(timer)
-          setIsPlaying(false)
-          return current
-        }
-        return current + 1
-      })
-    }, 2200)
-
-    return () => window.clearInterval(timer)
-  }, [events.length, isPlaying])
-
-  const startCouncil = async () => {
-    if (!command.trim() || isRunning) {
-      return
-    }
-
-    setIsRunning(true)
-    setMessage('Running the strategy council...')
-    try {
-      const council = await runAgentCouncil(command)
-      onCouncilReady(council)
-      setActiveEventIndex(0)
-      setIsPlaying(true)
-      setMessage('Council session generated. Review the plan before creating any paused campaign draft.')
-    } catch {
-      setMessage('Could not run the council endpoint. Make sure the backend is running on port 8000.')
-    } finally {
-      setIsRunning(false)
-    }
-  }
-
-  const implementCouncilPlan = async () => {
-    if (!latestCouncil || isImplementing) {
-      return
-    }
-
-    setIsImplementing(true)
-    setImplementationResult(null)
-    setMessage('Creating paused Meta campaign approval from the council plan...')
-    try {
-      const response = await fetch('/api/execution/prepare-campaign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playbook: latestCouncil.generatedPlaybook ?? null,
-          reason: `Implemented from Agent Office council ${latestCouncil.id}. Create only a paused Meta campaign structure from the final council recommendations.`,
-        }),
-      })
-      const result = (await response.json()) as { ok?: boolean; approval?: ApprovalRequest; detail?: string; error?: string }
-      if (!response.ok || !result.ok || !result.approval) {
-        setMessage(result.detail ?? result.error ?? `Implementation failed with ${response.status}`)
-        return
-      }
-      setImplementationResult({
-        approvalId: result.approval.id,
-        status: result.approval.status,
-        guardrail: result.approval.guardrailResult,
-      })
-      setMessage(`Paused campaign approval created: ${result.approval.id}. It remains review-gated and cannot publish or spend.`)
-    } catch {
-      setMessage('Could not reach the paused campaign implementation endpoint.')
-    } finally {
-      setIsImplementing(false)
-    }
-  }
-
-  const stepEvent = (direction: -1 | 1) => {
-    setIsPlaying(false)
-    setActiveEventIndex((current) => Math.min(Math.max(current + direction, 0), Math.max(events.length - 1, 0)))
-  }
-
-  return (
-    <section className="agent-office-view">
-      <article className="panel panel-wide agent-office-brief">
-        <PanelHeading eyebrow="Agent Office" title="Multi-agent strategy council" icon={Users} />
-        <div className="agent-office-controls">
-          <label>
-            <span>Council task</span>
-            <textarea value={command} onChange={(event) => setCommand(event.target.value)} />
-          </label>
-          <div className="agent-office-actions">
-            <button className="sync-button" type="button" onClick={startCouncil} disabled={isRunning || !command.trim()}>
-              <Bot size={16} />
-              {isRunning ? 'Agents debating...' : 'Run council'}
-            </button>
-            {message && <small className="sync-message">{message}</small>}
-          </div>
-        </div>
-        <div className="builder-summary command-summary">
-          <MiniMetric label="Agents" value={agents.length.toString()} />
-          <MiniMetric label="Rounds" value={(latestCouncil?.rounds.length ?? 0).toString()} />
-          <MiniMetric label="Exchanges" value={(latestCouncil?.events.length ?? 0).toString()} />
-          <MiniMetric
-            label="Quality"
-            value={latestCouncil ? `${latestCouncil.averageScoreOutOf10.toFixed(1)}/10` : 'Waiting'}
-          />
-        </div>
-      </article>
-
-      <article className="panel panel-wide agent-office-map-panel agent-office-main">
-        <PanelHeading eyebrow="Top-View Office" title="Watch agents debate the campaign" icon={Bot} />
-        <div className="office-status-strip">
-          <div>
-            <small>What is happening now</small>
-            <strong>
-              {activeEvent
-                ? `${agentNameForId(agents, activeEvent.fromAgent)} is talking to ${agentNameForId(agents, activeEvent.toAgent)}`
-                : 'Run the council to start the agent conversation'}
-            </strong>
-            <span>{activeRound ? `${activeRound.title}: ${activeRound.purpose}` : 'Agents will move between desks as they critique the plan.'}</span>
-          </div>
-          <div className="office-playback">
-            <button type="button" onClick={() => stepEvent(-1)} disabled={!events.length || safeActiveEventIndex === 0}>
-              Back
-            </button>
-            <button type="button" onClick={() => setIsPlaying((current) => !current)} disabled={!events.length}>
-              {isPlaying ? 'Pause' : 'Play'}
-            </button>
-            <button type="button" onClick={() => stepEvent(1)} disabled={!events.length || safeActiveEventIndex >= events.length - 1}>
-              Next
-            </button>
-            <span>{progressLabel}</span>
-          </div>
-        </div>
-        <div className="agent-office-scene">
-          <div className="agent-office-map" aria-label="Top-view animated agent office">
-            <div className="office-floor-rug" />
-            <div className="office-center-table">
-              <strong>Strategy table</strong>
-              <span>Final plan forms here after critique rounds</span>
-            </div>
-            {activeEvent && (
-              <div
-                className="moving-agent"
-                style={
-                  {
-                    '--from-x': `${fromPosition.x}%`,
-                    '--from-y': `${fromPosition.y}%`,
-                    '--to-x': `${toPosition.x}%`,
-                    '--to-y': `${toPosition.y}%`,
-                  } as CSSProperties
-                }
-              >
-                <Bot size={17} />
-                <span>{movingAgentName}</span>
-              </div>
-            )}
-          {agents.map((agent) => {
-            const position = getAgentDeskPosition(agent.id)
-            const visual = getAgentVisual(agent.id)
-            const isActive = activeAgentIds.has(agent.id)
-            const isSpeaker = activeEvent?.fromAgent === agent.id
-            const isReceiver = activeEvent?.toAgent === agent.id
-            return (
-              <div
-                className={`agent-desk ${agent.id === 'orchestrator' ? 'orchestrator' : ''} ${isActive ? 'active' : ''} ${isSpeaker ? 'speaker' : ''} ${isReceiver ? 'receiver' : ''}`}
-                data-agent-id={agent.id}
-                style={{ left: `${position.x}%`, top: `${position.y}%`, '--agent-color': visual.color } as CSSProperties}
-                key={agent.id}
-              >
-                <div className="agent-circle">
-                  <Bot size={20} />
-                  <i />
-                </div>
-                <div className="agent-label-card">
-                  <strong>{agent.name}</strong>
-                  <span>{visual.shortRole}</span>
-                  <small>{councilScoreForAgent(latestCouncil, agent.id)}</small>
-                </div>
-              </div>
-            )
-          })}
-          </div>
-          <div className="active-exchange-card">
-            <small>{activeRound?.title ?? 'Waiting'}</small>
-            <strong>{activeEvent?.question ?? 'No exchange selected yet'}</strong>
-            <p>{activeEvent?.answer ?? 'Run the council to see each agent question, critique, and refine the setup.'}</p>
-          </div>
-        </div>
-      </article>
-
-      <article className="panel">
-        <PanelHeading eyebrow="Timeline Replay" title="Every agent exchange" icon={RadioTower} />
-        <div className="council-event-list timeline-replay">
-          {events.length > 0 ? (
-            events.map((event, index) => (
-              <button
-                className={index === safeActiveEventIndex ? 'council-event active' : 'council-event'}
-                type="button"
-                onClick={() => {
-                  setIsPlaying(false)
-                  setActiveEventIndex(index)
-                }}
-                key={event.id}
-              >
-                <CouncilEventCard event={event} />
-              </button>
-            ))
-          ) : (
-            <EmptyState compact />
-          )}
-        </div>
-      </article>
-
-      <article className="panel">
-        <PanelHeading eyebrow="Agent Scores" title="Council quality checks" icon={Gauge} />
-        <div className="agent-score-list">
-          {latestCouncil?.scores.length ? (
-            latestCouncil.scores.map((score) => (
-              <div className="agent-score-row" key={score.agentId}>
-                <strong>{labelRawSetting(score.agentId)}</strong>
-                <span>{score.scoreOutOf10.toFixed(1)}/10</span>
-                <p>{score.reason}</p>
-              </div>
-            ))
-          ) : (
-            <EmptyState compact />
-          )}
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Critique Rounds" title="How the plan improved" icon={ListChecks} />
-        <div className="council-round-grid">
-          {latestCouncil?.rounds.length ? (
-            latestCouncil.rounds.map((round) => (
-              <div className="council-round" key={round.id}>
-                <strong>{round.title}</strong>
-                <p>{round.purpose}</p>
-                <small>{round.events.length} exchanges</small>
-                {round.events.slice(0, 3).map((event) => (
-                  <span key={event.id}>{labelRawSetting(event.fromAgent)} asked {labelRawSetting(event.toAgent)}</span>
-                ))}
-              </div>
-            ))
-          ) : (
-            <EmptyState compact />
-          )}
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Final Plan" title="Council output before approval" icon={ClipboardCheck} />
-        {latestCouncil ? (
-          <CouncilFinalPlan
-            council={latestCouncil}
-            isImplementing={isImplementing}
-            implementationResult={implementationResult}
-            onImplement={implementCouncilPlan}
-          />
-        ) : (
-          <EmptyState compact />
-        )}
-      </article>
-    </section>
-  )
-}
-
-function CouncilEventCard({ event }: { event: AgentCouncilSession['events'][number] }) {
-  return (
-    <>
-      <div className="council-event-flow">
-        <span>{labelRawSetting(event.fromAgent)}</span>
-        <i />
-        <span>{labelRawSetting(event.toAgent)}</span>
-      </div>
-      <strong>{event.question}</strong>
-      <p>{event.answer}</p>
-      <small>{labelRawSetting(event.state)}</small>
-    </>
-  )
-}
-
-function CouncilFinalPlan({
-  council,
-  isImplementing,
-  implementationResult,
-  onImplement,
-}: {
-  council: AgentCouncilSession
-  isImplementing: boolean
-  implementationResult: { approvalId: string; status: string; guardrail: string } | null
-  onImplement: () => void
-}) {
-  const finalPlan = council.finalPlan
-  const canImplement = finalPlan.executionDecision.canCreatePausedDraft && !isImplementing && !implementationResult
-  return (
-    <div className="council-final-plan">
-      <div className="council-plan-summary">
-        <strong>{finalPlan.summary}</strong>
-        <p>{finalPlan.campaignNamingRule}</p>
-      </div>
-      <div className="council-plan-grid">
-        <div>
-          <span>Audience</span>
-          <strong>{finalPlan.audienceDecision.primary}</strong>
-          {finalPlan.audienceDecision.segments.slice(0, 4).map((segment) => (
-            <small key={segment.name}>
-              {segment.name}: {formatCurrency(segment.budgetUsd)}/day · {segment.locations.join(', ')}
-            </small>
-          ))}
-        </div>
-        <div>
-          <span>Creative</span>
-          <strong>{finalPlan.creativeDecision.topCreative}</strong>
-          <small>{finalPlan.creativeDecision.rule}</small>
-          <small>{finalPlan.creativeDecision.topCreativePool.join(', ')}</small>
-        </div>
-        <div>
-          <span>Placement</span>
-          <strong>{finalPlan.placementDecision.primary}</strong>
-          <small>{finalPlan.placementDecision.rule}</small>
-        </div>
-        <div>
-          <span>Funnel</span>
-          <strong>{finalPlan.funnelDecision.requiredEvents.join(', ')}</strong>
-          <small>{finalPlan.funnelDecision.rule}</small>
-        </div>
-        <div>
-          <span>Monitoring</span>
-          <strong>Every {finalPlan.monitoringDecision.cadenceHours} hours</strong>
-          <small>{finalPlan.monitoringDecision.watchMetrics.join(', ')}</small>
-          <small>{finalPlan.monitoringDecision.rule}</small>
-        </div>
-        <div>
-          <span>Safety</span>
-          <strong>{finalPlan.executionDecision.canCreatePausedDraft ? 'Paused draft allowed' : 'Draft blocked'}</strong>
-          <small>Publish: {finalPlan.executionDecision.canPublish ? 'allowed' : 'blocked'}</small>
-          <small>Approval: {finalPlan.executionDecision.approvalRequired ? 'required' : 'not required'}</small>
-        </div>
-      </div>
-      <div className="council-experiment-list">
-        {finalPlan.experimentDecision.map((experiment) => (
-          <div key={`${experiment.day}-${experiment.test}`}>
-            <strong>{experiment.day}</strong>
-            <span>{experiment.test}</span>
-            <small>{experiment.decisionMetric}: {experiment.action}</small>
-          </div>
-        ))}
-      </div>
-      <div className="council-implementation-actions">
-        <div>
-          <strong>Turn this council output into an executable paused campaign packet</strong>
-          <p>
-            This uses the generated playbook, creates a Meta approval request, and keeps every campaign/ad set paused until a guarded execution step is approved.
-          </p>
-        </div>
-        <button className="sync-button" type="button" onClick={onImplement} disabled={!canImplement}>
-          <ClipboardCheck size={16} />
-          {isImplementing ? 'Creating packet…' : implementationResult ? 'Packet created' : 'Create paused packet'}
-        </button>
-      </div>
-      {implementationResult && (
-        <div className="implementation-result" role="status">
-          <strong>Paused campaign approval created</strong>
-          <span>{implementationResult.approvalId}</span>
-          <small>Status: {labelRawSetting(implementationResult.status)} · Guardrail: {labelRawSetting(implementationResult.guardrail)}</small>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function councilScoreForAgent(council: AgentCouncilSession | null, agentId: string) {
-  const score = council?.scores.find((item) => item.agentId === agentId)
-  return score ? `${score.scoreOutOf10.toFixed(1)}/10` : 'not scored'
-}
-
-function agentNameForId(agents: AgentCouncilSession['agents'], agentId?: string) {
-  return agents.find((agent) => agent.id === agentId)?.name ?? labelRawSetting(agentId ?? 'agent')
-}
-
-function getAgentApproachPosition(fromAgentId?: string, toAgentId?: string) {
-  const target = getAgentDeskPosition(toAgentId)
-  const source = getAgentDeskPosition(fromAgentId)
-  const deltaX = target.x - source.x
-  const deltaY = target.y - source.y
-  const distance = Math.max(Math.sqrt(deltaX * deltaX + deltaY * deltaY), 1)
-  return {
-    x: target.x - (deltaX / distance) * 16,
-    y: target.y - (deltaY / distance) * 16,
-  }
-}
-
-function getAgentDeskPosition(agentId?: string) {
-  const positions: Record<string, { x: number; y: number }> = {
-    orchestrator: { x: 50, y: 13 },
-    audit: { x: 25, y: 18 },
-    meta_ai_strategist: { x: 75, y: 18 },
-    audience: { x: 21, y: 42 },
-    creative: { x: 79, y: 42 },
-    placement: { x: 25, y: 73 },
-    funnel: { x: 50, y: 84 },
-    experiment: { x: 75, y: 73 },
-    monitoring: { x: 38, y: 30 },
-    execution: { x: 62, y: 30 },
-  }
-  return positions[agentId ?? 'orchestrator'] ?? { x: 50, y: 50 }
-}
-
-function getAgentVisual(agentId: string) {
-  const visuals: Record<string, { color: string; shortRole: string }> = {
-    orchestrator: { color: '#0f766e', shortRole: 'coordinates' },
-    audit: { color: '#2563eb', shortRole: 'audits data' },
-    meta_ai_strategist: { color: '#7c3aed', shortRole: 'Meta AI read' },
-    audience: { color: '#db2777', shortRole: 'audience' },
-    creative: { color: '#ea580c', shortRole: 'creative' },
-    placement: { color: '#0891b2', shortRole: 'placements' },
-    funnel: { color: '#16a34a', shortRole: 'tracking' },
-    experiment: { color: '#ca8a04', shortRole: 'testing' },
-    monitoring: { color: '#475569', shortRole: 'monitors' },
-    execution: { color: '#dc2626', shortRole: 'paused drafts' },
-  }
-  return visuals[agentId] ?? { color: '#64748b', shortRole: labelRawSetting(agentId) }
-}
-
-function fallbackCouncilAgents(): AgentCouncilSession['agents'] {
-  return [
-    { id: 'orchestrator', name: 'Orchestrator', role: 'routes work and asks follow-up questions', state: 'waiting', requiresApproval: true },
-    { id: 'audit', name: 'Performance Auditor', role: 'checks 180-day evidence', state: 'waiting', requiresApproval: false },
-    { id: 'meta_ai_strategist', name: 'Meta AI Strategist', role: 'captures Meta AI recommendations', state: 'waiting', requiresApproval: false },
-    { id: 'audience', name: 'Audience Specialist', role: 'ranks interests, age, gender, geo', state: 'waiting', requiresApproval: false },
-    { id: 'creative', name: 'Creative Analyst', role: 'ranks videos and hooks', state: 'waiting', requiresApproval: false },
-    { id: 'placement', name: 'Placement Optimizer', role: 'guards Instagram placement mix', state: 'waiting', requiresApproval: false },
-    { id: 'funnel', name: 'Funnel Tracking Agent', role: 'tracks landing page and Telegram starts', state: 'waiting', requiresApproval: false },
-    { id: 'experiment', name: 'Experiment Agent', role: 'designs A/B tests and stop rules', state: 'waiting', requiresApproval: false },
-    { id: 'monitoring', name: 'Monitoring Agent', role: 'checks campaigns every four hours', state: 'waiting', requiresApproval: false },
-    { id: 'execution', name: 'Execution Agent', role: 'creates paused drafts only', state: 'waiting', requiresApproval: true },
-  ]
-}
-
 function agentStatusTone(agent: AgentSpec) {
   if (agent.readinessStatus === 'blocked') {
     return 'danger'
@@ -1871,220 +1120,6 @@ function agentStatusTone(agent: AgentSpec) {
     return 'danger'
   }
   return agent.requiresApproval ? 'warning' : 'good'
-}
-
-function CampaignBuilderView() {
-  const [name, setName] = useState('Next AI course launch')
-  const [primarySuccessMetric, setPrimarySuccessMetric] = useState('bot_start')
-  const [startingBudgetUsd, setStartingBudgetUsd] = useState(100)
-  const [maxDailyBudgetUsd, setMaxDailyBudgetUsd] = useState(500)
-  const [salesCapacityLeadsPerDay, setSalesCapacityLeadsPerDay] = useState(200)
-  const [scalingStepPercent, setScalingStepPercent] = useState(20)
-  const [segments, setSegments] = useState<CampaignPlaybookSegment[]>([
-    {
-      ...buildEmptySegment('New segment'),
-      targetAudienceNotes: 'Describe who should see this VSL.',
-      offerAngle: 'Describe the promise or hook for this segment.',
-    },
-  ])
-  const [savedPlaybook, setSavedPlaybook] = useState<CampaignPlaybook | null>(null)
-  const [saveMessage, setSaveMessage] = useState<string | null>(null)
-  const [isSaving, setIsSaving] = useState(false)
-
-  const draft = useMemo(
-    () =>
-      buildPlaybookDraft({
-        name,
-        startingBudgetUsd,
-        maxDailyBudgetUsd,
-        salesCapacityLeadsPerDay,
-        scalingStepPercent,
-        primarySuccessMetric,
-        segments,
-      }),
-    [maxDailyBudgetUsd, name, primarySuccessMetric, salesCapacityLeadsPerDay, scalingStepPercent, segments, startingBudgetUsd],
-  )
-  const readiness = useMemo(() => summarizePlaybookReadiness(draft), [draft])
-
-  const updateSegment = (index: number, patch: Partial<CampaignPlaybookSegment>) => {
-    setSegments((current) => current.map((segment, segmentIndex) => (segmentIndex === index ? { ...segment, ...patch } : segment)))
-  }
-
-  const addSegment = () => {
-    setSegments((current) => [...current, buildEmptySegment(`Segment ${current.length + 1}`)])
-  }
-
-  const removeSegment = (index: number) => {
-    setSegments((current) => current.filter((_, segmentIndex) => segmentIndex !== index))
-  }
-
-  const savePlaybook = async () => {
-    if (isSaving) {
-      return
-    }
-    setIsSaving(true)
-    setSaveMessage('Saving campaign playbook...')
-    try {
-      const response = await fetch('/api/playbooks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playbook: draft }),
-      })
-      const result = (await response.json()) as { playbook?: CampaignPlaybook; error?: string }
-      if (!response.ok || !result.playbook) {
-        setSaveMessage(result.error ?? `Save failed with ${response.status}`)
-        return
-      }
-      setSavedPlaybook(result.playbook)
-      setSaveMessage('Playbook saved. It can be used later for approval-based launch planning.')
-    } catch {
-      setSaveMessage('Could not reach the playbook API.')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  return (
-    <section className="dashboard-grid">
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Campaign Builder" title="Configurable launch playbook" icon={ClipboardCheck} />
-        <div className="builder-grid">
-          <label>
-            <span>Playbook name</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label>
-            <span>Primary success metric</span>
-            <select value={primarySuccessMetric} onChange={(event) => setPrimarySuccessMetric(event.target.value)}>
-              <option value="bot_start">Telegram START</option>
-              <option value="form_button_click">Form button click</option>
-              <option value="qualified_lead">Qualified lead</option>
-              <option value="full_payment">Full payment</option>
-            </select>
-          </label>
-          <label>
-            <span>Starting budget / segment</span>
-            <input type="number" min={1} value={startingBudgetUsd} onChange={(event) => setStartingBudgetUsd(Number(event.target.value))} />
-          </label>
-          <label>
-            <span>Max daily budget</span>
-            <input type="number" min={1} value={maxDailyBudgetUsd} onChange={(event) => setMaxDailyBudgetUsd(Number(event.target.value))} />
-          </label>
-          <label>
-            <span>Sales capacity leads/day</span>
-            <input type="number" min={1} value={salesCapacityLeadsPerDay} onChange={(event) => setSalesCapacityLeadsPerDay(Number(event.target.value))} />
-          </label>
-          <label>
-            <span>Scale step percent</span>
-            <input type="number" min={1} value={scalingStepPercent} onChange={(event) => setScalingStepPercent(Number(event.target.value))} />
-          </label>
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Segments" title="VSL and audience test groups" icon={Target} />
-        <div className="builder-summary">
-          <MiniMetric label="Segments" value={readiness.segmentCount.toString()} />
-          <MiniMetric label="Ready with links" value={readiness.readySegments.toString()} />
-          <MiniMetric label="Missing landing pages" value={readiness.missingLandingPages.toString()} />
-          <MiniMetric label="Starting budget total" value={formatCurrency(readiness.totalStartingBudgetUsd)} />
-        </div>
-        <div className="segment-builder-list">
-          {segments.map((segment, index) => (
-            <div className="segment-builder-card" key={`${segment.id}-${index}`}>
-              <div className="segment-builder-head">
-                <strong>Segment {index + 1}</strong>
-                <button type="button" onClick={() => removeSegment(index)} disabled={segments.length === 1}>
-                  Remove
-                </button>
-              </div>
-              <div className="builder-grid">
-                <label>
-                  <span>Name</span>
-                  <input value={segment.name} onChange={(event) => updateSegment(index, { name: event.target.value })} />
-                </label>
-                <label>
-                  <span>VSL ID</span>
-                  <input value={segment.vslId ?? ''} onChange={(event) => updateSegment(index, { vslId: event.target.value })} placeholder="Optional for now" />
-                </label>
-                <label>
-                  <span>Landing page URL</span>
-                  <input value={segment.landingPageUrl ?? ''} onChange={(event) => updateSegment(index, { landingPageUrl: event.target.value })} placeholder="Add later" />
-                </label>
-                <label>
-                  <span>Telegram bot URL</span>
-                  <input value={segment.telegramBotUrl ?? ''} onChange={(event) => updateSegment(index, { telegramBotUrl: event.target.value })} placeholder="Add later" />
-                </label>
-                <label>
-                  <span>Locations</span>
-                  <input value={(segment.locations ?? []).join(', ')} onChange={(event) => updateSegment(index, { locations: parseCsvList(event.target.value) })} />
-                </label>
-                <label>
-                  <span>Placements</span>
-                  <input value={(segment.placements ?? []).join(', ')} onChange={(event) => updateSegment(index, { placements: parseCsvList(event.target.value) })} />
-                </label>
-                <label>
-                  <span>Interests</span>
-                  <input value={(segment.interests ?? []).join(', ')} onChange={(event) => updateSegment(index, { interests: parseCsvList(event.target.value) })} />
-                </label>
-                <label>
-                  <span>Segment budget</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={segment.startingBudgetUsd ?? startingBudgetUsd}
-                    onChange={(event) => updateSegment(index, { startingBudgetUsd: Number(event.target.value) })}
-                  />
-                </label>
-                <label>
-                  <span>Creative count target</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={segment.creativeCountTarget ?? 8}
-                    onChange={(event) => updateSegment(index, { creativeCountTarget: Number(event.target.value) })}
-                  />
-                </label>
-                <label>
-                  <span>Age range</span>
-                  <input value={segment.ageRange ?? 'Broad'} onChange={(event) => updateSegment(index, { ageRange: event.target.value })} />
-                </label>
-                <label className="builder-field-wide">
-                  <span>Audience hypothesis</span>
-                  <textarea value={segment.targetAudienceNotes ?? ''} onChange={(event) => updateSegment(index, { targetAudienceNotes: event.target.value })} />
-                </label>
-                <label className="builder-field-wide">
-                  <span>Offer angle</span>
-                  <textarea value={segment.offerAngle ?? ''} onChange={(event) => updateSegment(index, { offerAngle: event.target.value })} />
-                </label>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="builder-actions">
-          <button className="sync-button" type="button" onClick={addSegment}>
-            <ListChecks size={16} />
-            Add segment
-          </button>
-          <button className="sync-button" type="button" onClick={savePlaybook} disabled={isSaving}>
-            <CheckCircle2 size={16} />
-            {isSaving ? 'Saving...' : 'Save playbook'}
-          </button>
-          {saveMessage && <small className="sync-message">{saveMessage}</small>}
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Draft Preview" title="Approval-safe launch structure" icon={ShieldAlert} />
-        <div className="metric-list">
-          <div><strong>Execution mode</strong><span>{draft.rules.requiresApprovalForExecution ? 'Approval required' : 'Autonomous'}</span></div>
-          <div><strong>Scale rule</strong><span>{draft.rules.scalingStepPercent}% every {draft.rules.scalingFrequencyDays} day</span></div>
-          <div><strong>Approval channels</strong><span>{draft.approvalChannels.join(', ')}</span></div>
-          <div><strong>Saved playbook</strong><span>{savedPlaybook ? savedPlaybook.name : 'Not saved this session'}</span></div>
-        </div>
-      </article>
-    </section>
-  )
 }
 
 function InsightsPanel({ data }: { data: DashboardData }) {

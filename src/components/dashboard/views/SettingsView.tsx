@@ -7,14 +7,17 @@ import {
   ListChecks,
   RadioTower,
   RefreshCcw,
+  Send,
   Settings,
   ShieldAlert,
   SlidersHorizontal,
+  Target,
   Users,
   XCircle,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
+  formatCurrency,
   formatDateTime,
   formatRate,
   labelEventName,
@@ -28,6 +31,7 @@ import type {
   FunnelEventSummary,
   MetaSettingsAudit,
   MetaSnapshot,
+  SystemChecklist,
 } from '../../../types/marketing'
 import { MiniMetric } from '../shared/MiniMetric'
 import { PanelHeading } from '../shared/PanelHeading'
@@ -255,6 +259,137 @@ function TrackingView({ data }: { data: DashboardData }) {
   )
 }
 
+function DiagnosticsView({ data }: { data: DashboardData }) {
+  const [systemChecklist, setSystemChecklist] = useState<SystemChecklist | null>(null)
+  const [isSendingTelegramTest, setIsSendingTelegramTest] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      return
+    }
+    let cancelled = false
+    void fetch('/api/system/checklist')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((checklist) => {
+        if (!cancelled) {
+          setSystemChecklist(checklist as SystemChecklist | null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSystemChecklist(null)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const recentCampaigns = data.campaigns.slice(0, 8)
+
+  const sendTelegramTest = async () => {
+    if (isSendingTelegramTest) {
+      return
+    }
+
+    setIsSendingTelegramTest(true)
+    setMessage('Sending Telegram test message...')
+    try {
+      const response = await fetch('/api/telegram/test-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Meta Agent Telegram test: outbound messages are connected.' }),
+      })
+      const result = (await response.json()) as { telegram?: { ok?: boolean; error?: string } }
+      setMessage(result.telegram?.ok ? 'Telegram test message sent.' : result.telegram?.error ?? `Telegram test failed with ${response.status}`)
+    } catch {
+      setMessage('Could not reach the Telegram test endpoint.')
+    } finally {
+      setIsSendingTelegramTest(false)
+    }
+  }
+
+  return (
+    <section className="dashboard-grid">
+      <article className="panel">
+        <PanelHeading eyebrow="Regression Checklist" title="Completion readiness" icon={CheckCircle2} />
+        {systemChecklist ? (
+          <>
+            <div className="builder-summary command-summary">
+              <MiniMetric label="Ready" value={`${systemChecklist.summary.ready}/${systemChecklist.summary.total}`} />
+              <MiniMetric label="Partial" value={systemChecklist.summary.partial.toString()} />
+              <MiniMetric label="Needs work" value={systemChecklist.summary.needs_attention.toString()} />
+            </div>
+            <div className="task-list">
+              {systemChecklist.items.slice(0, 10).map((item) => (
+                <div className={`task-item ${item.status}`} key={item.id}>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <p>{item.evidence}</p>
+                  </div>
+                  <span>{labelRawSetting(item.status)}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="metric-list">
+            <div><strong>No checklist yet</strong><span>Start the backend to load the regression checklist.</span></div>
+          </div>
+        )}
+      </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Campaign Mapping" title="Connect Meta campaigns to reusable launch groups" icon={Target} />
+        <div className="campaign-map-grid">
+          <div className="mapping-note">
+            <strong>Mapping rule</strong>
+            <p>
+              Use a stable campaign group ID plus segment/VSL IDs. The same structure works for one VSL, three VSLs, or five VSLs later.
+            </p>
+          </div>
+          {recentCampaigns.map((campaign) => (
+            <div className="campaign-map-row" key={campaign.id}>
+              <strong>{campaign.name}</strong>
+              <span>{campaign.id}</span>
+              <small>{campaign.objective} / {campaign.status} / {formatCurrency(campaign.dailyBudgetUsd)}/day</small>
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article className="panel panel-wide">
+        <PanelHeading eyebrow="Telegram Control" title="Bot command wiring" icon={Bot} />
+        <div className="telegram-command-grid">
+          <div>
+            <strong>Command webhook</strong>
+            <code>POST /api/telegram/command</code>
+            <p>Send Telegram message updates here to create orchestrator tasks from bot commands.</p>
+          </div>
+          <div>
+            <strong>Shared secret</strong>
+            <code>x-telegram-agent-secret</code>
+            <p>Set `TELEGRAM_COMMAND_SECRET` in the backend and send the same value in this header.</p>
+          </div>
+          <div>
+            <strong>Approval button data</strong>
+            <code>approve:approval_id</code>
+            <p>Approval buttons can approve a request, but publishing or spend still needs the execution endpoint and guardrails.</p>
+          </div>
+        </div>
+        <div className="command-actions">
+          <button className="sync-button secondary" type="button" onClick={sendTelegramTest} disabled={isSendingTelegramTest}>
+            <Send size={16} />
+            {isSendingTelegramTest ? 'Sending...' : 'Send test message'}
+          </button>
+          {message && <small className="sync-message">{message}</small>}
+        </div>
+      </article>
+    </section>
+  )
+}
+
 export function SettingsView({
   data,
   metaStatus,
@@ -438,6 +573,10 @@ export function SettingsView({
           <div><strong>Gemini</strong><span>Creative video analysis next</span></div>
         </div>
       </article>
+      <details className="advanced-command-section settings-diagnostics">
+        <summary>Diagnostics</summary>
+        <DiagnosticsView data={data} />
+      </details>
       <details className="advanced-command-section settings-diagnostics">
         <summary>Tracking diagnostics</summary>
         <TrackingView data={data} />
