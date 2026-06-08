@@ -24,10 +24,10 @@ describe('ChatMessageContent', () => {
     expect(strong.tagName).toBe('STRONG')
   })
 
-  it('joins soft-wrapped lines within a paragraph into one <p>', () => {
-    const { container } = render(<ChatMessageContent content={'line one\nline two'} />)
+  it('preserves single newlines within a block as <br> so numbered lists stay structured', () => {
+    const { container } = render(<ChatMessageContent content={'Top ad sets:\n1. Alpha\n2. Beta'} />)
     expect(container.querySelectorAll('p')).toHaveLength(1)
-    expect(container.querySelector('p')?.textContent).toBe('line one line two')
+    expect(container.querySelectorAll('br')).toHaveLength(2)
   })
 
   it('leaves an unmatched asterisk as plain text without crashing', () => {

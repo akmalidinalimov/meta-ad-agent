@@ -21,9 +21,10 @@ function renderInline(text: string): ReactNode[] {
 /**
  * Render an agent/chat answer as readable HTML without a markdown dependency.
  *
- * - blank line(s) separate blocks
+ * - blank line(s) separate blocks (rendered as separate <p> / <ul>)
  * - a block whose every line is a bullet becomes a <ul>
- * - other blocks become a <p> (soft-wrapped lines joined with a space)
+ * - other blocks become a <p>, preserving single newlines as <br> so numbered
+ *   lists and line-per-item template output stay structured (not run together)
  * - inline **bold** becomes <strong>
  *
  * Output is React elements only (no raw HTML injection), so LLM-authored text
@@ -51,7 +52,16 @@ export function ChatMessageContent({ content }: { content: string }) {
           )
         }
 
-        return <p key={blockIndex}>{renderInline(lines.join(' '))}</p>
+        return (
+          <p key={blockIndex}>
+            {lines.map((line, lineIndex) => (
+              <Fragment key={lineIndex}>
+                {lineIndex > 0 && <br />}
+                {renderInline(line)}
+              </Fragment>
+            ))}
+          </p>
+        )
       })}
     </div>
   )
