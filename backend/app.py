@@ -67,14 +67,21 @@ async def _monitoring_loop() -> None:
     from .playbook_store import load_playbooks
     from .telegram_outbound import send_approval_notification, send_telegram_message_sync
 
+    from .telegram_digest import send_kpi_digest
+
     interval = int(os.getenv("MONITORING_INTERVAL_SECONDS", "3600"))
     while True:
         try:
-            await asyncio.to_thread(
+            monitoring_result = await asyncio.to_thread(
                 run_scheduled_monitoring,
                 build_dashboard,
                 send_alert=send_telegram_message_sync,
             )
+            # Heartbeat: when monitoring actually runs (its own 4h debounce, not a
+            # skipped poll), push the KPI digest so the operator always gets a
+            # status table — not only when a rule trips. Read-only, no Meta writes.
+            if isinstance(monitoring_result, dict) and not monitoring_result.get("skipped"):
+                await asyncio.to_thread(send_kpi_digest)
         except Exception:
             logger.exception("Scheduled monitoring iteration failed")
         try:
