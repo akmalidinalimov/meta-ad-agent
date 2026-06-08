@@ -370,6 +370,35 @@
   line-height: 1.45;
 }
 
+/* Structured chat answers: paragraphs + bullet lists + bold, rendered by
+   ChatMessageContent so replies read as scannable blocks instead of one blob. */
+.chat-rich {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-rich p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.chat-rich ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.chat-rich li {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.chat-rich strong {
+  font-weight: var(--weight-strong);
+}
+
 .chat-message small {
   display: block;
   margin-top: 7px;
@@ -470,6 +499,8 @@
 .dashboard-grid,
 .rankings-grid,
 .overview-command-grid,
+.overview-primary-grid,
+.overview-review-grid,
 .command-center-layout,
 .bottom-grid,
 .detail-layout {
@@ -488,7 +519,51 @@
 
 .overview-command-grid {
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  margin-bottom: 24px;
+}
+
+/* Monitor bands: primary charts + the review (approvals) row, lifted up under
+   the KPIs. Two equal columns, with extra breathing room between bands. */
+.overview-primary-grid,
+.overview-review-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 24px;
+}
+
+/* Detail band: dense breakdowns collapsed by default behind a clickable card. */
+.overview-details {
+  margin-top: 4px;
+}
+
+.overview-details > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: var(--weight-strong);
+  user-select: none;
+}
+
+.overview-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.overview-details > summary::before {
+  content: "▸ ";
+  color: var(--text-muted);
+}
+
+.overview-details[open] > summary {
   margin-bottom: 16px;
+}
+
+.overview-details[open] > summary::before {
+  content: "▾ ";
 }
 
 .command-center-layout {
@@ -3247,6 +3322,8 @@
   .kpi-grid,
   .dashboard-grid,
   .overview-command-grid,
+  .overview-primary-grid,
+  .overview-review-grid,
   .command-center-layout,
   .bottom-grid,
   .detail-layout,

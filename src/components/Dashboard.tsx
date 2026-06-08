@@ -42,6 +42,7 @@ import { COLORS, iconMap } from './dashboard/constants'
 import { RankingsView } from './dashboard/views/RankingsView'
 import { SettingsView } from './dashboard/views/SettingsView'
 import { ChartFrame } from './dashboard/shared/ChartFrame'
+import { ChatMessageContent } from './dashboard/shared/ChatMessageContent'
 import { EmptyState } from './dashboard/shared/EmptyState'
 import { MediaThumb } from './dashboard/shared/MediaThumb'
 import { MiniMetric } from './dashboard/shared/MiniMetric'
@@ -50,7 +51,6 @@ import {
   deriveCreativeScores,
   deriveFunnel,
   derivePlacementScores,
-  deriveRankingRows,
   deriveTrend,
   filterMetricsForDashboard,
   formatNumber,
@@ -98,8 +98,6 @@ import type {
   DashboardFilters,
   DashboardKpi,
   DailyAdMetric,
-  Placement,
-  RankingRow,
   SystemChecklist,
   Tone,
   TrackingHealthItem,
@@ -334,7 +332,6 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
             funnel={funnel}
             trend={trend}
             placements={placements}
-            metrics={filteredMetrics}
             onAskWhy={askAgentsAbout}
           />
         ) : (
@@ -682,7 +679,7 @@ function AgentChatPanel({
                     : 'Rule-based'}
               </span>
             )}
-            <p>{message.content}</p>
+            <ChatMessageContent content={message.content} />
             {message.activeAgent && <small>Agent: {labelRawSetting(message.activeAgent)}{message.routeReason ? ` · ${message.routeReason}` : ''}</small>}
             {message.quality && <small>Quality: {message.quality.score}/100 · {labelRawSetting(message.quality.status)}</small>}
             {message.agentCouncil && (
@@ -744,7 +741,6 @@ function Overview({
   funnel,
   trend,
   placements,
-  metrics,
   onAskWhy,
 }: {
   data: DashboardData
@@ -753,29 +749,39 @@ function Overview({
   funnel: ReturnType<typeof deriveFunnel>
   trend: ReturnType<typeof deriveTrend>
   placements: ReturnType<typeof derivePlacementScores>
-  metrics: DailyAdMetric[]
   onAskWhy: (message: string) => void
 }) {
   return (
     <>
+      {/* DECIDE: hero, KPIs, and the "what's wrong" diagnosis row */}
       <DecisionHero data={data} onAskWhy={onAskWhy} />
       <KpiGrid kpis={kpis} />
       <section className="overview-command-grid">
         <FunnelPanel funnel={funnel} />
         <TopProblemsPanel data={data} />
-        <OverviewRankingPreview data={data} metrics={metrics} placements={placements} />
       </section>
-      <section className="dashboard-grid">
+
+      {/* TRENDS: primary charts, lifted directly under the KPIs */}
+      <section className="overview-primary-grid">
         <TrendPanel trend={trend} />
-        <CreativeTablePanel creativeScores={creativeScores} />
-        <PlacementPanel placements={placements} />
-        <AudiencePanel data={data} />
         <SpendPanel trend={trend} />
       </section>
-      <section className="bottom-grid">
-        <InsightsPanel data={data} />
+
+      {/* REVIEW: approvals surfaced high — acting on suggestions is the point */}
+      <section className="overview-review-grid">
         <ApprovalQueue data={data} />
+        <InsightsPanel data={data} />
       </section>
+
+      {/* DETAIL: dense breakdowns deferred, collapsed by default */}
+      <details className="overview-details">
+        <summary>Show detailed breakdowns</summary>
+        <section className="dashboard-grid">
+          <CreativeTablePanel creativeScores={creativeScores} />
+          <PlacementPanel placements={placements} />
+          <AudiencePanel data={data} />
+        </section>
+      </details>
     </>
   )
 }
@@ -925,100 +931,6 @@ function DecisionHero({ data, onAskWhy }: { data: DashboardData; onAskWhy: (mess
         </button>
       </div>
     </section>
-  )
-}
-
-function OverviewRankingPreview({
-  data,
-  metrics,
-  placements,
-}: {
-  data: DashboardData
-  metrics: DailyAdMetric[]
-  placements: ReturnType<typeof derivePlacementScores>
-}) {
-  const campaigns = deriveRankingRows(
-    metrics,
-    data.campaigns.map((campaign) => ({
-      id: campaign.id,
-      name: campaign.name,
-      category: 'campaign',
-      metricIds: new Set([campaign.id]),
-    })),
-  ).slice(0, 3)
-  const creatives = deriveRankingRows(
-    metrics,
-    data.creatives.map((creative) => ({
-      id: creative.id,
-      name: creative.name,
-      category: 'creative',
-      metricIds: new Set([creative.id]),
-    })),
-  ).slice(0, 3)
-  const audiences = deriveRankingRows(
-    metrics,
-    data.adSets.map((adSet) => ({
-      id: adSet.id,
-      name: adSet.name,
-      category: 'audience',
-      metricIds: new Set([adSet.id]),
-    })),
-  ).slice(0, 3)
-  const placementRows = placements.slice(0, 3).map((placement) => ({
-    id: placement.name,
-    name: labelPlacement(placement.name as Placement),
-    metric: `${placement.value}% spend`,
-    helper: `${formatNumber(placement.buyers)} buyers`,
-  }))
-
-  return (
-    <article className="panel panel-wide overview-ranking-preview">
-      <PanelHeading eyebrow="Decision Rankings" title="Best current levers" icon={BarChart3} />
-      <div className="overview-ranking-grid">
-        <MiniRanking title="Campaigns" rows={campaigns.map(formatMiniRankingRow)} />
-        <MiniRanking title="Creatives" rows={creatives.map(formatMiniRankingRow)} />
-        <MiniRanking title="Audiences" rows={audiences.map(formatMiniRankingRow)} />
-        <MiniRanking title="Placements" rows={placementRows} />
-      </div>
-    </article>
-  )
-}
-
-function formatMiniRankingRow(row: RankingRow) {
-  const metric = row.costPerTelegramStart > 0
-    ? `${formatCurrency(row.costPerTelegramStart)} / TG start`
-    : row.cpl > 0
-      ? `${formatCurrency(row.cpl)} CPL`
-      : `${row.qualityScore}/100`
-  return {
-    id: row.id,
-    name: row.name,
-    metric,
-    helper: `${formatNumber(row.leads)} leads · ${formatNumber(row.telegramSubscribers)} TG`,
-  }
-}
-
-function MiniRanking({
-  title,
-  rows,
-}: {
-  title: string
-  rows: Array<{ id: string; name: string; metric: string; helper: string }>
-}) {
-  return (
-    <div className="mini-ranking">
-      <strong>{title}</strong>
-      {rows.length ? rows.map((row, index) => (
-        <div className="ranking-mini-row" key={row.id}>
-          <span>{index + 1}</span>
-          <div>
-            <b>{row.name}</b>
-            <small>{row.helper}</small>
-          </div>
-          <em>{row.metric}</em>
-        </div>
-      )) : <small>No ranked data yet.</small>}
-    </div>
   )
 }
 
