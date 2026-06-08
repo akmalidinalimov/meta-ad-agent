@@ -390,6 +390,100 @@ function DiagnosticsView({ data }: { data: DashboardData }) {
   )
 }
 
+const TARGET_FIELDS = [
+  { key: 'maxCpl', label: 'Max cost per lead ($)', hint: 'Flag when CPL rises above this' },
+  { key: 'minLeadRate', label: 'Min lead rate (%)', hint: 'Leads / clicks floor' },
+  { key: 'maxCostPerStart', label: 'Max cost per Telegram START ($)', hint: 'Spend / START ceiling' },
+  { key: 'minStartRate', label: 'Min START rate (%)', hint: 'START-rate floor' },
+] as const
+
+function TargetsView() {
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [message, setMessage] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      return
+    }
+    void fetch('/api/targets')
+      .then((response) => (response.ok ? response.json() : { targets: null }))
+      .then((result: { targets?: Record<string, number | null> }) => {
+        if (result.targets) {
+          setDraft(
+            Object.fromEntries(
+              TARGET_FIELDS.map((field) => [
+                field.key,
+                result.targets?.[field.key] != null ? String(result.targets[field.key]) : '',
+              ]),
+            ),
+          )
+        }
+      })
+      .catch(() => undefined)
+  }, [])
+
+  const save = async () => {
+    if (isSaving) {
+      return
+    }
+    setIsSaving(true)
+    setMessage('Saving targets...')
+    try {
+      const body = Object.fromEntries(
+        TARGET_FIELDS.map((field) => [field.key, draft[field.key] === '' || draft[field.key] == null ? null : Number(draft[field.key])]),
+      )
+      const response = await fetch('/api/targets', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const result = (await response.json()) as { ok?: boolean }
+      setMessage(
+        response.ok && result.ok
+          ? 'Targets saved. The 4-hour Telegram digest now marks each KPI ✅ on target or ⚠️ off target.'
+          : 'Could not save targets.',
+      )
+    } catch {
+      setMessage('Could not reach the targets endpoint.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <article className="panel panel-wide">
+      <PanelHeading eyebrow="Goals" title="KPI targets" icon={Target} />
+      <p>
+        Set the goals the agent steers toward. The 4-hour Telegram digest marks each KPI ✅ on target or ⚠️ off
+        target. Leave a field blank to ignore that metric.
+      </p>
+      <div className="command-grid">
+        {TARGET_FIELDS.map((field) => (
+          <label key={field.key}>
+            <span>{field.label}</span>
+            <input
+              type="number"
+              step="any"
+              min="0"
+              value={draft[field.key] ?? ''}
+              placeholder="—"
+              onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
+            />
+            <small>{field.hint}</small>
+          </label>
+        ))}
+      </div>
+      <div className="command-actions">
+        <button className="sync-button" type="button" onClick={save} disabled={isSaving}>
+          {isSaving ? 'Saving...' : 'Save targets'}
+        </button>
+        {message && <small className="sync-message">{message}</small>}
+      </div>
+    </article>
+  )
+}
+
 export function SettingsView({
   data,
   metaStatus,
@@ -573,6 +667,7 @@ export function SettingsView({
           <div><strong>Gemini</strong><span>Creative video analysis next</span></div>
         </div>
       </article>
+      <TargetsView />
       <details className="advanced-command-section settings-diagnostics">
         <summary>Diagnostics</summary>
         <DiagnosticsView data={data} />

@@ -29,6 +29,7 @@ from .routers import meta_ai as meta_ai_router
 from .routers import monitoring as monitoring_router
 from .routers import opportunities as opportunities_router
 from .routers import planning as planning_router
+from .routers import targets as targets_router
 from .routers import tasks as tasks_router
 from .routers import telegram as telegram_router
 
@@ -130,6 +131,7 @@ for module in (
     opportunities_router,
     approvals_router,
     tasks_router,
+    targets_router,
     telegram_router,
     meta_ai_router,
     agents_router,

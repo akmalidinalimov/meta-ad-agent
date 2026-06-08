@@ -55,3 +55,20 @@ def test_format_kpi_digest_survives_empty_inputs():
     text = format_kpi_digest({}, {})
     assert "KPI digest" in text
     assert "$0.00" in text
+
+
+def test_targets_add_pass_and_breach_markers():
+    # CPL 0.06 <= maxCpl 0.10 -> pass; lead rate 45.42 < minLeadRate 60 -> breach.
+    text = format_kpi_digest(
+        SUMMARY,
+        FUNNEL,
+        targets={"maxCpl": 0.10, "minLeadRate": 60, "maxCostPerStart": None, "minStartRate": None},
+    )
+    assert "✅" in text   # CPL under its ceiling
+    assert "⚠️" in text   # lead rate under its floor
+
+
+def test_no_targets_means_no_markers():
+    text = format_kpi_digest(SUMMARY, FUNNEL)
+    assert "✅" not in text
+    assert "⚠️" not in text
