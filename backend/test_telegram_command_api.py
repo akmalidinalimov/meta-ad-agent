@@ -397,3 +397,51 @@ def test_telegram_callback_can_mark_approval_needs_changes(monkeypatch, tmp_path
     assert response.json()["approval"]["status"] == "needs_changes"
     assert approvals[0]["changesRequestedBy"] == "telegram:akmal"
     assert "needs changes" in sent[0][0].lower()
+
+
+def test_telegram_native_secret_token_header_is_accepted(monkeypatch, tmp_path):
+    """Telegram's setWebhook secret_token arrives as X-Telegram-Bot-Api-Secret-Token,
+    so the bot can post updates to /api/telegram/command directly (no relay)."""
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    saved = create_approval_request(
+        build_campaign_creation_approval(
+            {
+                "name": "Telegram native secret test",
+                "segments": [{"id": "income", "name": "Income", "startingBudgetUsd": 50}],
+                "rules": {"maxDailyBudgetUsd": 100},
+            },
+            account_id="act_123",
+        ),
+        storage_dir=tmp_path / "storage",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-bot-api-secret-token": "secret"},
+        json={
+            "callback_query": {
+                "from": {"id": 2002, "username": "akmal"},
+                "message": {"chat": {"id": 1001}},
+                "data": f"approve:{saved['id']}",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["approval"]["status"] == "approved"
+
+
+def test_telegram_wrong_native_secret_token_is_rejected(monkeypatch, tmp_path):
+    bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-bot-api-secret-token": "wrong"},
+        json={"callback_query": {"data": "approve:whatever"}},
+    )
+
+    assert response.status_code == 401

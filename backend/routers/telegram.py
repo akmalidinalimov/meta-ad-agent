@@ -27,7 +27,14 @@ router = APIRouter()
 @router.post("/api/telegram/command")
 def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     expected_secret = os.getenv("TELEGRAM_COMMAND_SECRET", "").strip()
-    provided_secret = str(payload.get("secret") or request.headers.get("x-telegram-agent-secret") or "").strip()
+    provided_secret = str(
+        payload.get("secret")
+        or request.headers.get("x-telegram-agent-secret")
+        # Telegram's native webhook secret header (setWebhook secret_token),
+        # so the bot can post updates here directly without a relay.
+        or request.headers.get("x-telegram-bot-api-secret-token")
+        or ""
+    ).strip()
     if expected_secret and provided_secret != expected_secret:
         raise HTTPException(status_code=401, detail="Invalid Telegram command secret.")
 
