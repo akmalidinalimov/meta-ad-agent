@@ -104,6 +104,15 @@ async def lifespan(app: FastAPI):
     if os.getenv("MONITORING_SCHEDULER_ENABLED", "").strip().lower() == "true":
         logger.info("Starting in-process monitoring scheduler")
         task = asyncio.create_task(_monitoring_loop())
+    # Register the Telegram command menu + menu button so the bot is button-driven.
+    if os.getenv("TELEGRAM_BOT_TOKEN", "").strip() and os.getenv("TELEGRAM_AUTO_SETUP", "true").strip().lower() != "false":
+        try:
+            from .telegram_setup import register_bot_ui
+
+            await asyncio.to_thread(register_bot_ui)
+            logger.info("Registered Telegram bot menu + commands")
+        except Exception:
+            logger.exception("Telegram bot UI registration failed")
     try:
         yield
     finally:

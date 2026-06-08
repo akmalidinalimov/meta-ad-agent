@@ -88,6 +88,41 @@ async def send_telegram_message(text: str, **kwargs: Any) -> dict[str, Any]:
     return await asyncio.to_thread(send_telegram_message_sync, text, **kwargs)
 
 
+def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Call any Telegram Bot API method (setMyCommands, setChatMenuButton,
+    answerCallbackQuery, editMessageText, ...). Returns the parsed JSON or an
+    error dict; never raises."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return {"ok": False, "skipped": True, "error": "Telegram bot token is not configured."}
+
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/{method}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15, context=ssl_context()) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.URLError as error:
+        return {"ok": False, "skipped": False, "error": str(error)}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"ok": False, "skipped": False, "error": "Telegram returned a non-JSON response."}
+
+
+def answer_callback_query(callback_query_id: str | None, text: str | None = None) -> dict[str, Any]:
+    """Acknowledge a button tap so Telegram stops the loading spinner."""
+    if not callback_query_id:
+        return {"ok": False, "skipped": True}
+    payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+    return telegram_api("answerCallbackQuery", payload)
+
+
 def ssl_context() -> ssl.SSLContext | None:
     try:
         import truststore
