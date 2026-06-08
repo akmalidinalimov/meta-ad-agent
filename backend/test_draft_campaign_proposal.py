@@ -81,9 +81,11 @@ def test_draft_proposal_mirrors_winning_campaign_config_into_template():
     assert source["sourceCampaignId"] == "cmp_win"
     assert source["sourceCampaignName"] == "Winning VSL"
     assert source["config"]["objective"] == "OUTCOME_SALES"
-    # The mirrored config threads into the draft campaign + ad sets.
+    # The mirrored config threads into the draft campaign + ad sets. A CBO winner
+    # still yields an ABO draft (budget sharing OFF) so the paused campaign is a
+    # valid Meta write and each test audience keeps its own budget.
     assert proposal["draftCampaign"]["objective"] == "OUTCOME_SALES"
-    assert proposal["draftCampaign"]["is_adset_budget_sharing_enabled"] is True
+    assert proposal["draftCampaign"]["is_adset_budget_sharing_enabled"] is False
     assert proposal["draftCampaign"]["status"] == "PAUSED"
     adset = proposal["draftAdSets"][0]
     assert adset["bid_strategy"] == "COST_CAP"
