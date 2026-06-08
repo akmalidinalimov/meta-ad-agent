@@ -10,6 +10,39 @@ from __future__ import annotations
 from typing import Any
 
 
+# Labels for the persistent reply keyboard (docked under the text input). Tapping
+# one sends its label as a normal message, which routers/telegram.py maps to an action.
+BTN_KPIS = "📊 KPIs"
+BTN_SUGGESTIONS = "🤖 Suggestions"
+BTN_STATUS = "📈 Status"
+BTN_ALERTS = "🚨 Alerts"
+BTN_ASK = "💬 Ask the agent"
+BTN_ANALYTICS = "📊 Analytics"
+
+# label (lowercased) -> menu action target handled by _handle_menu.
+REPLY_BUTTON_ACTIONS: dict[str, str] = {
+    BTN_KPIS.lower(): "kpis",
+    BTN_SUGGESTIONS.lower(): "suggestions",
+    BTN_STATUS.lower(): "status",
+    BTN_ALERTS.lower(): "alerts",
+    BTN_ASK.lower(): "chat",
+    BTN_ANALYTICS.lower(): "analytics",
+}
+
+
+def main_reply_keyboard() -> dict[str, Any]:
+    """Persistent buttons docked under the message input (always visible)."""
+    return {
+        "keyboard": [
+            [{"text": BTN_KPIS}, {"text": BTN_SUGGESTIONS}],
+            [{"text": BTN_STATUS}, {"text": BTN_ALERTS}],
+            [{"text": BTN_ASK}, {"text": BTN_ANALYTICS}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
 def main_menu_keyboard() -> dict[str, Any]:
     return {
         "inline_keyboard": [

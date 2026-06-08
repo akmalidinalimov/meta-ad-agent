@@ -14,7 +14,7 @@ from ..approval_store import list_approval_requests
 from ..chat_service import answer_agent_question_sync, to_telegram_html
 from ..telegram_commands import normalize_telegram_command
 from ..telegram_digest import compose_kpi_digest_text
-from ..telegram_menus import main_menu_keyboard, welcome_text
+from ..telegram_menus import REPLY_BUTTON_ACTIONS, main_reply_keyboard, welcome_text
 from ..task_service import create_orchestrated_agent_task, sync_task_with_approval
 from ..telegram_service import (
     clamp_telegram_text,
@@ -75,7 +75,7 @@ def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
         url = os.getenv("PUBLIC_DASHBOARD_URL", "").strip()
         _send(command, f"📊 Open your dashboard: {url}" if url else "Dashboard URL is not configured yet.")
     else:  # "menu" or unknown -> show the main menu
-        _send(command, welcome_text(), parse_mode="HTML", reply_markup=main_menu_keyboard())
+        _send(command, welcome_text(), parse_mode="HTML", reply_markup=main_reply_keyboard())
     return {"ok": True, "telegram": command, "menu": target}
 
 
@@ -162,9 +162,14 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         _send(command, "Tap /menu for the control panel, or text me a question.")
         return {"ok": False, "telegram": command, "message": "empty"}
 
+    # Persistent reply-keyboard buttons send their label as a normal message.
+    reply_button = REPLY_BUTTON_ACTIONS.get(text.strip().lower())
+    if reply_button:
+        return _handle_menu(command, reply_button)
+
     lowered = text.strip().lower().lstrip("/")
     if lowered in {"start", "menu"}:
-        _send(command, welcome_text(), parse_mode="HTML", reply_markup=main_menu_keyboard())
+        _send(command, welcome_text(), parse_mode="HTML", reply_markup=main_reply_keyboard())
         return {"ok": True, "telegram": command, "menu": "main"}
     if lowered == "kpis":
         _send(command, compose_kpi_digest_text(), parse_mode="HTML")

@@ -5,7 +5,7 @@ import backend.telegram_outbound as telegram_outbound
 import backend.telegram_setup as telegram_setup
 from backend.app import app
 from backend.chat_service import to_telegram_html
-from backend.telegram_menus import main_menu_keyboard, welcome_text
+from backend.telegram_menus import main_menu_keyboard, main_reply_keyboard, welcome_text
 
 
 def test_main_menu_keyboard_has_core_buttons():
@@ -18,6 +18,16 @@ def test_main_menu_keyboard_has_core_buttons():
 
 def test_welcome_text_mentions_control_center():
     assert "control center" in welcome_text().lower()
+
+
+def test_main_reply_keyboard_is_persistent_with_core_buttons():
+    kb = main_reply_keyboard()
+    assert kb["is_persistent"] is True
+    assert kb["resize_keyboard"] is True
+    labels = [b["text"] for row in kb["keyboard"] for b in row]
+    assert "📊 KPIs" in labels
+    assert "🤖 Suggestions" in labels
+    assert "📊 Analytics" in labels
 
 
 def test_to_telegram_html_converts_bold_and_escapes():
@@ -63,6 +73,18 @@ def test_start_text_sends_main_menu(monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["menu"] == "main"
     assert any("reply_markup" in kwargs for _, kwargs in sent)
+
+
+def test_reply_button_label_routes_to_action(monkeypatch):
+    sent = _open_bot(monkeypatch)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"message": {"chat": {"id": 1001}, "from": {"username": "a"}, "text": "📈 Status"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["menu"] == "status"
+    assert any("Agent status" in text for text, _ in sent)
 
 
 def test_question_routes_to_conversational_chat(monkeypatch):
