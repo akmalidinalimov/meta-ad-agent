@@ -51,6 +51,7 @@ def _open_bot(monkeypatch):
     sent = []
     monkeypatch.setattr(telegram_outbound, "send_telegram_message_sync", lambda text, **kwargs: sent.append((text, kwargs)) or {"ok": True})
     monkeypatch.setattr(telegram_outbound, "answer_callback_query", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(telegram_outbound, "edit_message_reply_markup", lambda *a, **k: {"ok": True})
     return sent
 
 
@@ -85,6 +86,47 @@ def test_reply_button_label_routes_to_action(monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["menu"] == "status"
     assert any("Agent status" in text for text, _ in sent)
+
+
+def test_apply_flow_dryrun_then_applylive(monkeypatch):
+    sent = _open_bot(monkeypatch)
+    monkeypatch.setattr(
+        telegram_router,
+        "dry_run_sync",
+        lambda aid: {"ok": True, "result": {"wouldCreate": {"campaign": {"name": "Test - DRAFT"}, "adsets": [1, 2, 3]}}},
+    )
+    monkeypatch.setattr(
+        telegram_router,
+        "apply_live_sync",
+        lambda aid: {"ok": True, "result": {"created": [{"level": "campaign", "id": "123", "name": "Test - DRAFT"}]}},
+    )
+    client = TestClient(app)
+
+    r1 = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"message": {"chat": {"id": 1001}, "message_id": 5}, "from": {"username": "a"}, "data": "dryrun:appA"}},
+    )
+    assert r1.status_code == 200 and r1.json()["dryRun"] is True
+    assert any("Dry run" in text for text, _ in sent)
+
+    r2 = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"message": {"chat": {"id": 1001}, "message_id": 5}, "from": {"username": "a"}, "data": "applylive:appA"}},
+    )
+    assert r2.status_code == 200 and r2.json()["applied"] is True
+    assert any("Created in Meta" in text for text, _ in sent)
+
+
+def test_apply_live_reports_meta_error(monkeypatch):
+    sent = _open_bot(monkeypatch)
+    monkeypatch.setattr(telegram_router, "apply_live_sync", lambda aid: {"ok": False, "error": "Meta API rejected the write: bad bid"})
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"message": {"chat": {"id": 1001}, "message_id": 5}, "from": {"username": "a"}, "data": "applylive:appA"}},
+    )
+    assert resp.status_code == 200 and resp.json()["ok"] is False
+    assert any("Meta rejected" in text for text, _ in sent)
 
 
 def test_question_routes_to_conversational_chat(monkeypatch):

@@ -62,6 +62,26 @@ def main_menu_keyboard() -> dict[str, Any]:
     }
 
 
+def approval_stage_keyboard(stage: str, approval_id: str) -> dict[str, Any]:
+    """Inline buttons for each step of the in-Telegram apply flow.
+
+    needs_review -> approved (Dry run) -> dry_run (Apply live) -> done (no buttons).
+    """
+    if stage == "approved":
+        rows = [[
+            {"text": "🧪 Dry run", "callback_data": f"dryrun:{approval_id}"},
+            {"text": "Reject", "callback_data": f"reject:{approval_id}"},
+        ]]
+    elif stage == "dry_run":
+        rows = [[
+            {"text": "⚠️ Apply live", "callback_data": f"applylive:{approval_id}"},
+            {"text": "Cancel", "callback_data": f"cancel:{approval_id}"},
+        ]]
+    else:  # "done" / unknown -> clear the buttons
+        rows = []
+    return {"inline_keyboard": rows}
+
+
 def welcome_text() -> str:
     return (
         "👋 <b>Meta Ad Agent — control center</b>\n\n"

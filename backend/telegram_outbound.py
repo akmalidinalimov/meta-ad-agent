@@ -113,6 +113,16 @@ def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "skipped": False, "error": "Telegram returned a non-JSON response."}
 
 
+def edit_message_reply_markup(chat_id: Any, message_id: Any, reply_markup: dict[str, Any]) -> dict[str, Any]:
+    """Update the inline buttons on an existing message (the apply-flow lifecycle)."""
+    if not chat_id or not message_id:
+        return {"ok": False, "skipped": True}
+    return telegram_api(
+        "editMessageReplyMarkup",
+        {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup or {"inline_keyboard": []}},
+    )
+
+
 def answer_callback_query(callback_query_id: str | None, text: str | None = None) -> dict[str, Any]:
     """Acknowledge a button tap so Telegram stops the loading spinner."""
     if not callback_query_id:

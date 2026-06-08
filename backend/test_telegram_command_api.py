@@ -324,7 +324,7 @@ def test_telegram_callback_can_approve_existing_approval(monkeypatch, tmp_path):
     assert response.json()["approval"]["status"] == "approved"
     assert approvals[0]["approvedBy"] == "telegram:akmal"
     assert sent[0][1]["chat_id"] == "1001"
-    assert "Approval recorded" in sent[0][0]
+    assert "Approved" in sent[0][0]
 
 
 def test_telegram_callback_can_reject_existing_approval(monkeypatch, tmp_path):

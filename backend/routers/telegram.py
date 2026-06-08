@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import os
 from typing import Any
@@ -12,9 +13,10 @@ from .. import approval_store, telegram_outbound
 from ..api_models import AgentTaskRequest, TelegramTestMessageRequest
 from ..approval_store import list_approval_requests
 from ..chat_service import answer_agent_question_sync, to_telegram_html
+from ..execution_service import apply_live_sync, dry_run_sync
 from ..telegram_commands import normalize_telegram_command
 from ..telegram_digest import compose_kpi_digest_text
-from ..telegram_menus import REPLY_BUTTON_ACTIONS, main_reply_keyboard, welcome_text
+from ..telegram_menus import REPLY_BUTTON_ACTIONS, approval_stage_keyboard, main_reply_keyboard, welcome_text
 from ..task_service import create_orchestrated_agent_task, sync_task_with_approval
 from ..telegram_service import (
     clamp_telegram_text,
@@ -48,6 +50,13 @@ def _send(command: dict[str, Any], text: str, **kwargs: Any) -> dict[str, Any] |
     if not chat_id:
         return None
     return telegram_outbound.send_telegram_message_sync(text, chat_id=chat_id, **kwargs)
+
+
+def _edit_stage(callback: dict[str, Any], stage: str, approval_id: str) -> None:
+    """Replace the tapped message's inline buttons with the next apply-flow stage."""
+    message = callback.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    telegram_outbound.edit_message_reply_markup(chat_id, message.get("message_id"), approval_stage_keyboard(stage, approval_id))
 
 
 def _send_pending_suggestions(command: dict[str, Any]) -> str:
@@ -109,9 +118,9 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         raise HTTPException(status_code=403, detail="Telegram chat or user is not allowed to control this agent.")
 
     # Acknowledge any button tap immediately so Telegram stops the loading spinner.
-    callback_query_id = (payload.get("callback_query") or {}).get("id")
-    if callback_query_id:
-        telegram_outbound.answer_callback_query(callback_query_id)
+    callback = payload.get("callback_query") or {}
+    if callback.get("id"):
+        telegram_outbound.answer_callback_query(callback.get("id"))
 
     action = command.get("action")
     approval_id = command.get("approvalId")
@@ -125,8 +134,48 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
             raise HTTPException(status_code=404, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
-        message = "Approval recorded. Execution still requires the configured execution endpoint."
+        _edit_stage(callback, "approved", approval_id)
+        message = "✅ Approved. Tap 🧪 Dry run to preview, then ⚠️ Apply live to create it (PAUSED) in Meta."
         return {"ok": True, "telegram": command, "approval": approval, "message": message, "reply": send_telegram_reply(command, message)}
+
+    if action == "dryrun" and approval_id:
+        result = dry_run_sync(approval_id)
+        if not result.get("ok"):
+            _send(command, f"Dry run failed: {result.get('error') or 'unknown error'}")
+            return {"ok": False, "telegram": command, "message": "dry run failed"}
+        would = (result.get("result") or {}).get("wouldCreate") or {}
+        campaign = html.escape(str((would.get("campaign") or {}).get("name", "campaign")))
+        adsets = len(would.get("adsets") or [])
+        _send(
+            command,
+            f"🧪 <b>Dry run</b> — would create <b>{campaign}</b> + {adsets} ad set(s), all PAUSED (no spend).\n"
+            "Tap ⚠️ Apply live to create it in Meta.",
+            parse_mode="HTML",
+        )
+        _edit_stage(callback, "dry_run", approval_id)
+        return {"ok": True, "telegram": command, "dryRun": True}
+
+    if action == "applylive" and approval_id:
+        result = apply_live_sync(approval_id)
+        if not result.get("ok"):
+            _send(command, f"❌ Meta rejected the write: {result.get('error') or 'unknown error'}")
+            return {"ok": False, "telegram": command, "message": "apply failed"}
+        created = (result.get("result") or {}).get("created") or []
+        campaign = next((c for c in created if c.get("level") == "campaign"), {})
+        name = html.escape(str(campaign.get("name", "campaign")))
+        _send(
+            command,
+            f"✅ Created in Meta as <b>PAUSED</b>: {name} (id {campaign.get('id')}).\n"
+            "Review in Ads Manager — nothing spends until you enable delivery.",
+            parse_mode="HTML",
+        )
+        _edit_stage(callback, "done", approval_id)
+        return {"ok": True, "telegram": command, "applied": True}
+
+    if action == "cancel" and approval_id:
+        _edit_stage(callback, "approved", approval_id)
+        _send(command, "Cancelled — still approved. Tap 🧪 Dry run again when ready.")
+        return {"ok": True, "telegram": command, "cancelled": True}
 
     if action == "reject" and approval_id:
         try:
