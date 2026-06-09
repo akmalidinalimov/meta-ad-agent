@@ -370,7 +370,13 @@ def _send_creative_media(command: dict[str, Any], adset_id: str) -> dict[str, An
         if video_id:
             src = _video_source_sync(str(video_id))
             video_url = src.get("source")
-            watch = src.get("permalink_url") or f"https://www.facebook.com/watch/?v={video_id}"
+            # Meta often returns a RELATIVE permalink (e.g. "/reel/123/"); Telegram URL
+            # buttons require an absolute http(s) URL or the whole send is rejected (400).
+            watch = str(src.get("permalink_url") or "").strip()
+            if watch.startswith("/"):
+                watch = "https://www.facebook.com" + watch
+            if not watch.startswith("http"):
+                watch = f"https://www.facebook.com/watch/?v={video_id}"
             if video_url and chat_id:
                 resp = telegram_outbound.send_video(chat_id, video_url, caption=caption, parse_mode="HTML")
                 delivered = bool(resp.get("ok"))

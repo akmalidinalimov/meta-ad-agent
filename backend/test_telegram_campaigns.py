@@ -249,7 +249,8 @@ def test_show_creatives_here_falls_back_to_photo_when_no_video_source(monkeypatc
     photos: list = []
     monkeypatch.setattr(telegram_outbound, "send_video", lambda *a, **k: {"ok": False})
     monkeypatch.setattr(telegram_outbound, "send_photo", lambda chat_id, photo, **k: photos.append((photo, k)) or {"ok": True})
-    monkeypatch.setattr(telegram_router, "_video_source_sync", lambda vid: {})  # no playable source
+    # Meta returns a RELATIVE permalink; the Watch button URL must be absolutized.
+    monkeypatch.setattr(telegram_router, "_video_source_sync", lambda vid: {"permalink_url": "/reel/840/"})
     client = TestClient(app)
     resp = client.post(
         "/api/telegram/command",
@@ -259,8 +260,10 @@ def test_show_creatives_here_falls_back_to_photo_when_no_video_source(monkeypatc
     # Thumbnail photo sent with a Watch-video button as fallback.
     assert photos and photos[0][0] == "https://example.com/thumb.jpg"
     markup = photos[0][1].get("reply_markup") or {}
-    labels = [b["text"] for row in markup.get("inline_keyboard", []) for b in row]
-    assert any("Watch video" in label for label in labels)
+    buttons = [b for row in markup.get("inline_keyboard", []) for b in row]
+    assert any("Watch video" in b["text"] for b in buttons)
+    assert all(b["url"].startswith("https://") for b in buttons)  # absolute URL required
+    assert any(b["url"] == "https://www.facebook.com/reel/840/" for b in buttons)
 
 
 def test_snapshot_source_annotates_as_of_last_sync(monkeypatch):
