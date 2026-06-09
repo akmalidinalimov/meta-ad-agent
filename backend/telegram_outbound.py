@@ -14,6 +14,8 @@ load_dotenv()
 
 
 def build_approval_notification(approval: dict[str, Any]) -> dict[str, Any]:
+    if approval.get("actionType") == "manage_campaigns":
+        return _build_manage_notification(approval)
     campaign = approval.get("after", {}).get("campaign", {})
     adsets = approval.get("after", {}).get("adsets", [])
     total_budget = sum(float(adset.get("daily_budget") or 0) / 100 for adset in adsets)
@@ -39,6 +41,39 @@ def build_approval_notification(approval: dict[str, Any]) -> dict[str, Any]:
                 ],
                 [
                     {"text": "Needs changes", "callback_data": f"changes:{approval.get('id')}"},
+                    {"text": "Open dashboard", "callback_data": f"view:{approval.get('id')}"},
+                ],
+            ]
+        },
+    }
+
+
+def _build_manage_notification(approval: dict[str, Any]) -> dict[str, Any]:
+    after = approval.get("after", {}) or {}
+    status_value = str(after.get("status") or "PAUSED")
+    campaigns = after.get("campaigns") or []
+    verb = "Archive" if status_value == "ARCHIVED" else "Pause"
+    names = [str(c.get("name") or c.get("id") or "campaign") for c in campaigns[:5]]
+    lines = [
+        f"🗂 Approve: {verb} {len(campaigns)} campaign(s)",
+        f"Status target: {status_value} / guardrail: {approval.get('guardrailResult')}",
+        f"Risk: {approval.get('risk')}",
+        "",
+        *[f"• {name}" for name in names],
+    ]
+    if len(campaigns) > len(names):
+        lines.append(f"… +{len(campaigns) - len(names)} more")
+    lines.append("")
+    lines.append("Approve to apply, or reply 'approve'. Nothing changes until you confirm.")
+    return {
+        "text": "\n".join(lines),
+        "reply_markup": {
+            "inline_keyboard": [
+                [
+                    {"text": "Approve", "callback_data": f"approve:{approval.get('id')}"},
+                    {"text": "Reject", "callback_data": f"reject:{approval.get('id')}"},
+                ],
+                [
                     {"text": "Open dashboard", "callback_data": f"view:{approval.get('id')}"},
                 ],
             ]

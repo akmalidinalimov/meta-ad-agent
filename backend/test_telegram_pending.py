@@ -120,3 +120,36 @@ def test_bad_index_is_guarded(monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["ok"] is False
     assert any("no longer available" in text for text, _ in edits)
+
+
+def test_manage_approve_button_applies_immediately(monkeypatch):
+    sent, _ = _open_bot(monkeypatch)
+    manage = {
+        "id": "manage_tg",
+        "status": "needs_review",
+        "actionType": "manage_campaigns",
+        "risk": "medium",
+        "after": {"status": "ARCHIVED", "campaigns": [{"id": "cmp_a", "name": "Old A", "effective_status": "PAUSED"}]},
+    }
+    monkeypatch.setattr(telegram_router, "list_approval_requests", lambda: [manage])
+
+    approved = []
+    import backend.approval_store as approval_store
+
+    monkeypatch.setattr(approval_store, "approve_request", lambda approval_id, **k: approved.append(approval_id) or manage)
+    monkeypatch.setattr(
+        telegram_router,
+        "apply_live_sync",
+        lambda approval_id: {"ok": True, "result": {"ok": True, "status": "ARCHIVED", "changed": [{"id": "cmp_a"}]}},
+    )
+    monkeypatch.setattr(telegram_outbound, "edit_message_reply_markup", lambda *a, **k: {"ok": True})
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"message": {"chat": {"id": 1001}, "message_id": 9}, "from": {"username": "a"}, "data": "approve:manage_tg"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["managed"] is True
+    assert approved == ["manage_tg"]
+    assert any("Archived 1 campaign" in text for text, _ in sent)

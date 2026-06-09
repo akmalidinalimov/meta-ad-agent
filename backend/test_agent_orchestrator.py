@@ -444,3 +444,79 @@ def test_agent_handoffs_are_structured_for_meta_ai_advisor():
     }
     assert response["quality"]["status"] == "usable"
     assert response["quality"]["score"] >= 95
+
+
+def _manage_campaigns():
+    return [
+        {"id": "cmp_idle", "name": "Idle Test - DRAFT", "effective_status": "PAUSED", "start_time": "2026-01-01T00:00:00+0000"},
+        {"id": "cmp_active", "name": "Running Promo", "effective_status": "ACTIVE", "start_time": "2026-01-01T00:00:00+0000"},
+    ]
+
+
+def test_orchestrate_pause_idle_you_created_returns_manage_approval(monkeypatch):
+    monkeypatch.setattr(agent_orchestrator, "_meta_account_and_pixel", lambda: ("act_999", None))
+    import backend.campaign_manage as campaign_manage
+
+    monkeypatch.setattr(campaign_manage, "agent_created_index", lambda: ({"cmp_idle"}, {}))
+
+    response = orchestrate_agent_chat(
+        "pause the idle campaigns you created",
+        knowledge=None,
+        playbooks=[],
+        campaigns=_manage_campaigns(),
+    )
+
+    assert response is not None
+    assert response["managePrepared"] is True
+    approval = response["generatedApprovalRequest"]
+    assert approval["actionType"] == "manage_campaigns"
+    assert approval["after"]["status"] == "PAUSED"
+    ids = {c["id"] for c in approval["after"]["campaigns"]}
+    assert ids == {"cmp_idle"}  # active campaign excluded by safety rule
+    assert "approve" in response["answer"].lower()
+
+
+def test_orchestrate_delete_over_a_week_returns_archive_approval(monkeypatch):
+    monkeypatch.setattr(agent_orchestrator, "_meta_account_and_pixel", lambda: ("act_999", None))
+    import backend.campaign_manage as campaign_manage
+
+    monkeypatch.setattr(campaign_manage, "agent_created_index", lambda: (set(), {}))
+
+    campaigns = [
+        {"id": "cmp_old", "name": "Old One", "effective_status": "PAUSED", "start_time": "2020-01-01T00:00:00+0000"},
+    ]
+    response = orchestrate_agent_chat(
+        "delete campaigns created over a week ago",
+        knowledge=None,
+        playbooks=[],
+        campaigns=campaigns,
+    )
+
+    assert response is not None
+    assert response["managePrepared"] is True
+    approval = response["generatedApprovalRequest"]
+    assert approval["actionType"] == "manage_campaigns"
+    assert approval["after"]["status"] == "ARCHIVED"
+    assert {c["id"] for c in approval["after"]["campaigns"]} == {"cmp_old"}
+
+
+def test_orchestrate_manage_no_match_returns_helpful_answer_no_approval(monkeypatch):
+    monkeypatch.setattr(agent_orchestrator, "_meta_account_and_pixel", lambda: ("act_999", None))
+    import backend.campaign_manage as campaign_manage
+
+    monkeypatch.setattr(campaign_manage, "agent_created_index", lambda: (set(), {}))
+
+    # Only an ACTIVE campaign exists; "idle you created" matches nothing -> helpful answer.
+    campaigns = [{"id": "cmp_active", "name": "Running", "effective_status": "ACTIVE"}]
+    response = orchestrate_agent_chat(
+        "pause the idle campaigns you created",
+        knowledge=None,
+        playbooks=[],
+        campaigns=campaigns,
+    )
+
+    assert response is not None
+    assert response.get("generatedApprovalRequest") is None
+    assert not response.get("managePrepared")
+    # NOT the old "Task captured" template; a helpful set-suggesting answer.
+    assert "couldn't find campaigns matching" in response["answer"].lower()

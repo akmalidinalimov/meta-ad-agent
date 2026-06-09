@@ -38,6 +38,7 @@ from ..meta_execution import (
     assert_executable,
     build_campaign_creation_approval,
     execute_campaign_creation_approval,
+    execute_manage_campaigns_approval,
     execute_meta_action_approval,
     payload_for_meta_action,
 )
@@ -137,6 +138,8 @@ async def execute_approval_request(approval_id: str, request: ApprovalExecutionR
                 create_ad_set=lambda payload: meta_create_ad_set(config, payload),
                 create_ad=lambda payload: meta_create_ad(config, payload),
             )
+        elif approval.get("actionType") == "manage_campaigns":
+            result = await execute_manage_campaigns_request(approval, request, config)
         else:
             result = await execute_meta_action_approval_request(approval, request, config)
     except MetaApiError as error:
@@ -206,6 +209,38 @@ async def execute_meta_action_approval_request(
         return {"ok": False, "dryRun": False, "error": block}
 
     return await execute_meta_action_approval(approval, writer=build_meta_action_writer(config))
+
+
+async def execute_manage_campaigns_request(
+    approval: dict[str, Any],
+    request: ApprovalExecutionRequest,
+    config: Any,
+) -> dict[str, Any]:
+    """Bulk pause/archive dispatch for a ``manage_campaigns`` approval.
+
+    Dry run reports what WOULD change without calling Meta. Live writes go through the
+    same gate (status + guardrail + confirm-live + env flag) as every other write path.
+    """
+    if approval.get("status") not in {"approved", "dry_run_completed"}:
+        return {"ok": False, "error": "Specific approval is required before execution."}
+    if approval.get("guardrailResult") == "fail":
+        return {"ok": False, "error": "Guardrail failed; execution is blocked."}
+
+    after = approval.get("after") or {}
+    if request.dryRun:
+        return {
+            "ok": True,
+            "dryRun": True,
+            "wouldChange": after.get("campaigns") or [],
+            "status": after.get("status"),
+            "note": "Dry run only. No request was sent to Meta.",
+        }
+
+    block = assert_executable(approval, confirm_live=request.confirmLive, live_writes_enabled=live_writes_enabled())
+    if block:
+        return {"ok": False, "dryRun": False, "error": block}
+
+    return await execute_manage_campaigns_approval(approval, writer=build_meta_action_writer(config))
 
 
 def build_meta_action_writer(config: Any) -> Any:

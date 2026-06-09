@@ -617,3 +617,85 @@ def test_agent_chat_pending_refinement_updates_same_approval(monkeypatch):
     assert captured["budget"] == 150.0
     assert updated["approval_id"] == "autonomous_x"
     assert set_calls and set_calls[0][1]["approvalId"] == "autonomous_x"
+
+
+def test_agent_chat_manage_lists_then_type_approve_executes(monkeypatch):
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *a, **k: None)
+    monkeypatch.setattr(agents_module, "load_knowledge_base", lambda: {"analysis": {"summary": {}}})
+
+    live = LiveAccount(
+        campaigns=[
+            {"id": "cmp_idle", "name": "Idle Test - DRAFT", "effective_status": "PAUSED"},
+            {"id": "cmp_active", "name": "Running", "effective_status": "ACTIVE"},
+        ],
+        adsets=[],
+        ads=[],
+        source="live",
+        fetched_at="now",
+    )
+
+    async def fake_live_account(**kwargs):
+        return live
+
+    monkeypatch.setattr(agents_module, "get_live_account", fake_live_account)
+
+    # In-memory pending store shared by the patched get/set/clear.
+    store = {}
+    monkeypatch.setattr(agents_module, "get_pending", lambda op_key: store.get(op_key))
+    monkeypatch.setattr(agents_module, "set_pending", lambda op_key, pointer: store.__setitem__(op_key, pointer))
+    monkeypatch.setattr(agents_module, "clear_pending", lambda op_key: store.pop(op_key, None))
+
+    saved_manage = {
+        "id": "manage_x",
+        "actionType": "manage_campaigns",
+        "status": "needs_review",
+        "guardrailResult": "pass",
+        "after": {"status": "ARCHIVED", "campaigns": [{"id": "cmp_idle", "name": "Idle Test - DRAFT", "effective_status": "PAUSED"}]},
+        "createdAt": "now",
+        "filterLabels": ["created by the agent"],
+    }
+
+    def fake_orchestrate(question, **kwargs):
+        return {
+            "activeAgent": "execution",
+            "routeReason": "manage",
+            "answer": "🗂 <b>Archive 1 campaign</b>\n• Idle Test - DRAFT — PAUSED\nReply approve to proceed.",
+            "sources": ["campaign_manage"],
+            "suggestedQuestions": [],
+            "agentHandoffs": [],
+            "managePrepared": True,
+            "generatedApprovalRequest": saved_manage,
+        }
+
+    monkeypatch.setattr(agents_module, "orchestrate_agent_chat", fake_orchestrate)
+
+    approve_calls = []
+    monkeypatch.setattr(
+        agents_module.approval_store, "approve_request", lambda approval_id, **k: approve_calls.append(approval_id)
+    )
+    monkeypatch.setattr(
+        agents_module,
+        "apply_live_sync",
+        lambda approval_id: {"ok": True, "result": {"ok": True, "changed": [{"id": "cmp_idle", "status": "ARCHIVED"}], "errors": []}},
+    )
+
+    client = TestClient(app)
+
+    # Turn 1: the manage instruction lists campaigns + records a pending pointer.
+    list_response = client.post(
+        "/api/agent/chat",
+        json={"message": "archive the idle test campaigns you created"},
+    )
+    assert list_response.status_code == 200
+    assert "Archive 1 campaign" in list_response.json()["answer"]
+    assert store["web:default"]["approvalId"] == "manage_x"
+    assert store["web:default"]["kind"] == "manage"
+    assert store["web:default"]["action"] == "archive"
+
+    # Turn 2: typing "approve" executes the archive and clears the pending pointer.
+    approve_response = client.post("/api/agent/chat", json={"message": "approve"})
+    assert approve_response.status_code == 200
+    answer = approve_response.json()["answer"]
+    assert "Archived 1 campaign" in answer
+    assert approve_calls == ["manage_x"]
+    assert "web:default" not in store

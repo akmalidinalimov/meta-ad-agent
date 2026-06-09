@@ -23,7 +23,7 @@ from ..campaign_specific_analysis import (
     campaign_roster_answer,
     campaign_specific_answer,
 )
-from ..execution_service import auto_execute_paused
+from ..execution_service import apply_live_sync, auto_execute_paused
 from ..meta_live import get_live_account
 from ..pending_context_store import (
     clear_pending,
@@ -211,6 +211,9 @@ _ACTION_WORDS = (
     "generate a", "rename", "pause", "resume", "turn off", "turn on", "increase", "decrease",
     "raise the", "lower the", "duplicate", "set budget", "change the budget", "prepare a",
     "prepare the", "scale up", "scale the",
+    # Bulk-manage verbs so "delete/archive/clean up the old campaigns" reaches the orchestrator.
+    "delete", "remove", "archive", "clean up", "clear out", "get rid", "stop", "disable",
+    "deactivate",
 )
 # The orchestrator legitimately *describes* these agents/workflows for questions about
 # the agent system itself; only those keep using it for non-action questions.
@@ -268,6 +271,112 @@ def _append_autonomous_execution(answer: str, created: list[dict[str, Any]], acc
     if link:
         lines.append(f"Review in Ads Manager: {link}")
     return "\n".join(lines)
+
+
+_AFFIRMATIONS = (
+    "approve",
+    "approved",
+    "yes",
+    "go ahead",
+    "do it",
+    "confirm",
+    "confirmed",
+    "proceed",
+    "ok do it",
+    "okay do it",
+    "yes do it",
+)
+_NEGATIONS = (
+    "reject",
+    "rejected",
+    "cancel",
+    "no",
+    "stop",
+    "don't",
+    "dont",
+    "do not",
+    "nevermind",
+    "never mind",
+)
+
+
+def _is_affirmation(text: str) -> bool:
+    return text.strip().lower().rstrip("!.") in _AFFIRMATIONS
+
+
+def _is_negation(text: str) -> bool:
+    t = text.strip().lower().rstrip("!.")
+    return t in _NEGATIONS
+
+
+def resolve_pending_manage(op_key: str, message: str) -> dict[str, Any] | None:
+    """Handle a typed approve/reject for an operator's pending bulk-manage approval.
+
+    Shared by the web chat and the Telegram conversational path so "type approve" behaves
+    identically on both surfaces. Returns a dict {answer, sources, suggestedQuestions}
+    when it handled the message, or None when there's no pending manage / the message is
+    neither an affirmation nor a negation (so normal routing continues).
+    """
+    pending = get_pending(op_key)
+    if not pending or pending.get("kind") != "manage" or not pending.get("approvalId"):
+        return None
+
+    approval_id = pending["approvalId"]
+    action = pending.get("action") or "manage"
+    verb_past = "Archived" if action == "archive" else "Paused"
+
+    if _is_affirmation(message):
+        try:
+            approval_store.approve_request(approval_id, approved_by="chat")
+            result = apply_live_sync(approval_id)
+        except Exception as error:  # noqa: BLE001 - surface as a message, not a 500
+            clear_pending(op_key)
+            return {
+                "answer": f"I couldn't apply that: {error}",
+                "sources": ["campaign_manage"],
+                "suggestedQuestions": ["Try again.", "Show me the campaigns you created."],
+            }
+        clear_pending(op_key)
+        if not result.get("ok"):
+            return {
+                "answer": (
+                    f"I approved it but the Meta write was blocked: "
+                    f"{result.get('error') or 'unknown error'}."
+                ),
+                "sources": ["campaign_manage"],
+                "suggestedQuestions": ["Check live-write configuration.", "Try again."],
+            }
+        changed = (result.get("result") or {}).get("changed") or []
+        errors = (result.get("result") or {}).get("errors") or []
+        answer = f"✅ {verb_past} {len(changed)} campaign(s)."
+        if errors:
+            answer += f" {len(errors)} could not be updated."
+        return {
+            "answer": answer,
+            "sources": ["campaign_manage", "meta_execution"],
+            "suggestedQuestions": [
+                "Show me the active campaigns.",
+                "What should we scale next?",
+                "Archive more old campaigns.",
+            ],
+        }
+
+    if _is_negation(message):
+        try:
+            approval_store.reject_request(approval_id, rejected_by="chat", reason="Rejected from chat.")
+        except Exception:  # noqa: BLE001 - rejection is best-effort
+            pass
+        clear_pending(op_key)
+        return {
+            "answer": "Cancelled. Nothing was changed.",
+            "sources": ["campaign_manage"],
+            "suggestedQuestions": [
+                "Pause the idle campaigns you created.",
+                "Show me the campaigns you created.",
+            ],
+        }
+
+    return None
 
 
 def _ad_account_id() -> str | None:
@@ -391,12 +500,24 @@ async def agent_chat(request: ChatRequest, *, operator_key_override: str | None 
     # one from the web session id (or the shared web:default fallback).
     op_key = operator_key_override or operator_key(session_id=request.sessionId)
 
+    # Type-approve: if the operator has a pending bulk-manage approval and types
+    # "approve"/"reject" (or an affirmation/negation), resolve it here — execute the
+    # archive/pause now (or cancel) — before any routing. Shared with Telegram.
+    manage_decision = resolve_pending_manage(op_key, question)
+    if manage_decision is not None:
+        return specialist_chat_response(
+            question,
+            answer=manage_decision["answer"],
+            sources=manage_decision["sources"],
+            suggestedQuestions=manage_decision["suggestedQuestions"],
+        )
+
     # Pending refinement: if the operator has an in-flight autonomous draft AND this
     # message carries a recognizable refinement signal (budget/location/etc.), rebuild
     # the SAME approval in place instead of routing as a fresh question. Keeps the
     # operator iterating on one draft instead of starting over.
     pending = get_pending(op_key)
-    if pending and pending.get("approvalId"):
+    if pending and pending.get("approvalId") and pending.get("kind") != "manage":
         overrides = merge_refinement(pending, question, knowledge)
         if overrides:
             refined = _refine_pending_campaign(op_key, pending, overrides, knowledge)
@@ -408,7 +529,13 @@ async def agent_chat(request: ChatRequest, *, operator_key_override: str | None 
     # fallback, or orchestrator advice. Falls back to the snapshot when Meta is down.
     acct = await get_live_account(knowledge=knowledge)
     roster_sources = ["meta_live"] if acct.is_live else ["storage/meta_knowledge_base.json"]
-    if knowledge or acct.campaigns:
+    # A bulk-manage instruction ("archive my campaigns") must take ACTION, not be answered
+    # as a roster listing — so skip the roster/config short-circuits when manage intent is
+    # detected and let the orchestrator prepare the approval.
+    from ..campaign_manage import detect_manage_intent
+
+    wants_manage = detect_manage_intent(question) is not None
+    if not wants_manage and (knowledge or acct.campaigns):
         roster = campaign_roster_answer(question, knowledge, campaigns=acct.campaigns, source=acct.source)
         if roster:
             return specialist_chat_response(
@@ -427,7 +554,7 @@ async def agent_chat(request: ChatRequest, *, operator_key_override: str | None 
     # Meta data — routed EARLY, before the performance ranking path, so a config question
     # never falls through to the performance specialist. Returns None for non-config or
     # unresolved campaigns, so the performance path still wins.
-    if knowledge or acct.campaigns:
+    if not wants_manage and (knowledge or acct.campaigns):
         config_answer = campaign_configuration_answer(
             question,
             knowledge,
@@ -496,8 +623,29 @@ async def agent_chat(request: ChatRequest, *, operator_key_override: str | None 
             extra={"proactiveInsights": insights},
         )
 
-    orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks()) if _should_run_orchestrator(lower, routed) else None
+    orchestrated = (
+        orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks(), campaigns=acct.campaigns)
+        if _should_run_orchestrator(lower, routed)
+        else None
+    )
     if orchestrated:
+        # Bulk-manage packet: record a pending pointer so "approve"/"reject" in the next
+        # turn resolves THIS approval by id (type-approve, handled above on the next turn).
+        if orchestrated.get("managePrepared"):
+            manage_approval = orchestrated.get("generatedApprovalRequest") or {}
+            if manage_approval.get("id"):
+                action = "archive" if (manage_approval.get("after") or {}).get("status") == "ARCHIVED" else "pause"
+                set_pending(
+                    op_key,
+                    {
+                        "approvalId": manage_approval["id"],
+                        "kind": "manage",
+                        "action": action,
+                        "createdAt": manage_approval.get("createdAt"),
+                    },
+                )
+            return ChatResponse(**orchestrated)
+
         generated_playbook = orchestrated.get("generatedPlaybook")
         if generated_playbook:
             saved_playbook = save_playbook(generated_playbook)

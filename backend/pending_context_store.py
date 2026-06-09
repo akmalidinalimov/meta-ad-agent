@@ -73,6 +73,12 @@ def set_pending(operator_key: str, pointer: dict[str, Any], *, storage_dir: Path
         "audiences": pointer.get("audiences") or [],
         "createdAt": pointer.get("createdAt") or datetime.now(timezone.utc).isoformat(),
     }
+    # Bulk-manage pointers carry a kind/action so a typed "approve" can resolve the right
+    # approval; only persisted when present so autonomous pointers stay unchanged.
+    if pointer.get("kind"):
+        saved["kind"] = pointer["kind"]
+    if pointer.get("action"):
+        saved["action"] = pointer["action"]
 
     def mutate(rows: dict[str, Any]) -> dict[str, Any]:
         rows[operator_key] = saved

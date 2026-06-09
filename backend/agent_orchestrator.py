@@ -326,8 +326,17 @@ def orchestrate_agent_chat(
     *,
     knowledge: dict[str, Any] | None,
     playbooks: list[dict[str, Any]],
+    campaigns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     lower = question.lower()
+
+    # Bulk manage of EXISTING campaigns (pause/archive a filtered set) takes priority over
+    # the create/meta-action branches: "delete all campaigns created past a week" is a
+    # cleanup, not a creation or a single-target tweak.
+    manage_result = _maybe_manage_campaigns(question, knowledge=knowledge, campaigns=campaigns)
+    if manage_result is not None:
+        return manage_result
+
     routed = route_question(question)
     meta_action_plan = plan_meta_action(question)
     if should_prepare_meta_action(question, routed, meta_action_plan):
@@ -551,6 +560,90 @@ def _autonomous_build_response(
     )
     result["generatedApprovalRequest"] = saved
     result["autonomous"] = True
+    return result
+
+
+def _maybe_manage_campaigns(
+    question: str,
+    *,
+    knowledge: dict[str, Any] | None,
+    campaigns: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Bulk pause/archive branch for EXISTING campaigns.
+
+    Returns an orchestrator response carrying a PRE-PERSISTED ``manage_campaigns``
+    approval (so "type approve" can resolve it by id on both surfaces) plus
+    ``managePrepared=True`` so task_service does NOT re-create it. Returns a helpful
+    no-approval answer when nothing matches, and None when the message isn't a manage
+    request at all (so the normal create/meta-action routing runs).
+    """
+    from .campaign_manage import (
+        agent_created_index,
+        build_manage_approval,
+        detect_manage_intent,
+        format_manage_answer,
+        resolve_target_campaigns,
+    )
+
+    intent = detect_manage_intent(question)
+    if not intent:
+        return None
+
+    routed = route("execution", "Bulk manage of existing campaigns requires approval before execution.")
+
+    camps = campaigns if campaigns is not None else (((knowledge or {}).get("raw", {}) or {}).get("campaigns", []) or [])
+    agent_ids, agent_at = agent_created_index()
+    selected, labels = resolve_target_campaigns(
+        question, camps, agent_ids=agent_ids, agent_created_at=agent_at
+    )
+
+    if not selected:
+        return response(
+            routed,
+            answer=(
+                "I couldn't find campaigns matching that. I can target these sets: "
+                "idle (not active) campaigns, campaigns created over a week ago, or the ones you "
+                "created (test/draft). Which set should I act on?"
+            ),
+            sources=["campaign_manage"],
+            suggested=[
+                "Pause the idle campaigns you created.",
+                "Archive campaigns created over a week ago.",
+                "Show me the campaigns you created.",
+            ],
+        )
+
+    account_id, _pixel = _meta_account_and_pixel()
+    approval = build_manage_approval(
+        intent["action"],
+        selected,
+        account_id=account_id or "",
+        filter_labels=labels,
+        reason="bulk manage from chat",
+    )
+    if approval is None:
+        return response(
+            routed,
+            answer="I matched campaigns but couldn't prepare the action. Try naming the set again.",
+            sources=["campaign_manage"],
+            suggested=["Pause the idle campaigns you created.", "Archive old test campaigns."],
+        )
+
+    saved = _persist_autonomous_approval(approval)
+
+    result = response(
+        routed,
+        answer=format_manage_answer(saved),
+        sources=["campaign_manage"],
+        suggested=[
+            "Approve to apply this.",
+            "Reject to cancel.",
+            "Only the idle ones, not the active ones.",
+        ],
+    )
+    result["activeAgent"] = "execution"
+    result["generatedApprovalRequest"] = saved
+    result["managePrepared"] = True
     return result
 
 

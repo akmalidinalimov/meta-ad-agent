@@ -620,6 +620,37 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     actor = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
 
     if action == "approve" and approval_id:
+        existing = next((a for a in list_approval_requests() if a.get("id") == approval_id), None)
+        # Bulk-manage approvals apply IMMEDIATELY on Approve (archive/pause is the whole
+        # action — no separate dry-run/apply-live ladder like campaign creation).
+        if existing and existing.get("actionType") == "manage_campaigns":
+            try:
+                approval_store.approve_request(approval_id, approved_by=actor)
+            except KeyError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            from ..pending_context_store import clear_pending as _clear, operator_key as _opkey
+
+            exec_result = apply_live_sync(approval_id)
+            _clear(_opkey(telegram_chat_id=command.get("chatId")))
+            telegram_outbound.edit_message_reply_markup(
+                (callback.get("message") or {}).get("chat", {}).get("id"),
+                (callback.get("message") or {}).get("message_id"),
+                {"inline_keyboard": []},
+            )
+            if not exec_result.get("ok"):
+                msg = f"❌ Could not apply: {exec_result.get('error') or 'unknown error'}"
+                _send(command, msg)
+                return {"ok": False, "telegram": command, "message": "manage apply failed"}
+            inner = exec_result.get("result") or {}
+            changed = inner.get("changed") or []
+            status_value = inner.get("status") or (existing.get("after") or {}).get("status") or "updated"
+            verb = "Archived" if status_value == "ARCHIVED" else "Paused"
+            msg = f"✅ {verb} {len(changed)} campaign(s)."
+            _send(command, msg)
+            return {"ok": True, "telegram": command, "managed": True, "changed": changed}
+
         try:
             approval = approval_store.approve_request(approval_id, approved_by=actor)
             sync_task_with_approval(approval_id, "approved", approval)
@@ -743,6 +774,21 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
 
     op_key = operator_key(telegram_chat_id=command.get("chatId"))
 
+    # Type-approve for a pending bulk-manage approval: "approve"/"reject" (or yes/no/cancel)
+    # is not question-shaped, so route it to the shared chat brain, which owns the
+    # type-approve logic (resolve_pending_manage). This makes typing "approve" in Telegram
+    # execute the archive/pause exactly like the web chat.
+    pending_manage = get_pending(op_key)
+    if (
+        pending_manage
+        and pending_manage.get("kind") == "manage"
+        and pending_manage.get("approvalId")
+    ):
+        from ..routers.agents import _is_affirmation, _is_negation
+
+        if _is_affirmation(text) or _is_negation(text):
+            return _reply_conversational(command, text)
+
     # Pending refinement on the action path too: a non-question follow-up ("$150/day in
     # Tashkent") refines the operator's in-flight autonomous draft instead of starting a
     # fresh task. Delegates to the shared chat brain (which owns the refinement logic).
@@ -760,6 +806,24 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     # decision — no separate approval tap), then confirm what was created. Record a pending
     # pointer first so a later answer can still refine the same draft.
     approval = plan.get("generatedApprovalRequest") if isinstance(plan, dict) else None
+
+    # Bulk-manage on Telegram: the approval is already persisted + the notification fired
+    # (task_service). Record a pending pointer (kind=manage) so a typed "approve" in the
+    # next turn resolves THIS approval, then send the operator-facing list with buttons.
+    if plan.get("managePrepared") and isinstance(approval, dict) and approval.get("id"):
+        action = "archive" if (approval.get("after") or {}).get("status") == "ARCHIVED" else "pause"
+        set_pending(
+            op_key,
+            {
+                "approvalId": approval["id"],
+                "kind": "manage",
+                "action": action,
+                "createdAt": approval.get("createdAt"),
+            },
+        )
+        _send(command, clamp_telegram_text(answer), parse_mode="HTML")
+        return {**result, "telegram": command, "managePrepared": True, "approvalId": approval["id"]}
+
     if plan.get("autonomous") and isinstance(approval, dict) and approval.get("id"):
         set_pending(
             op_key,

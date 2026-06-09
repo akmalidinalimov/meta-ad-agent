@@ -394,6 +394,50 @@ async def execute_meta_action_approval(approval: dict[str, Any], *, writer: Any)
     }
 
 
+async def execute_manage_campaigns_approval(approval: dict[str, Any], *, writer: Any) -> dict[str, Any]:
+    """Apply a bulk ``manage_campaigns`` approval: set each campaign's Meta status.
+
+    The caller (router) owns the dry-run short-circuit and the live-write gate
+    (assert_executable + live_writes_enabled); this performs the actual writes. Per-item
+    failures are tolerated — they're collected and the remaining campaigns still proceed,
+    so one stale id can't block the whole cleanup.
+    """
+    if not is_execution_approved_status(approval.get("status")):
+        return {"ok": False, "blockedReason": "Approval must be approved before execution."}
+
+    after = approval.get("after") or {}
+    status_value = after.get("status")
+    if status_value not in {"PAUSED", "ARCHIVED"}:
+        return {"ok": False, "blockedReason": f"Unsupported manage status: {status_value}"}
+
+    changed: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for campaign in after.get("campaigns", []) or []:
+        campaign_id = campaign.get("id")
+        if not campaign_id:
+            errors.append({"id": campaign_id, "name": campaign.get("name"), "error": "Missing campaign id."})
+            continue
+        try:
+            await writer.update_campaign(str(campaign_id), {"status": status_value})
+        except Exception as error:  # noqa: BLE001 - tolerate per-item failure, keep going
+            errors.append({"id": str(campaign_id), "name": campaign.get("name"), "error": str(error)})
+            continue
+        changed.append(
+            {
+                "level": "campaign",
+                "id": str(campaign_id),
+                "name": campaign.get("name"),
+                "status": status_value,
+            }
+        )
+
+    note = (
+        f"Set {len(changed)} campaign(s) to {status_value}."
+        + (f" {len(errors)} failed." if errors else "")
+    )
+    return {"ok": True, "changed": changed, "errors": errors, "note": note}
+
+
 def payload_for_meta_action(action_type: str | None, after: dict[str, Any]) -> dict[str, Any]:
     if action_type == "rename_meta_object" and after.get("name"):
         return {"name": after["name"]}
