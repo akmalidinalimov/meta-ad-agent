@@ -14,18 +14,20 @@ def build_campaign_creation_approval(
     knowledge: dict[str, Any] | None = None,
     pixel_id: str | None = None,
     template: dict[str, Any] | None = None,
+    creatives_limit: int = 3,
 ) -> dict[str, Any]:
     campaign = build_campaign_payload(playbook, template=template)
     # Reuse the account's best historical creatives (from synced knowledge) as paused
-    # ads, distributed one-per-ad-set — the same "apply the winners" move a media buyer
-    # makes by hand. Empty when no knowledge is synced, so the packet degrades to
-    # campaign + ad sets only (the prior behavior).
-    creatives_pool = extract_top_creatives(knowledge)
+    # ads — the same "apply the winners" move a media buyer makes by hand. Each ad set
+    # leads with up to `creatives_limit` proven creatives so the operator can test
+    # several winners per audience. Empty when no knowledge is synced, so the packet
+    # degrades to campaign + ad sets only (the prior behavior).
+    creatives_pool = extract_top_creatives(knowledge, limit=creatives_limit)
     segments = playbook.get("segments", [])
     adsets = []
     for index, segment in enumerate(segments):
         adset = build_adset_payload(segment, playbook, pixel_id=pixel_id, template=template)
-        adset["ads"] = build_ad_payloads(segment, creatives_pool, index)
+        adset["ads"] = build_ad_payloads(segment, creatives_pool, index, limit=creatives_limit)
         adsets.append(adset)
     checks = guardrail_checks(playbook, adsets)
     guardrail_result = rollup_guardrail(checks)
@@ -222,17 +224,33 @@ def extract_top_creatives(knowledge: dict[str, Any] | None, *, limit: int = 3) -
     return creatives
 
 
-def build_ad_payloads(segment: dict[str, Any], creatives_pool: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
-    """Attach one proven creative per ad set, cycling through the pool (mirrors a buyer
-    leading each audience with a known winner). Empty pool -> no ads (structure only)."""
+def build_ad_payloads(
+    segment: dict[str, Any],
+    creatives_pool: list[dict[str, Any]],
+    index: int,
+    *,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Attach the top proven creatives to an ad set as PAUSED ads (mirrors a buyer
+    leading each audience with several known winners). Each ad set gets up to `limit`
+    creatives — the same top-N pool for every audience so each fresh audience is tested
+    against the account's best assets. Empty pool -> no ads (structure only).
+
+    `index` is retained for call-site compatibility but no longer rotates the pool: a
+    cycling single creative gave each audience only one winner; leading every audience
+    with the same top-N lets the operator A/B the winners per audience.
+    """
     if not creatives_pool:
         return []
-    chosen = creatives_pool[index % len(creatives_pool)]
-    return [{
-        "name": f"{chosen['name']} - {segment.get('name', 'Segment')}",
-        "creativeId": chosen["creativeId"],
-        "status": "PAUSED",
-    }]
+    chosen = creatives_pool[: max(1, int(limit))]
+    return [
+        {
+            "name": f"{creative['name']} - {segment.get('name', 'Segment')}",
+            "creativeId": creative["creativeId"],
+            "status": "PAUSED",
+        }
+        for creative in chosen
+    ]
 
 
 async def execute_campaign_creation_approval(

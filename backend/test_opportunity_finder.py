@@ -16,6 +16,7 @@ import backend.opportunity_finder as opportunity_finder
 import backend.routers.opportunities as opportunities_module
 from backend.app import app
 from backend.opportunity_finder import (
+    build_autonomous_campaign,
     generate_opportunity_packets,
     list_opportunity_runs,
     run_scheduled_opportunities,
@@ -103,6 +104,54 @@ def test_generate_opportunity_packets_returns_empty_without_knowledge():
     assert generate_opportunity_packets({}, []) == []
     # Analysis present but no interests -> no audience to test -> empty.
     assert generate_opportunity_packets({"analysis": {"audience": {}}}, []) == []
+
+
+# --- build_autonomous_campaign ---------------------------------------------
+
+
+def test_build_autonomous_campaign_returns_one_needs_review_approval():
+    approval = build_autonomous_campaign(_knowledge(), [], today=date(2026, 6, 5))
+
+    assert approval is not None
+    assert approval["status"] == "needs_review"
+    assert approval["source"] == "chat_autonomous"
+    assert approval["id"].startswith("autonomous_campaign_20260605_")
+    assert approval["actionType"] == "create_paused_campaign_structure"
+    assert approval["after"]["campaign"]["status"] == "PAUSED"
+    assert approval["after"]["adsets"]
+    assert approval["opportunity"]["audiences"]
+
+
+def test_build_autonomous_campaign_returns_none_without_audiences():
+    assert build_autonomous_campaign(None, []) is None
+    assert build_autonomous_campaign({}, []) is None
+    assert build_autonomous_campaign({"analysis": {"audience": {}}}, []) is None
+
+
+def test_build_autonomous_campaign_attaches_up_to_five_creatives_per_adset():
+    knowledge = _knowledge()
+    knowledge["analysis"]["topAds"] = [
+        {"label": f"VID-{i}", "creative": {"id": f"creative_{i}"}} for i in range(6)
+    ]
+    approval = build_autonomous_campaign(
+        knowledge, [], n_creatives=5, today=date(2026, 6, 5)
+    )
+
+    adsets = approval["after"]["adsets"]
+    assert adsets
+    for adset in adsets:
+        assert len(adset["ads"]) == 5
+        assert [ad["creativeId"] for ad in adset["ads"]] == [f"creative_{i}" for i in range(5)]
+
+
+def test_daily_path_keeps_proactive_id_and_source():
+    packets = generate_opportunity_packets(_knowledge(), [], today=date(2026, 6, 5))
+    assert len(packets) == 1
+    assert packets[0]["id"] == "proactive_audience_test_20260605"
+    assert packets[0]["source"] == "proactive"
+    # The daily path keeps the original 3-creative limit.
+    adsets = packets[0]["after"]["adsets"]
+    assert all(len(adset["ads"]) <= 3 for adset in adsets)
 
 
 # --- run_scheduled_opportunities -------------------------------------------

@@ -67,25 +67,70 @@ def generate_opportunity_packets(
     packet ("new audience test"), but the list shape lets more kinds be added
     later without changing callers. Returns ``[]`` defensively when there is no
     knowledge base or no usable next audience to test.
+
+    This is the daily, schedule-driven path. It shares ONE body with the on-demand
+    chat path (``build_autonomous_campaign``) — the only differences are the
+    suggestion id scheme and the ``source`` label, both passed through here.
+    """
+    packet = build_autonomous_campaign(
+        knowledge,
+        playbooks,
+        account_id=account_id,
+        budget=per_segment_budget_usd,
+        n_audiences=3,
+        n_creatives=3,
+        today=today,
+        approval_id=opportunity_approval_id(today),
+        source="proactive",
+    )
+    return [packet] if packet else []
+
+
+def build_autonomous_campaign(
+    knowledge: dict[str, Any] | None,
+    playbooks: list[dict[str, Any]] | None,
+    *,
+    account_id: str | None = None,
+    budget: float | None = None,
+    n_audiences: int = 3,
+    n_creatives: int = 5,
+    pixel_id: str | None = None,
+    today: date | datetime | None = None,
+    approval_id: str | None = None,
+    source: str = "chat_autonomous",
+) -> dict[str, Any] | None:
+    """Build ONE best-guess PAUSED campaign autonomously, reusing the proactive chain.
+
+    The operator-driven, no-clarifying-loop counterpart to the daily proactive run:
+    rank the top untested audiences, mirror the account's winning template, attach the
+    top creatives per ad set, and run the same guardrails. Returns a single
+    approval-shaped dict (``status`` "needs_review", or "blocked" on a guardrail
+    hard-fail), or ``None`` when there is no knowledge base / no usable audience.
+
+    The ranking, playbook, template, approval, and creatives steps are IDENTICAL to
+    ``generate_opportunity_packets`` — both call this one body. Only ``approval_id``
+    and ``source`` differ between the daily and on-demand paths.
     """
     analysis = (knowledge or {}).get("analysis", {}) or {}
     if not analysis:
-        return []
+        return None
 
     account = account_id or DEFAULT_ACCOUNT_ID
-    budget = float(per_segment_budget_usd or DEFAULT_PER_SEGMENT_BUDGET_USD)
+    spend = float(budget or DEFAULT_PER_SEGMENT_BUDGET_USD)
     day = _as_date(today)
 
     # Exclude interests already used by recent playbooks so we keep suggesting NEW
     # audiences rather than re-proposing what was just tested.
     exclude_labels = _recent_labels(playbooks)
-    audiences = rank_audiences_for_next_campaign(analysis, exclude_labels=exclude_labels, n=3)
+    audiences = rank_audiences_for_next_campaign(
+        analysis, exclude_labels=exclude_labels, n=n_audiences
+    )
     if not audiences:
-        return []
+        return None
 
     # Build a playbook DIRECTLY from the ranked audiences (instead of from chat),
     # then run the same strategy + draft-proposal machinery the operator path uses.
-    playbook = _playbook_from_audiences(audiences, budget=budget, today=day)
+    playbook = _playbook_from_audiences(audiences, budget=spend, today=day)
     strategy = generate_launch_strategy(playbook, knowledge)
     source_template = select_source_template(analysis)
     template_config = source_template.get("config") if source_template else None
@@ -98,21 +143,27 @@ def generate_opportunity_packets(
             "Review only — do not publish or spend."
         ),
         knowledge=knowledge,
+        pixel_id=pixel_id,
         template=template_config,
+        creatives_limit=n_creatives,
     )
 
     segment_labels = [segment["name"] for segment in strategy.get("segments", [])]
     creatives = build_recommended_creatives(analysis, segment_labels)
 
-    packet = _attach_opportunity_contract(
+    # On-demand chat builds get a unique timestamped id so two requests the same day
+    # don't collide (the daily path passes its own deterministic per-day id instead).
+    resolved_id = approval_id or autonomous_approval_id(day)
+    return _attach_opportunity_contract(
         approval,
         day=day,
         audiences=audiences,
         creatives=creatives,
         source_template=source_template,
         excluded_labels=exclude_labels,
+        approval_id=resolved_id,
+        source=source,
     )
-    return [packet]
 
 
 def _attach_opportunity_contract(
@@ -123,6 +174,8 @@ def _attach_opportunity_contract(
     creatives: list[dict[str, Any]],
     source_template: dict[str, Any] | None,
     excluded_labels: list[str],
+    approval_id: str | None = None,
+    source: str = "proactive",
 ) -> dict[str, Any]:
     """Attach the shared WS-F contract to a campaign-creation approval.
 
@@ -130,8 +183,8 @@ def _attach_opportunity_contract(
     is forced to "needs_review" unless guardrails hard-failed (then it stays
     "blocked"), so a proactive packet is never accidentally execution-eligible.
     """
-    approval["id"] = opportunity_approval_id(day)
-    approval["source"] = "proactive"
+    approval["id"] = approval_id or opportunity_approval_id(day)
+    approval["source"] = source
     if approval.get("guardrailResult") != "fail":
         approval["status"] = "needs_review"
     approval["kind"] = "new_audience_test"
@@ -413,6 +466,17 @@ def opportunity_approval_id(day: date | datetime | None = None) -> str:
     """Deterministic per-day approval id: running twice the same day REPLACES the
     suggestion (no duplicate); a new day yields a new one."""
     return f"proactive_audience_test_{_as_date(day).strftime('%Y%m%d')}"
+
+
+def autonomous_approval_id(day: date | datetime | None = None) -> str:
+    """Unique timestamped id for an on-demand autonomous chat build.
+
+    The date part is taken from ``day`` (injectable for tests) and the time part from
+    the wall clock, so each chat request gets its own id — two builds the same day are
+    both kept rather than one replacing the other (unlike the daily per-day id)."""
+    date_part = _as_date(day).strftime("%Y%m%d")
+    time_part = datetime.now(timezone.utc).strftime("%H%M%S")
+    return f"autonomous_campaign_{date_part}_{time_part}"
 
 
 # ---------------------------------------------------------------------------

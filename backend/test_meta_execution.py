@@ -1,10 +1,12 @@
 import asyncio
 
 from backend.meta_execution import (
+    build_ad_payloads,
     build_adset_payload,
     build_campaign_creation_approval,
     build_campaign_payload,
     execute_campaign_creation_approval,
+    extract_top_creatives,
 )
 from backend.test_strategy_generator import sample_playbook
 
@@ -272,11 +274,56 @@ def test_approval_attaches_winning_creatives_as_paused_ads_from_knowledge():
         knowledge=_knowledge_with_creatives(),
     )
     adsets = request["after"]["adsets"]
-    # One winning creative attached per ad set, cycling the pool.
-    assert adsets[0]["ads"][0]["creativeId"] == "26274347335541753"
-    assert adsets[1]["ads"][0]["creativeId"] == "953285077179242"
+    # Each ad set leads with the top creatives (default limit 3; pool here has 2), so
+    # every audience is tested against the account's best assets.
+    assert [ad["creativeId"] for ad in adsets[0]["ads"]] == ["26274347335541753", "953285077179242"]
+    assert [ad["creativeId"] for ad in adsets[1]["ads"]] == ["26274347335541753", "953285077179242"]
     assert all(ad["status"] == "PAUSED" for adset in adsets for ad in adset["ads"])
     assert any("Create PAUSED ad" in step for step in request["operationPreview"]["steps"])
+
+
+def test_extract_top_creatives_respects_limit():
+    knowledge = {
+        "analysis": {
+            "topAds": [
+                {"label": f"VID-{i}", "creative": {"id": f"c{i}"}} for i in range(8)
+            ]
+        }
+    }
+    assert len(extract_top_creatives(knowledge)) == 3
+    five = extract_top_creatives(knowledge, limit=5)
+    assert [c["creativeId"] for c in five] == ["c0", "c1", "c2", "c3", "c4"]
+
+
+def test_build_ad_payloads_default_limit_is_byte_identical_for_single_pool():
+    # Live-valid lock: with the default limit and a single-creative pool, an ad set still
+    # produces exactly the one PAUSED ad it always did.
+    segment = {"name": "Income"}
+    pool = [{"creativeId": "c1", "name": "Winner"}]
+    assert build_ad_payloads(segment, pool, 0) == [
+        {"name": "Winner - Income", "creativeId": "c1", "status": "PAUSED"}
+    ]
+
+
+def test_build_campaign_creation_approval_attaches_five_creatives_per_adset():
+    knowledge = {
+        "analysis": {
+            "topAds": [
+                {"label": f"VID-{i}", "creative": {"id": f"c{i}"}} for i in range(6)
+            ]
+        }
+    }
+    request = build_campaign_creation_approval(
+        sample_playbook(),
+        account_id="act_123",
+        knowledge=knowledge,
+        creatives_limit=5,
+    )
+    adsets = request["after"]["adsets"]
+    for adset in adsets:
+        assert len(adset["ads"]) == 5
+        assert [ad["creativeId"] for ad in adset["ads"]] == ["c0", "c1", "c2", "c3", "c4"]
+        assert all(ad["status"] == "PAUSED" for ad in adset["ads"])
 
 
 def test_execute_creates_paused_ads_reusing_creative_ids():
@@ -316,5 +363,6 @@ def test_execute_creates_paused_ads_reusing_creative_ids():
 
     assert result["ok"] is True
     ad_results = [item for item in result["created"] if item["level"] == "ad"]
-    assert len(ad_results) == 2
+    # Two ad sets, each leading with the top creatives (pool of 2) -> 4 paused ads.
+    assert len(ad_results) == 4
     assert {ad["creative"]["creative_id"] for ad in created_ads} == {"26274347335541753", "953285077179242"}

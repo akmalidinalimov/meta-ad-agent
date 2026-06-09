@@ -4,7 +4,11 @@ import re
 from typing import Any
 
 from .agent_quality import evaluate_agent_response
-from .chat_campaign_planner import build_playbook_from_chat, can_build_playbook_from_chat
+from .chat_campaign_planner import (
+    build_playbook_from_chat,
+    can_build_playbook_from_chat,
+    extract_budget,
+)
 from .meta_action_planner import build_action_approval, plan_meta_action
 from .strategy_generator import generate_launch_strategy
 
@@ -176,6 +180,8 @@ def route_question(question: str) -> dict[str, Any]:
         return route("meta_ai_strategist", "Captured Meta AI evidence should be converted into Meta-side strategy.")
     if any(word in lower for word in ["meta ai", "ads manager ai", "analyze button", "opportunity score", "opportunity-score"]):
         return route("meta_ai_advisor", "Meta AI Analyze request should be captured read-only and validated against business data.")
+    if wants_autonomous_build(lower):
+        return route("orchestrator", "Operator delegated the decision; the orchestrator should autonomously build a best-guess PAUSED campaign.")
     if is_campaign_creation_request(lower):
         return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
     if has_execution_intent(lower):
@@ -216,6 +222,38 @@ def route_question(question: str) -> dict[str, Any]:
     if is_experiment_request(lower):
         return route("experiment", "Experiment question needs hypothesis, variable, metric, and guardrail design.")
     return route("audit", "Default to audit agent for historical performance and lessons.")
+
+
+# The explicit "build me a campaign" words that put the orchestrator into a campaign-
+# building turn. Broader creation-intent phrases (e.g. "campaign recommendation") stay on
+# the multi-specialist analysis path, so this list is deliberately narrow.
+CREATION_BUILD_WORDS = ("setup", "set up", "create campaign", "launch", "campaign plan", "vsl")
+
+
+AUTONOMOUS_BUILD_PHRASES = (
+    "do it yourself",
+    "on your own",
+    "you decide",
+    "you know better",
+    "i don't have answers",
+    "i dont have answers",
+    "pick the best",
+    "pick the top",
+    "just create it",
+    "just do it",
+    "create a test",
+    "optimize and run",
+    "you choose",
+    "your call",
+    "whatever you think",
+    "best guess",
+)
+
+
+def wants_autonomous_build(lower: str) -> bool:
+    """True when the operator is delegating the decision — build a best-guess PAUSED
+    campaign autonomously instead of looping on clarifying questions."""
+    return any(phrase in lower for phrase in AUTONOMOUS_BUILD_PHRASES)
 
 
 def is_campaign_creation_request(lower_question: str) -> bool:
@@ -375,7 +413,24 @@ def orchestrate_agent_chat(
             ],
         )
 
-    if routed["agentId"] == "orchestrator" and any(word in lower for word in ["setup", "set up", "create campaign", "launch", "campaign plan", "vsl"]):
+    # Autonomous build: when the operator delegates the decision, OR asks to create a
+    # campaign but hasn't given enough to build a full playbook (and there's no saved
+    # playbook to plan from), do NOT loop on clarifying questions — build a best-guess
+    # PAUSED campaign by reusing the proactive engine. This replaces the old clarifying
+    # fallback; the can_build-true and saved-playbook paths below are unchanged. If even
+    # the autonomous build can't find a usable audience, it asks ONCE (no infinite loop).
+    if routed["agentId"] == "orchestrator" and (
+        wants_autonomous_build(lower)
+        or (
+            any(word in lower for word in CREATION_BUILD_WORDS)
+            and is_campaign_creation_request(lower)
+            and not can_build_playbook_from_chat(question)
+            and not first_playbook_with_segments(playbooks or [])
+        )
+    ):
+        return _autonomous_build_response(routed, question, knowledge=knowledge, playbooks=playbooks)
+
+    if routed["agentId"] == "orchestrator" and any(word in lower for word in CREATION_BUILD_WORDS):
         if can_build_playbook_from_chat(question):
             playbook = build_playbook_from_chat(question, knowledge=knowledge)
             strategy = generate_launch_strategy(playbook, knowledge)
@@ -434,6 +489,131 @@ def orchestrate_agent_chat(
         )
 
     return None
+
+
+def _autonomous_build_response(
+    routed: dict[str, Any],
+    question: str,
+    *,
+    knowledge: dict[str, Any] | None,
+    playbooks: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Autonomously build a best-guess PAUSED campaign, or ask once if impossible.
+
+    Reuses the proactive engine's ``build_autonomous_campaign`` (imported lazily to avoid
+    an import cycle), persists the resulting approval, and returns the orchestrator
+    response carrying ``generatedApprovalRequest``, ``autonomous=True``, and a plain
+    summary. When no usable audience exists it returns the standard clarifying response
+    flagged ``needsClarification=True`` — this is the only question, never a loop.
+    """
+    from .opportunity_finder import build_autonomous_campaign
+
+    account_id, pixel_id = _meta_account_and_pixel()
+
+    approval = build_autonomous_campaign(
+        knowledge,
+        playbooks,
+        account_id=account_id,
+        budget=extract_budget(question),
+        n_audiences=3,
+        n_creatives=5,
+        pixel_id=pixel_id,
+    )
+
+    if approval is None:
+        result = response(
+            routed,
+            answer=(
+                "I tried to build a best-guess paused campaign on my own, but I don't yet have enough "
+                "synced Meta data to pick audiences. Sync the account (or tell me the segments, daily "
+                "budget, and primary success metric) and I'll draft the paused campaign for approval."
+            ),
+            sources=["agent_orchestrator", "opportunity_finder", "docs/AGENT_OPERATING_POLICY.md"],
+            suggested=[
+                "Sync the latest Meta data, then ask me to build it.",
+                "Create a plan for income, business, and creator VSLs at $100/segment.",
+                "Optimize for Telegram START and let me pick the audiences.",
+            ],
+        )
+        result["needsClarification"] = True
+        return result
+
+    saved = _persist_autonomous_approval(approval)
+    result = response(
+        routed,
+        answer=format_autonomous_answer(saved),
+        sources=["opportunity_finder", "meta_execution", "storage/meta_knowledge_base.json", "docs/AGENT_OPERATING_POLICY.md"],
+        suggested=[
+            "Approve this paused campaign.",
+            "Lower the daily budget before I draft it.",
+            "Swap one of the chosen audiences.",
+        ],
+    )
+    result["generatedApprovalRequest"] = saved
+    result["autonomous"] = True
+    return result
+
+
+def _meta_account_and_pixel() -> tuple[str | None, str | None]:
+    try:
+        from .meta_client import get_meta_config
+
+        config = get_meta_config()
+        return (config.ad_account_id or None), (config.pixel_id or None)
+    except Exception:  # noqa: BLE001 - config absent in tests/dev
+        return None, None
+
+
+def _persist_autonomous_approval(approval: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from .approval_store import create_approval_request
+
+        return create_approval_request(approval)
+    except Exception:  # noqa: BLE001 - persistence is best-effort; still return the packet
+        return approval
+
+
+def format_autonomous_answer(approval: dict[str, Any]) -> str:
+    """Plain-language summary of an autonomously built paused campaign packet."""
+    after = approval.get("after", {}) or {}
+    adsets = after.get("adsets", []) or []
+    opportunity = approval.get("opportunity", {}) or {}
+
+    audience_names = [adset.get("name", "Audience").replace(" - DRAFT", "") for adset in adsets]
+    if not audience_names:
+        audience_names = [
+            str(a.get("label")) for a in opportunity.get("audiences", []) if a.get("label")
+        ]
+
+    total_daily = sum(float(adset.get("daily_budget") or 0) / 100 for adset in adsets)
+    creatives_per_adset = max((len(adset.get("ads") or []) for adset in adsets), default=0)
+
+    template = opportunity.get("sourceTemplate") or {}
+    template_name = template.get("sourceCampaignName") or template.get("name")
+
+    guardrail = approval.get("guardrailResult", "unknown")
+    guard_counts: dict[str, int] = {}
+    for check in approval.get("guardrailChecks", []) or []:
+        guard_counts[check.get("result", "unknown")] = guard_counts.get(check.get("result", "unknown"), 0) + 1
+    guard_rollup = ", ".join(f"{count} {result}" for result, count in guard_counts.items()) or "no checks"
+
+    lines = [
+        "I built a best-guess paused campaign on my own, no further questions needed.",
+        "",
+        f"Audiences ({len(audience_names)}): {', '.join(audience_names) or 'none found'}.",
+    ]
+    if template_name:
+        lines.append(f"Mirrored the winning template: {template_name}.")
+    lines.extend(
+        [
+            f"Total daily budget: ${total_daily:,.2f}/day across {len(adsets)} ad set(s).",
+            f"Creatives per ad set: up to {creatives_per_adset}.",
+            f"Guardrails: {guardrail} ({guard_rollup}).",
+            "",
+            "Everything is PAUSED — no spend until you enable delivery.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def first_playbook_with_segments(playbooks: list[dict[str, Any]]) -> dict[str, Any] | None:

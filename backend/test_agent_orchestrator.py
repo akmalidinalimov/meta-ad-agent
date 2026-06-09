@@ -1,16 +1,30 @@
 import pytest
 
+import backend.agent_orchestrator as agent_orchestrator
 from backend.agent_orchestrator import (
     agent_registry,
     build_agent_decision,
+    format_autonomous_answer,
     is_campaign_creation_request,
     orchestrate_agent_chat,
     route_question,
+    wants_autonomous_build,
 )
 from backend.test_strategy_generator import sample_knowledge, sample_playbook
 
 
 CAMPAIGN_NAME = "DA - SHAHLOAI - VSL 2 - 26.04.2026 Y"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_autonomous_side_effects(monkeypatch):
+    """Keep the autonomous build path off real storage/config in every test.
+
+    Persistence echoes the packet back (no disk write) and Meta config resolves to no
+    account/pixel, so the no-pixel LINK_CLICKS path is exercised deterministically.
+    """
+    monkeypatch.setattr(agent_orchestrator, "_persist_autonomous_approval", lambda approval: approval)
+    monkeypatch.setattr(agent_orchestrator, "_meta_account_and_pixel", lambda: (None, None))
 
 
 def test_agent_registry_contains_required_specialists_with_safe_permissions():
@@ -94,17 +108,20 @@ def test_named_campaign_audience_question_does_not_generate_plan_or_execution():
     assert response is None
 
 
-def test_paused_campaign_plan_request_builds_plan_not_execution_action():
+def test_paused_campaign_plan_request_builds_autonomous_paused_campaign():
+    # Underspecified creation (budget but no segments) is no longer a clarifying loop:
+    # the orchestrator autonomously builds a best-guess PAUSED campaign instead.
     response = orchestrate_agent_chat(
         "Create a paused campaign plan with $100 per segment - DO NOT PUBLISH - DRAFT",
         knowledge=sample_knowledge(),
-        playbooks=[sample_playbook()],
+        playbooks=[],
     )
 
     assert response is not None
     assert response["activeAgent"] == "orchestrator"
-    assert "generatedApprovalRequest" not in response
-    assert "I will not execute" in response["answer"]
+    assert response["autonomous"] is True
+    assert response["generatedApprovalRequest"]["status"] == "needs_review"
+    assert "PAUSED" in response["answer"]
 
 def test_route_question_keeps_campaign_specific_analysis_with_specialist():
     assert (
@@ -205,7 +222,9 @@ def test_orchestrator_generates_campaign_plan_from_latest_playbook():
     }
 
 
-def test_orchestrator_asks_for_chat_variables_when_playbook_has_no_segments():
+def test_orchestrator_autonomously_builds_when_brief_is_thin():
+    # "Set up my next campaign" gives nothing to plan from, so the orchestrator builds a
+    # best-guess PAUSED campaign autonomously rather than asking for variables.
     response = orchestrate_agent_chat(
         "Set up my next campaign",
         knowledge=sample_knowledge(),
@@ -214,8 +233,23 @@ def test_orchestrator_asks_for_chat_variables_when_playbook_has_no_segments():
 
     assert response is not None
     assert response["activeAgent"] == "orchestrator"
-    assert "tell me the segments" in response["answer"].lower()
-    assert "budget" in response["answer"].lower()
+    assert response["autonomous"] is True
+    assert response["generatedApprovalRequest"]["status"] == "needs_review"
+
+
+def test_orchestrator_asks_once_when_no_knowledge_to_build_from():
+    # The ONLY clarifying ask: with no synced knowledge the autonomous build can't pick
+    # audiences, so it asks once (needsClarification) instead of looping.
+    response = orchestrate_agent_chat(
+        "Set up my next campaign",
+        knowledge=None,
+        playbooks=[],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    assert response["needsClarification"] is True
+    assert "generatedApprovalRequest" not in response
 
 
 def test_orchestrator_builds_campaign_plan_from_chat_brief_without_saved_playbook():
@@ -232,6 +266,82 @@ def test_orchestrator_builds_campaign_plan_from_chat_brief_without_saved_playboo
     assert "chat_campaign_planner" in response["sources"]
     assert "Earning Money" in response["answer"]
     assert "I will not execute" in response["answer"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "do it yourself",
+        "just create a test and optimize and run it",
+        "you decide, you know better",
+        "pick the top 3 audiences and top 5 creatives",
+        "i don't have answers, your call",
+        "whatever you think, best guess is fine",
+        "just do it",
+        "you choose the audiences",
+    ],
+)
+def test_wants_autonomous_build_true(message):
+    assert wants_autonomous_build(message.lower()) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "which audience is cheapest?",
+        "create a campaign with $100 per segment for income and business",
+        "rank the creatives by leads",
+        "pause ad set 123",
+    ],
+)
+def test_wants_autonomous_build_false(message):
+    assert wants_autonomous_build(message.lower()) is False
+
+
+def test_autonomous_request_builds_paused_campaign_without_clarifying_loop():
+    # No recent playbooks, so no audience interests are excluded and the build succeeds.
+    response = orchestrate_agent_chat(
+        "pick the top 3 audiences and top 5 creatives, do it yourself",
+        knowledge=sample_knowledge(),
+        playbooks=[],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    assert response["autonomous"] is True
+    assert "needsClarification" not in response
+    approval = response["generatedApprovalRequest"]
+    assert approval["status"] == "needs_review"
+    assert approval["source"] == "chat_autonomous"
+    assert approval["after"]["campaign"]["status"] == "PAUSED"
+    # Up to 5 creatives attached per ad set (knowledge here may carry fewer).
+    assert all(len(adset.get("ads", [])) <= 5 for adset in approval["after"]["adsets"])
+    assert "PAUSED" in response["answer"]
+
+
+def test_fully_specified_brief_still_uses_planner_path_not_autonomous():
+    response = orchestrate_agent_chat(
+        "Create a campaign with 3 VSLs: earning money, business automation, content creators. "
+        "Use $100 each and optimize for Telegram START.",
+        knowledge=sample_knowledge(),
+        playbooks=[{"id": "pb_empty", "name": "Empty", "segments": [], "rules": {}}],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    # Planner path: a generated playbook, NOT the autonomous approval path.
+    assert "autonomous" not in response
+    assert response["generatedPlaybook"]["id"].startswith("pb_chat_")
+
+
+def test_format_autonomous_answer_summarizes_paused_packet():
+    from backend.opportunity_finder import build_autonomous_campaign
+
+    approval = build_autonomous_campaign(sample_knowledge(), [], n_creatives=5)
+    text = format_autonomous_answer(approval)
+    assert "PAUSED" in text
+    assert "Total daily budget" in text
+    assert "Guardrails" in text
 
 
 def test_execution_agent_blocks_browser_fallback_until_specific_approval():
