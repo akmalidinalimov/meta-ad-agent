@@ -82,11 +82,13 @@ def _send_pending_suggestions(command: dict[str, Any]) -> str:
 
 
 def _edit(callback: dict[str, Any], text: str, reply_markup: dict[str, Any] | None = None) -> None:
-    """Rewrite the tapped message in place (drill-down navigation)."""
+    """Rewrite the tapped message in place (drill-down navigation). Clamp to stay
+    under Telegram's 4096-char limit, otherwise editMessageText is rejected and the
+    tap appears to do nothing."""
     message = callback.get("message") or {}
     chat_id = (message.get("chat") or {}).get("id")
     telegram_outbound.edit_message_text(
-        chat_id, message.get("message_id"), text, reply_markup=reply_markup, parse_mode="HTML"
+        chat_id, message.get("message_id"), clamp_telegram_text(text), reply_markup=reply_markup, parse_mode="HTML"
     )
 
 
@@ -162,9 +164,9 @@ def _campaigns_list_text(account: dict[str, Any]) -> str:
     if account.get("source") != "live":
         lines.append("<i>(as of last sync)</i>")
     if not campaigns:
-        lines.append("\nNo campaigns found.")
+        lines.append("\n— No campaigns found.")
     else:
-        lines.append("\nTap a campaign to see its ad sets.")
+        lines.append("\n👆 Tap a campaign to see its ad sets &amp; creatives.")
     return "\n".join(lines)
 
 
@@ -179,22 +181,23 @@ def _campaign_detail_text(
     name = html.escape(str(campaign.get("name") or campaign.get("id")))
     lines = [f"📁 <b>{name}</b>"]
     if source != "live":
-        lines.append("<i>(as of last sync)</i>")
-    lines.append(f"Status: {html.escape(_campaign_status_label(campaign))}")
+        lines.append("🕒 <i>(as of last sync)</i>")
+    lines.append(f"📌 Status: {html.escape(_campaign_status_label(campaign))}")
     if campaign.get("objective"):
-        lines.append(f"Objective: {html.escape(str(campaign.get('objective')))}")
+        lines.append(f"🎯 Objective: {html.escape(str(campaign.get('objective')))}")
     if campaign.get("buying_type"):
-        lines.append(f"Buying type: {html.escape(str(campaign.get('buying_type')))}")
+        lines.append(f"🛒 Buying type: {html.escape(str(campaign.get('buying_type')))}")
     budget = campaign.get("daily_budget") or campaign.get("lifetime_budget")
     if budget:
         try:
             label = "Daily budget" if campaign.get("daily_budget") else "Lifetime budget"
-            lines.append(f"{label}: ${float(budget) / 100:,.2f}")
+            lines.append(f"💵 {label}: ${float(budget) / 100:,.2f}")
         except (TypeError, ValueError):
             pass
     ab = ab_test_line(campaign, adsets, adstudies or [])
-    lines.append(f"A/B test: {html.escape(ab)}")
-    lines.append(f"\nAd sets ({len(adsets)}): tap one to see its ads.")
+    lines.append(f"🔬 A/B test: {html.escape(ab)}")
+    lines.append(f"\n👥 <b>Ad sets / audiences</b> ({len(adsets)})")
+    lines.append("👆 Tap one to see its creatives, ranked best-first.")
     return "\n".join(lines)
 
 
@@ -210,12 +213,15 @@ from ..adset_creatives import (  # noqa: E402
 def _perf_line(perf: dict[str, Any]) -> str | None:
     if not perf.get("has_data"):
         return None
-    bits = [f"{perf['impressions']:,} impr", f"CTR {perf['ctr']:.2f}%", f"${perf['spend']:,.2f} spend"]
-    if perf.get("clicks"):
-        bits.append(f"{int(perf['clicks']):,} clicks")
+    bits = [
+        f"💰 ${_to_float(perf.get('spend')):,.2f}",
+        f"👁 {int(_to_float(perf.get('impressions'))):,}",
+        f"🖱 {int(_to_float(perf.get('clicks'))):,}",
+        f"📈 {_to_float(perf.get('ctr')):.2f}%",
+    ]
     if perf.get("results") and perf.get("results_label"):
-        bits.append(f"{int(perf['results']):,} {perf['results_label']}")
-    return "📊 " + " · ".join(bits)
+        bits.append(f"🎯 {int(_to_float(perf.get('results'))):,} {perf['results_label']}")
+    return " · ".join(bits)
 
 
 def _adset_detail_text(
@@ -237,75 +243,75 @@ def _adset_detail_text(
     name = html.escape(str(adset.get("name") or adset.get("id")))
     lines = [f"📦 <b>{name}</b>"]
     if source != "live":
-        lines.append("<i>(as of last sync)</i>")
-    lines.append(f"Status: {html.escape(_campaign_status_label(adset))}")
+        lines.append("🕒 <i>(as of last sync)</i>")
+    lines.append(f"📌 Status: {html.escape(_campaign_status_label(adset))}")
     budget = adset.get("daily_budget")
     if budget:
         try:
-            lines.append(f"Daily budget: ${float(budget) / 100:,.2f}")
+            lines.append(f"💵 Daily budget: ${float(budget) / 100:,.2f}")
         except (TypeError, ValueError):
             pass
     if adset.get("optimization_goal"):
-        lines.append(f"Optimization: {html.escape(str(adset.get('optimization_goal')))}")
+        lines.append(f"🎯 Optimization: {html.escape(str(adset.get('optimization_goal')))}")
 
     targeting = adset.get("targeting") or {}
     age_min = targeting.get("age_min")
     age_max = targeting.get("age_max")
     if age_min is not None or age_max is not None:
-        lines.append(f"Age: {html.escape(f'{age_min or 18}-{age_max or 65}')}")
+        lines.append(f"👥 Age: {html.escape(f'{age_min or 18}-{age_max or 65}')}")
     geo = format_geo(targeting)
     if geo:
-        lines.append(f"Geo: {html.escape(geo)}")
+        lines.append(f"🌍 Geo: {html.escape(geo)}")
     interests = format_interests(targeting, 8)
     if interests:
-        lines.append(f"Interests: {html.escape(interests)}")
+        lines.append(f"🧩 Interests: {html.escape(interests)}")
     custom = format_custom_audiences(targeting, audience_names or {})
     if custom:
-        lines.append(f"Custom audiences: {html.escape(custom)}")
+        lines.append(f"👤 Custom audiences: {html.escape(custom)}")
     placements = format_placements(targeting)
     if placements:
-        lines.append(f"Placements: {html.escape(placements)}")
+        lines.append(f"📍 Placements: {html.escape(placements)}")
     billing = adset.get("billing_event")
     bid = adset.get("bid_strategy")
     if billing or bid:
         billing_bid = f"{billing or 'n/a'} / {bid or 'n/a'}"
-        lines.append(f"Billing/bid: {html.escape(billing_bid)}")
+        lines.append(f"🧾 Billing/bid: {html.escape(billing_bid)}")
     if adset.get("is_dynamic_creative"):
-        lines.append("Dynamic creative (DCO): on")
+        lines.append("♻️ Dynamic creative (DCO): on")
 
     any_data = any((ad.get("_perf") or {}).get("has_data") for ad in ads)
-    header = "🏆 <b>Creatives by performance" if any_data else "<b>Creatives"
-    lines.append(f"\n{header} ({len(ads)})</b>")
+    header = "🏆 <b>Creatives — best performing first</b>" if any_data else "🎨 <b>Creatives</b>"
+    lines.append(f"\n{header} ({len(ads)})")
     if not ads:
-        lines.append("No ads in this ad set yet.")
+        lines.append("— No ads in this ad set yet.")
     elif not any_data:
-        lines.append("<i>No delivery data in the last 30 days — shown unranked.</i>")
-    for index, ad in enumerate(ads[:10], start=1):
-        creative = ad.get("creative") or {}
+        lines.append("<i>No delivery data yet — shown unranked.</i>")
+    medals = ["🥇", "🥈", "🥉"]
+    for index, ad in enumerate(ads[:10]):
         perf = ad.get("_perf") or {}
+        creative = ad.get("creative") or {}
+        rank = medals[index] if index < 3 else f"{index + 1}."
         lines.append("")
         lines.append(
-            f"{index}. <b>{html.escape(str(ad.get('name') or 'Ad'))}</b>"
+            f"{rank} <b>{html.escape(str(ad.get('name') or 'Ad'))}</b>"
             f" — {html.escape(_campaign_status_label(ad))}"
         )
         perf_line = _perf_line(perf)
         if perf_line:
-            lines.append(f"  {perf_line}")
-        if creative.get("title"):
-            lines.append(f"  Title: {html.escape(str(creative.get('title')))}")
-        body = str(creative.get("body") or "").strip()
-        if body:
-            lines.append(f"  Body: {html.escape(body[:140])}{'…' if len(body) > 140 else ''}")
-        if creative.get("thumbnail_url"):
-            lines.append(f"  🖼 {html.escape(str(creative.get('thumbnail_url')))}")
-        if creative.get("video_id"):
-            lines.append(f"  ▶️ https://www.facebook.com/watch/?v={html.escape(str(creative.get('video_id')))}")
+            lines.append(f"   {perf_line}")
+        title = str(creative.get("title") or "").strip()
+        if title:
+            lines.append(f"   ✍️ {html.escape(title[:80])}{'…' if len(title) > 80 else ''}")
+    # Thumbnails + full creative detail live in the web app (kept out of the chat
+    # message so it stays well under Telegram's 4096-char limit).
+    lines.append("\n🖼 Tap <b>View creatives</b> below for thumbnails &amp; full details.")
     if account_id and campaign_id:
         acct = account_id[4:] if account_id.startswith("act_") else account_id
-        lines.append(
-            f"\n🔗 https://adsmanager.facebook.com/adsmanager/manage/ads"
-            f"?act={html.escape(acct)}&selected_campaign_ids={html.escape(str(campaign_id))}"
+        link = (
+            "https://adsmanager.facebook.com/adsmanager/manage/ads"
+            f"?act={html.escape(acct)}&amp;selected_campaign_ids={html.escape(str(campaign_id))}"
         )
+        lines.append(f'🔗 <a href="{link}">Open in Ads Manager</a>')
     return "\n".join(lines)
 
 

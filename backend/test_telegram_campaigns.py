@@ -147,7 +147,9 @@ def test_adset_callback_renders_creative_detail(monkeypatch):
     text = next(t for t, _ in edits)
     assert "Hero Video Ad" in text
     assert "Save 30% today" in text  # creative title
-    assert "vid123" in text  # video link
+    # Thumbnails/video now live in the web app (View creatives button); the chat
+    # message stays compact and points there.
+    assert "View creatives" in text
     assert "adsmanager.facebook.com" in text  # Ads Manager link
     assert "act=555" in text
     # New config fields: interests/placements/age/geo/custom-audience names/billing-bid/DCO.
@@ -215,9 +217,9 @@ def test_adset_leaf_shows_ranked_performance(monkeypatch):
     )
     assert resp.status_code == 200
     text = next(t for t, _ in edits)
-    assert "Creatives by performance" in text
+    assert "best performing first" in text
     assert "12 leads" in text
-    assert "CTR 2.10%" in text
+    assert "2.10%" in text
 
 
 def test_snapshot_source_annotates_as_of_last_sync(monkeypatch):
