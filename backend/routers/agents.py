@@ -18,7 +18,7 @@ from ..agent_orchestrator import (
 from ..agent_quality import evaluate_agent_response
 from ..api_models import ChatRequest, ChatResponse, CouncilRequest
 from ..approval_store import list_approval_requests
-from ..campaign_specific_analysis import campaign_specific_answer
+from ..campaign_specific_analysis import campaign_roster_answer, campaign_specific_answer
 from ..dashboard_service import (
     answer_audiences,
     answer_budget_pacing,
@@ -234,6 +234,23 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
     dashboard_data = build_dashboard()
     meta = await meta_status()
     knowledge = load_knowledge_base()
+
+    # Factual roster questions ("what campaigns are active?") get a guaranteed,
+    # data-grounded list — never the generic fallback or orchestrator advice.
+    if knowledge:
+        roster = campaign_roster_answer(question, knowledge)
+        if roster:
+            return specialist_chat_response(
+                question,
+                answer=roster,
+                sources=["storage/meta_knowledge_base.json"],
+                suggestedQuestions=[
+                    "Which active campaign has the best lead rate?",
+                    "Which campaign should we scale next?",
+                    "What should we pause?",
+                ],
+            )
+
     if should_run_strategy_council(question):
         council = run_strategy_council(question, knowledge=knowledge, playbooks=load_playbooks())
         answer = await refine_text(

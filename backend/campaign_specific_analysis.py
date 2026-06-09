@@ -6,6 +6,61 @@ from typing import Any
 from .analysis_engine import action_count, as_float
 
 
+_ROSTER_TRIGGERS = (
+    "active campaign", "running campaign", "live campaign", "paused campaign", "what campaign",
+    "which campaign", "list campaign", "list my campaign", "how many campaign", "campaigns are",
+    "campaign status", "active campaigns", "running campaigns", "show campaign", "my campaigns",
+)
+
+
+def campaign_roster_answer(question: str, knowledge: dict[str, Any]) -> str | None:
+    """Deterministic, always-grounded answer for 'what campaigns are active/paused?' style
+    questions: lists the real campaigns and their status from the saved knowledge base.
+    Returns None when the question isn't about the campaign roster."""
+    lower = question.lower()
+    if not any(trigger in lower for trigger in _ROSTER_TRIGGERS):
+        return None
+    campaigns = [
+        c for c in (knowledge.get("raw", {}).get("campaigns", []) or [])
+        if isinstance(c, dict) and c.get("name")
+    ]
+    if not campaigns:
+        return None
+
+    def status_of(campaign: dict[str, Any]) -> str:
+        return str(campaign.get("status") or campaign.get("effective_status") or "UNKNOWN").upper()
+
+    active = [c for c in campaigns if status_of(c) == "ACTIVE"]
+    paused = [c for c in campaigns if status_of(c) == "PAUSED"]
+    want_active = "active" in lower or "running" in lower or "live" in lower
+    want_paused = "paused" in lower
+    if want_active and not want_paused:
+        selected, label = active, "Active"
+    elif want_paused and not want_active:
+        selected, label = paused, "Paused"
+    else:
+        selected, label = campaigns, "All"
+
+    lines = [f"You have **{len(campaigns)}** campaigns: **{len(active)}** active, **{len(paused)}** paused."]
+    if not selected:
+        lines.append(f"\nNo {label.lower()} campaigns right now.")
+        return "\n".join(lines)
+    lines.append("")
+    lines.append(f"{label} campaigns:")
+    for campaign in selected[:25]:
+        budget = campaign.get("daily_budget")
+        try:
+            budget_str = f" — ${float(budget) / 100:,.0f}/day" if budget else ""
+        except (TypeError, ValueError):
+            budget_str = ""
+        objective = campaign.get("objective")
+        meta = status_of(campaign) + (f", {objective}" if objective else "")
+        lines.append(f"- {campaign['name']} ({meta}){budget_str}")
+    if len(selected) > 25:
+        lines.append(f"- …and {len(selected) - 25} more")
+    return "\n".join(lines)
+
+
 def campaign_specific_answer(question: str, knowledge: dict[str, Any]) -> str | None:
     campaign = find_campaign(question, knowledge)
     if not campaign:
