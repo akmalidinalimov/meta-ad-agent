@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import os
@@ -16,7 +17,18 @@ from ..chat_service import answer_agent_question_sync, to_telegram_html
 from ..execution_service import apply_live_sync, dry_run_sync
 from ..telegram_commands import normalize_telegram_command
 from ..telegram_digest import compose_kpi_digest_text
-from ..telegram_menus import REPLY_BUTTON_ACTIONS, approval_stage_keyboard, main_reply_keyboard, welcome_text
+from ..telegram_menus import (
+    REPLY_BUTTON_ACTIONS,
+    adset_ads_keyboard,
+    approval_adset_detail_keyboard,
+    approval_adsets_keyboard,
+    approval_stage_keyboard,
+    campaign_adsets_keyboard,
+    campaigns_list_keyboard,
+    main_reply_keyboard,
+    pending_approvals_keyboard,
+    welcome_text,
+)
 from ..task_service import create_orchestrated_agent_task, sync_task_with_approval
 from ..telegram_service import (
     clamp_telegram_text,
@@ -69,6 +81,296 @@ def _send_pending_suggestions(command: dict[str, Any]) -> str:
     return f"{len(pending[:5])} sent"
 
 
+def _edit(callback: dict[str, Any], text: str, reply_markup: dict[str, Any] | None = None) -> None:
+    """Rewrite the tapped message in place (drill-down navigation)."""
+    message = callback.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    telegram_outbound.edit_message_text(
+        chat_id, message.get("message_id"), text, reply_markup=reply_markup, parse_mode="HTML"
+    )
+
+
+# --- Task 3: live Campaigns drill-down ---------------------------------------
+
+def _live_account_sync() -> dict[str, Any]:
+    """Fetch the account's campaigns/adsets/ads, preferring live Meta data and
+    falling back to the last saved knowledge-base snapshot.
+
+    Kept small and self-contained so the integration step can swap it for the
+    shared meta_live helper. Returns
+    {campaigns, adsets, ads, account_id, source}.
+    """
+    from ..knowledge_base import load_knowledge_base
+    from ..meta_client import (
+        MetaApiError,
+        get_ad_sets,
+        get_ads,
+        get_campaigns,
+        get_meta_config,
+    )
+
+    config = get_meta_config()
+    if config.is_configured:
+        try:
+            async def _gather() -> tuple[list, list, list]:
+                return await asyncio.gather(
+                    get_campaigns(config), get_ad_sets(config), get_ads(config)
+                )
+
+            campaigns, adsets, ads = asyncio.run(_gather())
+            return {
+                "campaigns": campaigns,
+                "adsets": adsets,
+                "ads": ads,
+                "account_id": config.ad_account_id,
+                "source": "live",
+            }
+        except MetaApiError:
+            logger.exception("Live Meta fetch failed; falling back to snapshot")
+        except Exception:
+            logger.exception("Unexpected error fetching live Meta data")
+
+    knowledge = load_knowledge_base() or {}
+    raw = knowledge.get("raw", {}) or {}
+    return {
+        "campaigns": raw.get("campaigns", []) or [],
+        "adsets": raw.get("adsets", []) or [],
+        "ads": raw.get("ads", []) or [],
+        "account_id": config.ad_account_id,
+        "source": "snapshot",
+    }
+
+
+def _campaign_status_label(entity: dict[str, Any]) -> str:
+    status = str(entity.get("effective_status") or entity.get("status") or "UNKNOWN")
+    return status.replace("_", " ").title()
+
+
+def _campaigns_list_text(account: dict[str, Any]) -> str:
+    campaigns = account.get("campaigns", [])
+    lines = [f"📁 <b>Campaigns</b> ({len(campaigns)})"]
+    if account.get("source") != "live":
+        lines.append("<i>(as of last sync)</i>")
+    if not campaigns:
+        lines.append("\nNo campaigns found.")
+    else:
+        lines.append("\nTap a campaign to see its ad sets.")
+    return "\n".join(lines)
+
+
+def _campaign_detail_text(campaign: dict[str, Any], adsets: list[dict[str, Any]], source: str) -> str:
+    name = html.escape(str(campaign.get("name") or campaign.get("id")))
+    lines = [f"📁 <b>{name}</b>"]
+    if source != "live":
+        lines.append("<i>(as of last sync)</i>")
+    lines.append(f"Status: {html.escape(_campaign_status_label(campaign))}")
+    if campaign.get("objective"):
+        lines.append(f"Objective: {html.escape(str(campaign.get('objective')))}")
+    lines.append(f"\nAd sets ({len(adsets)}): tap one to see its ads.")
+    return "\n".join(lines)
+
+
+def _adset_detail_text(
+    adset: dict[str, Any], ads: list[dict[str, Any]], account_id: str, campaign_id: str, source: str
+) -> str:
+    name = html.escape(str(adset.get("name") or adset.get("id")))
+    lines = [f"📦 <b>{name}</b>"]
+    if source != "live":
+        lines.append("<i>(as of last sync)</i>")
+    lines.append(f"Status: {html.escape(_campaign_status_label(adset))}")
+    budget = adset.get("daily_budget")
+    if budget:
+        try:
+            lines.append(f"Daily budget: ${float(budget) / 100:,.2f}")
+        except (TypeError, ValueError):
+            pass
+    if adset.get("optimization_goal"):
+        lines.append(f"Optimization: {html.escape(str(adset.get('optimization_goal')))}")
+    lines.append(f"\n<b>Ads ({len(ads)})</b>")
+    if not ads:
+        lines.append("No ads in this ad set.")
+    for ad in ads[:10]:
+        creative = ad.get("creative") or {}
+        lines.append("")
+        lines.append(f"• <b>{html.escape(str(ad.get('name') or 'Ad'))}</b> — {html.escape(_campaign_status_label(ad))}")
+        if creative.get("title"):
+            lines.append(f"  Title: {html.escape(str(creative.get('title')))}")
+        body = str(creative.get("body") or "").strip()
+        if body:
+            lines.append(f"  Body: {html.escape(body[:140])}{'…' if len(body) > 140 else ''}")
+        if creative.get("thumbnail_url"):
+            lines.append(f"  Thumbnail: {html.escape(str(creative.get('thumbnail_url')))}")
+        if creative.get("video_id"):
+            lines.append(f"  Video: https://www.facebook.com/watch/?v={html.escape(str(creative.get('video_id')))}")
+    if account_id and campaign_id:
+        acct = account_id[4:] if account_id.startswith("act_") else account_id
+        lines.append(
+            f"\n🔗 https://adsmanager.facebook.com/adsmanager/manage/ads"
+            f"?act={html.escape(acct)}&selected_campaign_ids={html.escape(str(campaign_id))}"
+        )
+    return "\n".join(lines)
+
+
+def _open_campaigns_list(command: dict[str, Any]) -> dict[str, Any]:
+    account = _live_account_sync()
+    _send(
+        command,
+        _campaigns_list_text(account),
+        parse_mode="HTML",
+        reply_markup=campaigns_list_keyboard(account.get("campaigns", [])),
+    )
+    return {"ok": True, "telegram": command, "menu": "campaigns", "source": account.get("source")}
+
+
+def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
+    raw = str(command.get("callbackData") or "")
+    tail = raw.split(":", 1)[1] if ":" in raw else ""
+    account = _live_account_sync()
+    campaigns = account.get("campaigns", [])
+    adsets = account.get("adsets", [])
+    ads = account.get("ads", [])
+    source = account.get("source", "snapshot")
+
+    if tail == "list":
+        _edit(callback, _campaigns_list_text(account), campaigns_list_keyboard(campaigns))
+        return {"ok": True, "telegram": command, "campaigns": "list"}
+
+    if tail.startswith("c:"):
+        cid = tail[2:]
+        campaign = next((c for c in campaigns if str(c.get("id")) == cid), None)
+        if not campaign:
+            _edit(callback, "This campaign is no longer available.", campaigns_list_keyboard(campaigns))
+            return {"ok": False, "telegram": command, "message": "campaign not found"}
+        child = [a for a in adsets if str(a.get("campaign_id")) == cid]
+        _edit(callback, _campaign_detail_text(campaign, child, source), campaign_adsets_keyboard(cid, child))
+        return {"ok": True, "telegram": command, "campaign": cid}
+
+    if tail.startswith("s:"):
+        sid = tail[2:]
+        adset = next((a for a in adsets if str(a.get("id")) == sid), None)
+        if not adset:
+            _edit(callback, "This ad set is no longer available.", campaigns_list_keyboard(campaigns))
+            return {"ok": False, "telegram": command, "message": "adset not found"}
+        campaign_id = str(adset.get("campaign_id") or "")
+        child_ads = [a for a in ads if str(a.get("adset_id")) == sid]
+        _edit(
+            callback,
+            _adset_detail_text(adset, child_ads, account.get("account_id", ""), campaign_id, source),
+            adset_ads_keyboard(sid, campaign_id),
+        )
+        return {"ok": True, "telegram": command, "adset": sid}
+
+    _edit(callback, _campaigns_list_text(account), campaigns_list_keyboard(campaigns))
+    return {"ok": True, "telegram": command, "campaigns": "list"}
+
+
+# --- Task 4: Pending Approvals drill-down ------------------------------------
+
+def _pending_approvals() -> list[dict[str, Any]]:
+    return [a for a in list_approval_requests() if a.get("status") == "needs_review"]
+
+
+def _pending_list_text(approvals: list[dict[str, Any]]) -> str:
+    lines = [f"📝 <b>Pending Approvals</b> ({len(approvals)})"]
+    if not approvals:
+        lines.append("\n✅ Nothing waiting for review.")
+    else:
+        lines.append("\nTap one to review its ad sets.")
+    return "\n".join(lines)
+
+
+def _approval_detail_text(approval: dict[str, Any], adsets: list[dict[str, Any]]) -> str:
+    campaign = (approval.get("after") or {}).get("campaign") or {}
+    name = html.escape(str(campaign.get("name") or approval.get("actionType") or approval.get("id")))
+    lines = [f"📝 <b>{name}</b>"]
+    if approval.get("risk"):
+        lines.append(f"Risk: {html.escape(str(approval.get('risk')))}")
+    lines.append(f"\nAd sets ({len(adsets)}): tap one for full detail.")
+    return "\n".join(lines)
+
+
+def _approval_adset_text(approval: dict[str, Any], adset: dict[str, Any], idx: int) -> str:
+    name = html.escape(str(adset.get("name") or f"Ad set {idx + 1}"))
+    lines = [f"📦 <b>{name}</b>"]
+    lines.append(f"Status: {html.escape(str(adset.get('status') or 'PAUSED'))}")
+    budget = adset.get("daily_budget")
+    if budget:
+        try:
+            lines.append(f"Daily budget: ${float(budget) / 100:,.2f}")
+        except (TypeError, ValueError):
+            pass
+    if adset.get("optimization_goal"):
+        lines.append(f"Optimization: {html.escape(str(adset.get('optimization_goal')))}")
+    targeting = adset.get("targeting") or {}
+    if targeting:
+        geos = (targeting.get("geo_locations") or {}).get("countries") or []
+        if geos:
+            lines.append(f"Targeting: {html.escape(', '.join(str(g) for g in geos[:8]))}")
+    ads = adset.get("ads") or []
+    lines.append(f"\n<b>Ads ({len(ads)})</b>")
+    if not ads:
+        lines.append("No ads defined.")
+    for ad in ads[:10]:
+        lines.append(
+            f"• <b>{html.escape(str(ad.get('name') or 'Ad'))}</b> — {html.escape(str(ad.get('status') or 'PAUSED'))}"
+        )
+        if ad.get("creativeId"):
+            lines.append(f"  creativeId: {html.escape(str(ad.get('creativeId')))}")
+    return "\n".join(lines)
+
+
+def _open_pending_list(command: dict[str, Any]) -> dict[str, Any]:
+    approvals = _pending_approvals()
+    _send(
+        command,
+        _pending_list_text(approvals),
+        parse_mode="HTML",
+        reply_markup=pending_approvals_keyboard(approvals),
+    )
+    return {"ok": True, "telegram": command, "menu": "pending"}
+
+
+def _handle_pending(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
+    raw = str(command.get("callbackData") or "")
+    tail = raw.split(":", 1)[1] if ":" in raw else ""
+    approvals = _pending_approvals()
+
+    if tail == "list":
+        _edit(callback, _pending_list_text(approvals), pending_approvals_keyboard(approvals))
+        return {"ok": True, "telegram": command, "pending": "list"}
+
+    if tail.startswith("a:"):
+        aid = tail[2:]
+        approval = next((a for a in approvals if str(a.get("id")) == aid), None)
+        if not approval:
+            _edit(callback, "This approval is no longer pending.", pending_approvals_keyboard(approvals))
+            return {"ok": False, "telegram": command, "message": "not pending"}
+        adsets = (approval.get("after") or {}).get("adsets") or []
+        _edit(callback, _approval_detail_text(approval, adsets), approval_adsets_keyboard(aid, adsets))
+        return {"ok": True, "telegram": command, "approval": aid}
+
+    if tail.startswith("s:"):
+        rest = tail[2:]
+        aid, _, idx_raw = rest.partition("~")
+        approval = next((a for a in approvals if str(a.get("id")) == aid), None)
+        if not approval:
+            _edit(callback, "This approval is no longer pending.", pending_approvals_keyboard(approvals))
+            return {"ok": False, "telegram": command, "message": "not pending"}
+        adsets = (approval.get("after") or {}).get("adsets") or []
+        try:
+            idx = int(idx_raw)
+        except (TypeError, ValueError):
+            idx = -1
+        if idx < 0 or idx >= len(adsets):
+            _edit(callback, "That ad set is no longer available.", approval_adsets_keyboard(aid, adsets))
+            return {"ok": False, "telegram": command, "message": "adset index out of range"}
+        _edit(callback, _approval_adset_text(approval, adsets[idx], idx), approval_adset_detail_keyboard(aid))
+        return {"ok": True, "telegram": command, "approval": aid, "adset": idx}
+
+    _edit(callback, _pending_list_text(approvals), pending_approvals_keyboard(approvals))
+    return {"ok": True, "telegram": command, "pending": "list"}
+
+
 def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
     if target == "kpis":
         _send(command, compose_kpi_digest_text(), parse_mode="HTML")
@@ -78,6 +380,10 @@ def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
         _send(command, telegram_status_text())
     elif target == "alerts":
         _send(command, telegram_attention_text())
+    elif target == "campaigns":
+        return _open_campaigns_list(command)
+    elif target == "pending":
+        return _open_pending_list(command)
     elif target == "chat":
         _send(command, '💬 Just text me your question — e.g. "what are my best creatives right now?"')
     elif target == "analytics":
@@ -197,6 +503,12 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
 
     if action == "menu":
         return _handle_menu(command, approval_id or "menu")
+
+    if action == "cmp":
+        return _handle_campaigns(command, callback)
+
+    if action == "apv":
+        return _handle_pending(command, callback)
 
     if action == "view" and approval_id:
         approval = next((a for a in list_approval_requests() if a.get("id") == approval_id), None)
