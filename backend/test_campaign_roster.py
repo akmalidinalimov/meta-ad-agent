@@ -36,3 +36,32 @@ def test_roster_none_for_unrelated_question():
 
 def test_roster_none_without_campaigns():
     assert campaign_roster_answer("what campaigns are active?", {"raw": {"campaigns": []}}) is None
+
+
+LIVE_CAMPAIGNS = [
+    {"id": "10", "name": "Live Active", "effective_status": "ACTIVE", "objective": "OUTCOME_LEADS"},
+    {"id": "11", "name": "Live Paused", "effective_status": "PAUSED"},
+]
+
+
+def test_roster_uses_passed_live_campaigns_with_no_footer():
+    out = campaign_roster_answer("what campaigns are active?", {}, campaigns=LIVE_CAMPAIGNS, source="live")
+    assert out is not None
+    assert "Live Active" in out
+    assert "Live Paused" not in out
+    assert "1 active, 1 paused" in out.replace("**", "")
+    assert "live Meta data was unavailable" not in out
+
+
+def test_roster_snapshot_source_appends_footer():
+    out = campaign_roster_answer("what campaigns are active?", {}, campaigns=LIVE_CAMPAIGNS, source="snapshot")
+    assert out is not None
+    assert "Live Active" in out
+    assert out.endswith("_As of last sync; live Meta data was unavailable._")
+
+
+def test_roster_passed_campaigns_override_knowledge():
+    out = campaign_roster_answer("list my campaigns", KB, campaigns=LIVE_CAMPAIGNS, source="live")
+    assert out is not None
+    assert "Live Active" in out and "Live Paused" in out
+    assert "Webinar A" not in out

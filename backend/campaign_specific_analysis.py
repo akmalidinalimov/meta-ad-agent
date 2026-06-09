@@ -13,15 +13,38 @@ _ROSTER_TRIGGERS = (
 )
 
 
-def campaign_roster_answer(question: str, knowledge: dict[str, Any]) -> str | None:
+_SNAPSHOT_FOOTER = "\n\n_As of last sync; live Meta data was unavailable._"
+
+
+def _with_footer(answer: str | None, source: str) -> str | None:
+    """Append the stale-data footer when answering from the snapshot fallback."""
+    if answer is None:
+        return None
+    if source == "snapshot":
+        return answer + _SNAPSHOT_FOOTER
+    return answer
+
+
+def campaign_roster_answer(
+    question: str,
+    knowledge: dict[str, Any],
+    *,
+    campaigns: list[dict[str, Any]] | None = None,
+    source: str = "snapshot",
+) -> str | None:
     """Deterministic, always-grounded answer for 'what campaigns are active/paused?' style
-    questions: lists the real campaigns and their status from the saved knowledge base.
+    questions: lists the real campaigns and their status.
+
+    When ``campaigns`` is provided it is used as the campaign list (e.g. live Meta data);
+    otherwise the saved knowledge base is read, preserving today's behavior exactly.
+    A ``source == "snapshot"`` answer is annotated with a stale-data footer.
     Returns None when the question isn't about the campaign roster."""
     lower = question.lower()
     if not any(trigger in lower for trigger in _ROSTER_TRIGGERS):
         return None
+    source_campaigns = campaigns if campaigns is not None else knowledge.get("raw", {}).get("campaigns", [])
     campaigns = [
-        c for c in (knowledge.get("raw", {}).get("campaigns", []) or [])
+        c for c in (source_campaigns or [])
         if isinstance(c, dict) and c.get("name")
     ]
     if not campaigns:
@@ -44,7 +67,7 @@ def campaign_roster_answer(question: str, knowledge: dict[str, Any]) -> str | No
     lines = [f"You have **{len(campaigns)}** campaigns: **{len(active)}** active, **{len(paused)}** paused."]
     if not selected:
         lines.append(f"\nNo {label.lower()} campaigns right now.")
-        return "\n".join(lines)
+        return _with_footer("\n".join(lines), source)
     lines.append("")
     lines.append(f"{label} campaigns:")
     for campaign in selected[:25]:
@@ -58,33 +81,48 @@ def campaign_roster_answer(question: str, knowledge: dict[str, Any]) -> str | No
         lines.append(f"- {campaign['name']} ({meta}){budget_str}")
     if len(selected) > 25:
         lines.append(f"- …and {len(selected) - 25} more")
-    return "\n".join(lines)
+    return _with_footer("\n".join(lines), source)
 
 
-def campaign_specific_answer(question: str, knowledge: dict[str, Any]) -> str | None:
-    campaign = find_campaign(question, knowledge)
+def campaign_specific_answer(
+    question: str,
+    knowledge: dict[str, Any],
+    *,
+    campaigns: list[dict[str, Any]] | None = None,
+    source: str = "snapshot",
+) -> str | None:
+    campaign = find_campaign(question, knowledge, campaigns=campaigns, source=source)
     if not campaign:
         return None
 
     rows = campaign_insight_rows(campaign, knowledge)
     if not rows:
-        return (
-            f"I found campaign {campaign['name']}, but the saved knowledge base has no matching insight rows for it. "
-            "Refresh Meta data, then ask again for campaign-specific rankings."
+        return _with_footer(
+            (
+                f"I found campaign {campaign['name']}, but the saved knowledge base has no matching insight rows for it. "
+                "Refresh Meta data, then ask again for campaign-specific rankings."
+            ),
+            source,
         )
 
     lower = question.lower()
     if any(word in lower for word in ["creative", "video", "ad ", "ads ", "hook", "thumbnail", "viral"]):
-        return creative_answer(campaign, rows, knowledge)
+        return _with_footer(creative_answer(campaign, rows, knowledge), source)
     if any(word in lower for word in ["placement", "facebook", "instagram", "reels", "stories", "feed", "threads"]):
-        return placement_answer(campaign, rows)
-    return audience_answer(campaign, rows)
+        return _with_footer(placement_answer(campaign, rows), source)
+    return _with_footer(audience_answer(campaign, rows), source)
 
 
-def find_campaign(question: str, knowledge: dict[str, Any]) -> dict[str, Any] | None:
+def find_campaign(
+    question: str,
+    knowledge: dict[str, Any],
+    *,
+    campaigns: list[dict[str, Any]] | None = None,
+    source: str = "snapshot",
+) -> dict[str, Any] | None:
     raw = knowledge.get("raw", {})
     question_key = normalize(question)
-    campaigns = raw.get("campaigns", []) or []
+    campaigns = campaigns if campaigns is not None else (raw.get("campaigns", []) or [])
     exact_matches = [
         campaign
         for campaign in campaigns

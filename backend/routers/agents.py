@@ -19,6 +19,7 @@ from ..agent_quality import evaluate_agent_response
 from ..api_models import ChatRequest, ChatResponse, CouncilRequest
 from ..approval_store import list_approval_requests
 from ..campaign_specific_analysis import campaign_roster_answer, campaign_specific_answer
+from ..meta_live import get_live_account
 from ..dashboard_service import (
     answer_audiences,
     answer_budget_pacing,
@@ -236,14 +237,17 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
     knowledge = load_knowledge_base()
 
     # Factual roster questions ("what campaigns are active?") get a guaranteed,
-    # data-grounded list — never the generic fallback or orchestrator advice.
-    if knowledge:
-        roster = campaign_roster_answer(question, knowledge)
+    # data-grounded list from LIVE Meta data — never a stale snapshot, the generic
+    # fallback, or orchestrator advice. Falls back to the snapshot when Meta is down.
+    acct = await get_live_account(knowledge=knowledge)
+    roster_sources = ["meta_live"] if acct.is_live else ["storage/meta_knowledge_base.json"]
+    if knowledge or acct.campaigns:
+        roster = campaign_roster_answer(question, knowledge, campaigns=acct.campaigns, source=acct.source)
         if roster:
             return specialist_chat_response(
                 question,
                 answer=roster,
-                sources=["storage/meta_knowledge_base.json"],
+                sources=roster_sources,
                 suggestedQuestions=[
                     "Which active campaign has the best lead rate?",
                     "Which campaign should we scale next?",
@@ -373,12 +377,13 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
         return specialist_chat_response(question, answer=answer, sources=sources, suggestedQuestions=suggested)
 
     if knowledge:
-        campaign_answer = campaign_specific_answer(question, knowledge)
+        campaign_answer = campaign_specific_answer(question, knowledge, campaigns=acct.campaigns, source=acct.source)
         if campaign_answer:
+            specific_sources = ["campaign_specific_analysis", "meta_live"] if acct.is_live else ["campaign_specific_analysis", "storage/meta_knowledge_base.json"]
             return specialist_chat_response(
                 question,
                 answer=campaign_answer,
-                sources=["campaign_specific_analysis", "storage/meta_knowledge_base.json"],
+                sources=specific_sources,
                 suggestedQuestions=[
                     "Rank creatives for this campaign.",
                     "Which ad set should become the scale candidate?",

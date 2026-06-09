@@ -2,6 +2,42 @@ from fastapi.testclient import TestClient
 
 import backend.routers.agents as agents_module
 from backend.app import app
+from backend.meta_live import LiveAccount
+
+
+def test_agent_chat_roster_uses_live_meta_data(monkeypatch):
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        agents_module,
+        "load_knowledge_base",
+        lambda: {"raw": {"campaigns": [{"id": "stale", "name": "Stale Cached", "status": "ACTIVE"}]}},
+    )
+
+    live = LiveAccount(
+        campaigns=[
+            {"id": "live_1", "name": "Live Winner", "effective_status": "ACTIVE", "objective": "OUTCOME_LEADS"},
+            {"id": "live_2", "name": "Live Paused", "effective_status": "PAUSED"},
+        ],
+        adsets=[],
+        ads=[],
+        source="live",
+        fetched_at="now",
+    )
+
+    async def fake_live_account(**kwargs):
+        return live
+
+    monkeypatch.setattr(agents_module, "get_live_account", fake_live_account)
+    client = TestClient(app)
+
+    response = client.post("/api/agent/chat", json={"message": "what campaigns are active?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Live Winner" in payload["answer"]
+    assert "Stale Cached" not in payload["answer"]
+    assert "live Meta data was unavailable" not in payload["answer"]
+    assert "meta_live" in payload["sources"]
 
 
 def test_agent_chat_exposes_handoffs_and_quality_to_clients():

@@ -128,7 +128,7 @@ async def get_ads(config: MetaConfig) -> list[dict[str, Any]]:
         config,
         f"/{config.ad_account_id}/ads",
         {
-            "fields": "id,name,campaign_id,adset_id,status,effective_status,creative{id,name,title,body,object_type,thumbnail_url,video_id}",
+            "fields": "id,name,campaign_id,adset_id,status,effective_status,end_time,creative{id,name,title,body,object_type,thumbnail_url,video_id}",
             "limit": 100,
         },
     )
