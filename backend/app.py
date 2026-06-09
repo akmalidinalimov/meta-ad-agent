@@ -13,13 +13,14 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import allowed_origins
 from .routers import agents as agents_router
+from .routers import auth as auth_router
 from .routers import approvals as approvals_router
 from .routers import crm as crm_router
 from .routers import dashboard as dashboard_router
@@ -130,8 +131,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Paths reachable without a dashboard session: health, the auth endpoints, and the
+# Telegram webhook (which carries its own secret). The SPA shell + /assets are served
+# below and are intentionally public (they hold no account data).
+_AUTH_PUBLIC_PATHS = {
+    "/api/health",
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/auth/session",
+    "/api/telegram/webapp-auth",
+    "/api/telegram/command",
+}
+
+
+@app.middleware("http")
+async def _session_guard(request: Request, call_next):
+    """Gate dashboard data endpoints on a valid session — only when
+    DASHBOARD_SESSION_AUTH=true (off in tests/dev, on in production behind no Caddy
+    password)."""
+    from .webapp_auth import COOKIE_NAME, dashboard_auth_enabled, valid_session
+
+    if dashboard_auth_enabled():
+        path = request.url.path
+        if path.startswith("/api/") and path not in _AUTH_PUBLIC_PATHS:
+            if not valid_session(request.cookies.get(COOKIE_NAME)):
+                return JSONResponse({"detail": "Authentication required."}, status_code=401)
+    return await call_next(request)
+
+
 for module in (
     meta_router,
+    auth_router,
     planning_router,
     funnel_router,
     crm_router,
