@@ -117,7 +117,29 @@ async def get_ad_sets(config: MetaConfig) -> list[dict[str, Any]]:
         config,
         f"/{config.ad_account_id}/adsets",
         {
-            "fields": "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_strategy,bid_amount,promoted_object,daily_budget,lifetime_budget,targeting,start_time,end_time",
+            "fields": "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_strategy,bid_amount,promoted_object,daily_budget,lifetime_budget,targeting,is_dynamic_creative,start_time,end_time",
+            "limit": 500,
+        },
+    )
+
+
+async def get_adstudies(config: MetaConfig) -> list[dict[str, Any]]:
+    return await paged_get(
+        config,
+        f"/{config.ad_account_id}/adstudies",
+        {
+            "fields": "id,name,type,status,start_time,end_time,cells{id,name,treatment_percentage,adsets{id,name,campaign_id}}",
+            "limit": 200,
+        },
+    )
+
+
+async def get_saved_audiences(config: MetaConfig) -> list[dict[str, Any]]:
+    return await paged_get(
+        config,
+        f"/{config.ad_account_id}/customaudiences",
+        {
+            "fields": "id,name,subtype,approximate_count_lower_bound,description",
             "limit": 500,
         },
     )
