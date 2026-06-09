@@ -11,10 +11,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from .. import approval_store, telegram_outbound
-from ..api_models import AgentTaskRequest, TelegramTestMessageRequest
+from ..api_models import TelegramTestMessageRequest
 from ..approval_store import list_approval_requests
-from ..chat_service import answer_agent_question_sync, to_telegram_html
-from ..execution_service import apply_live_sync, auto_execute_paused, dry_run_sync
+from ..execution_service import apply_live_sync, dry_run_sync
 from ..telegram_commands import normalize_telegram_command
 from ..telegram_digest import compose_kpi_digest_text
 from ..telegram_menus import (
@@ -29,10 +28,9 @@ from ..telegram_menus import (
     pending_approvals_keyboard,
     welcome_text,
 )
-from ..task_service import create_orchestrated_agent_task, sync_task_with_approval
+from ..task_service import sync_task_with_approval
 from ..telegram_service import (
     clamp_telegram_text,
-    format_telegram_orchestrator_reply,
     handle_telegram_shortcut,
     is_attention_question,
     send_telegram_reply,
@@ -40,18 +38,6 @@ from ..telegram_service import (
     telegram_command_allowed,
     telegram_status_text,
 )
-
-# Question-shaped text goes to the conversational brain; action/creation text
-# ("create/rename/launch a campaign…") goes to the orchestrator (plans/approvals).
-_QUESTION_STARTERS = (
-    "what", "why", "how", "which", "should", "is", "are", "can", "do", "does",
-    "when", "where", "who", "explain", "tell me", "compare", "summarize", "summarise",
-)
-
-
-def _looks_like_question(text: str) -> bool:
-    t = text.strip().lower()
-    return t.endswith("?") or t.startswith(_QUESTION_STARTERS)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -118,39 +104,6 @@ def _live_account_sync() -> dict[str, Any]:
         "account_id": get_meta_config().ad_account_id,
         "source": acct.source,
     }
-
-
-def _approval_total_daily_budget(approval: dict[str, Any]) -> float | None:
-    adsets = (approval.get("after") or {}).get("adsets") or []
-    total = sum(_to_float(a.get("daily_budget")) / 100 for a in adsets)
-    return total or None
-
-
-def _approval_audience_names(approval: dict[str, Any]) -> list[str]:
-    adsets = (approval.get("after") or {}).get("adsets") or []
-    return [str(a.get("name", "")).replace(" - DRAFT", "") for a in adsets if a.get("name")]
-
-
-def _autonomous_created_text(created: list[dict[str, Any]]) -> str:
-    """Confirmation message after auto-creating a PAUSED campaign on Telegram."""
-    counts: dict[str, int] = {}
-    for obj in created or []:
-        counts[str(obj.get("level") or "object")] = counts.get(str(obj.get("level") or "object"), 0) + 1
-    campaign = next((c for c in (created or []) if c.get("level") == "campaign"), {})
-    name = html.escape(str(campaign.get("name", "campaign")))
-    parts = []
-    for level, label in (("campaign", "campaign"), ("adset", "ad set"), ("ad", "ad")):
-        n = counts.get(level, 0)
-        if n:
-            parts.append(f"{n} {label}" + ("s" if n != 1 else ""))
-    summary = ", ".join(parts) or "objects"
-    lines = [
-        f"✅ Created in Meta as <b>PAUSED</b>: {name}.",
-        f"({summary}) — nothing spends until you enable delivery.",
-    ]
-    if campaign.get("id"):
-        lines.append(f"id {html.escape(str(campaign.get('id')))}")
-    return "\n".join(lines)
 
 
 def _campaign_status_label(entity: dict[str, Any]) -> str:
@@ -574,25 +527,6 @@ def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
     return {"ok": True, "telegram": command, "menu": target}
 
 
-def _reply_conversational(command: dict[str, Any], text: str) -> dict[str, Any]:
-    """Route free text to the dashboard brain so texting == web chat.
-
-    Passing the operator key (tg:<chatId>) lets a follow-up answer ("$150/day in
-    Tashkent") refine THIS operator's in-flight autonomous draft instead of starting over.
-    """
-    from ..pending_context_store import operator_key
-
-    op_key = operator_key(telegram_chat_id=command.get("chatId"))
-    try:
-        result = answer_agent_question_sync(text, operator_key=op_key)
-    except Exception:
-        logger.exception("Telegram conversational chat failed")
-        _send(command, "I hit an error answering that. Try again, or tap /menu.")
-        return {"ok": False, "telegram": command, "message": "chat error"}
-    _send(command, to_telegram_html(result["answer"]), parse_mode="HTML")
-    return {"ok": True, "telegram": command, "answer": result["answer"], "sources": result["sources"]}
-
-
 @router.post("/api/telegram/command")
 def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     expected_secret = os.getenv("TELEGRAM_COMMAND_SECRET", "").strip()
@@ -728,6 +662,32 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     if action == "apv":
         return _handle_pending(command, callback)
 
+    # Inline Approve/Reject for an agentic free-text proposal (activate / big budget
+    # increase / create-test-campaign). callbackData is agap:approve | agap:reject.
+    if action == "agap":
+        from .. import agentic_chat
+        from ..pending_context_store import clear_pending, get_pending, operator_key
+
+        op_key = operator_key(telegram_chat_id=command.get("chatId"))
+        pending = get_pending(op_key)
+        decision = (approval_id or "").strip().lower()  # callback_target -> approve|reject
+        telegram_outbound.edit_message_reply_markup(
+            (callback.get("message") or {}).get("chat", {}).get("id"),
+            (callback.get("message") or {}).get("message_id"),
+            {"inline_keyboard": []},
+        )
+        if not (pending and pending.get("kind") == "agentic"):
+            _send(command, "That proposal is no longer pending.")
+            return {"ok": False, "telegram": command, "message": "no agentic pending"}
+        if decision == "approve":
+            result = agentic_chat.execute_pending(pending, op_key)
+            clear_pending(op_key)
+            _send(command, result, parse_mode="HTML")
+            return {"ok": True, "telegram": command, "agenticApproved": True}
+        clear_pending(op_key)
+        _send(command, "Cancelled.")
+        return {"ok": True, "telegram": command, "agenticRejected": True}
+
     if action == "view" and approval_id:
         approval = next((a for a in list_approval_requests() if a.get("id") == approval_id), None)
         if not approval:
@@ -757,6 +717,9 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         _send_pending_suggestions(command)
         return {"ok": True, "telegram": command, "menu": "suggestions"}
 
+    # Deterministic slash-command shortcuts (/status, /tasks, /approvals, /agents,
+    # /help) and the "what needs attention" shortcut stay as-is — they are fast,
+    # fixed commands, not the free-text the agentic brain owns.
     shortcut = handle_telegram_shortcut(command, text)
     if shortcut:
         return shortcut
@@ -765,97 +728,52 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         _send(command, answer, parse_mode="HTML")
         return {"ok": True, "shortcut": "attention", "telegram": command, "answer": answer}
 
-    # Questions -> conversational brain (control by texting). Other free text
-    # (create/rename/launch a campaign, etc.) -> orchestrator (plans/approvals).
-    if _looks_like_question(text):
-        return _reply_conversational(command, text)
-
-    from ..pending_context_store import clear_pending, get_pending, merge_refinement, operator_key, set_pending
+    # --- Agentic free text -----------------------------------------------------
+    # Anything that isn't a reply-keyboard button label, a start/menu command, or a
+    # known shortcut goes through the agentic brain (a real Anthropic tool-use loop).
+    # It answers questions AND takes actions; reversible/off writes apply directly,
+    # spend-increasing ones store a pending agentic proposal the operator approves
+    # by text or button.
+    from .. import agentic_chat
+    from ..pending_context_store import clear_pending, get_pending, operator_key
 
     op_key = operator_key(telegram_chat_id=command.get("chatId"))
 
-    # Type-approve for a pending bulk-manage approval: "approve"/"reject" (or yes/no/cancel)
-    # is not question-shaped, so route it to the shared chat brain, which owns the
-    # type-approve logic (resolve_pending_manage). This makes typing "approve" in Telegram
-    # execute the archive/pause exactly like the web chat.
-    pending_manage = get_pending(op_key)
-    if (
-        pending_manage
-        and pending_manage.get("kind") == "manage"
-        and pending_manage.get("approvalId")
-    ):
+    pending = get_pending(op_key)
+    if pending and pending.get("kind") == "agentic":
         from ..routers.agents import _is_affirmation, _is_negation
 
-        if _is_affirmation(text) or _is_negation(text):
-            return _reply_conversational(command, text)
+        if _is_affirmation(text):
+            result_text = agentic_chat.execute_pending(pending, op_key)
+            clear_pending(op_key)
+            _send(command, result_text, parse_mode="HTML")
+            return {"ok": True, "telegram": command, "agenticApproved": True}
+        if _is_negation(text):
+            clear_pending(op_key)
+            _send(command, "Cancelled.")
+            return {"ok": True, "telegram": command, "agenticRejected": True}
 
-    # Pending refinement on the action path too: a non-question follow-up ("$150/day in
-    # Tashkent") refines the operator's in-flight autonomous draft instead of starting a
-    # fresh task. Delegates to the shared chat brain (which owns the refinement logic).
-    pending = get_pending(op_key)
-    if pending and pending.get("approvalId") and merge_refinement(pending, text, None):
-        return _reply_conversational(command, text)
+    try:
+        answer = asyncio.run(agentic_chat.agentic_reply(text, operator_key=op_key))
+    except Exception:
+        logger.exception("Telegram agentic chat failed")
+        _send(command, "I hit an error answering that. Try again, or tap /menu.")
+        return {"ok": False, "telegram": command, "message": "agentic error"}
 
-    source_task = AgentTaskRequest(source="telegram", command=text, operatorKey=op_key)
-    result = create_orchestrated_agent_task(source_task)
-    task = result.get("task", {})
-    plan = task.get("plan") or {}
-    answer = plan.get("answer") or "Telegram command sent to the orchestrator."
-
-    # Autonomous build on Telegram: auto-create the PAUSED campaign IMMEDIATELY (operator
-    # decision — no separate approval tap), then confirm what was created. Record a pending
-    # pointer first so a later answer can still refine the same draft.
-    approval = plan.get("generatedApprovalRequest") if isinstance(plan, dict) else None
-
-    # Bulk-manage on Telegram: the approval is already persisted + the notification fired
-    # (task_service). Record a pending pointer (kind=manage) so a typed "approve" in the
-    # next turn resolves THIS approval, then send the operator-facing list with buttons.
-    if plan.get("managePrepared") and isinstance(approval, dict) and approval.get("id"):
-        action = "archive" if (approval.get("after") or {}).get("status") == "ARCHIVED" else "pause"
-        set_pending(
-            op_key,
-            {
-                "approvalId": approval["id"],
-                "kind": "manage",
-                "action": action,
-                "createdAt": approval.get("createdAt"),
-            },
-        )
-        _send(command, clamp_telegram_text(answer), parse_mode="HTML")
-        return {**result, "telegram": command, "managePrepared": True, "approvalId": approval["id"]}
-
-    if plan.get("autonomous") and isinstance(approval, dict) and approval.get("id"):
-        set_pending(
-            op_key,
-            {
-                "approvalId": approval["id"],
-                "openQuestions": approval.get("openQuestions") or [],
-                "budget": _approval_total_daily_budget(approval),
-                "audiences": _approval_audience_names(approval),
-                "createdAt": approval.get("createdAt"),
-            },
-        )
-        if approval.get("guardrailResult") != "fail":
-            exec_result = auto_execute_paused(approval["id"])
-            if exec_result.get("ok"):
-                clear_pending(op_key)
-                _send(
-                    command,
-                    clamp_telegram_text(_autonomous_created_text(exec_result.get("created", []))),
-                    parse_mode="HTML",
-                )
-                return {**result, "telegram": command, "autonomousCreated": True, "created": exec_result.get("created", [])}
-            blocked = exec_result.get("blocked") or "unknown reason"
-            _send(
-                command,
-                f"I built the PAUSED draft but did not auto-create it in Meta: {html.escape(str(blocked))}. "
-                "It is saved for approval.",
-                parse_mode="HTML",
-            )
-            return {**result, "telegram": command, "autonomousCreated": False, "blocked": blocked}
-
-    telegram_reply = send_telegram_reply(command, clamp_telegram_text(format_telegram_orchestrator_reply(plan, answer)))
-    return {**result, "telegram": command, "message": "Telegram command sent to the orchestrator.", "reply": telegram_reply}
+    # If the loop stashed a fresh agentic proposal (activate / big budget raise /
+    # create-test-campaign), attach inline Approve/Reject buttons so the operator can
+    # tap to approve — typing "approve" works too (handled on the next turn above).
+    stashed = get_pending(op_key)
+    reply_markup = None
+    if stashed and stashed.get("kind") == "agentic":
+        reply_markup = {
+            "inline_keyboard": [[
+                {"text": "✅ Approve", "callback_data": "agap:approve"},
+                {"text": "✖️ Reject", "callback_data": "agap:reject"},
+            ]]
+        }
+    _send(command, clamp_telegram_text(answer), parse_mode="HTML", reply_markup=reply_markup)
+    return {"ok": True, "telegram": command, "answer": answer, "agentic": True}
 
 
 @router.post("/api/telegram/test-message")
