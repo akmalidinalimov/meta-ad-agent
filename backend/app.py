@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import mcp_server
 from .config import allowed_origins
 from .routers import agents as agents_router
 from .routers import auth as auth_router
@@ -99,6 +100,14 @@ async def _monitoring_loop() -> None:
         await asyncio.sleep(interval)
 
 
+# Streamable-HTTP MCP connector. Only built/mounted when MCP_PATH_SECRET is set
+# (the secret path is the auth boundary). The FastMCP app carries its own session
+# manager whose lifespan MUST run or the endpoint 500s, so it is folded into the
+# app lifespan below.
+_mcp_path = mcp_server.mount_path()
+_mcp_app = mcp_server.streamable_app() if _mcp_path else None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task: asyncio.Task | None = None
@@ -115,13 +124,25 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Telegram bot UI registration failed")
     try:
-        yield
+        # Run the FastMCP session-manager lifespan alongside the app's startup so
+        # the mounted Streamable-HTTP endpoint works (it 500s without it).
+        if _mcp_app is not None:
+            logger.info("Mounting MCP connector at %s", _mcp_path)
+            async with _mcp_app.router.lifespan_context(_mcp_app):
+                yield
+        else:
+            yield
     finally:
         if task:
             task.cancel()
 
 
 app = FastAPI(title="Meta Ad Agent API", lifespan=lifespan)
+
+# Mount the MCP connector before the SPA catch-all route is registered, so its
+# secret path wins over the client-side route fallback.
+if _mcp_app is not None:
+    app.mount(_mcp_path, _mcp_app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -150,6 +171,11 @@ async def _session_guard(request: Request, call_next):
     DASHBOARD_SESSION_AUTH=true (off in tests/dev, on in production behind no Caddy
     password)."""
     from .webapp_auth import COOKIE_NAME, dashboard_auth_enabled, valid_session
+
+    # The MCP connector is gated by its own secret mount path, not the dashboard
+    # session — never apply the session guard to it.
+    if request.url.path.startswith("/mcp/"):
+        return await call_next(request)
 
     if dashboard_auth_enabled():
         path = request.url.path
