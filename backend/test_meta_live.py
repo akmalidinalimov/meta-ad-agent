@@ -103,9 +103,17 @@ def _patch_fetchers(monkeypatch, calls):
     async def fake_ads(config):
         return []
 
+    async def fake_adstudies(config):
+        return []
+
+    async def fake_saved_audiences(config):
+        return []
+
     monkeypatch.setattr(meta_live, "get_campaigns", fake_campaigns)
     monkeypatch.setattr(meta_live, "get_ad_sets", fake_adsets)
     monkeypatch.setattr(meta_live, "get_ads", fake_ads)
+    monkeypatch.setattr(meta_live, "get_adstudies", fake_adstudies)
+    monkeypatch.setattr(meta_live, "get_saved_audiences", fake_saved_audiences)
 
 
 def test_live_fetch_and_ttl_cache(monkeypatch):
@@ -158,3 +166,123 @@ def test_snapshot_fallback_on_api_error(monkeypatch):
     assert acct.source == "snapshot"
     assert acct.error == "rate limited"
     assert acct.campaigns[0]["name"] == "Cached"
+
+
+# --- introspection data (adstudies / saved_audiences) -------------------------
+
+def test_live_account_defaults_introspection_to_empty():
+    acct = meta_live.LiveAccount(
+        campaigns=[],
+        adsets=[],
+        ads=[],
+        source="live",
+        fetched_at="now",
+    )
+    assert acct.adstudies == []
+    assert acct.saved_audiences == []
+
+
+def test_live_fetch_includes_introspection_data(monkeypatch):
+    monkeypatch.setattr(meta_live, "get_meta_config", _configured)
+    _patch_fetchers(monkeypatch, {"n": 0})
+
+    async def fake_adstudies(config):
+        return [{"id": "s1", "name": "AB"}]
+
+    async def fake_saved_audiences(config):
+        return [{"id": "ca1", "name": "Buyers"}]
+
+    monkeypatch.setattr(meta_live, "get_adstudies", fake_adstudies)
+    monkeypatch.setattr(meta_live, "get_saved_audiences", fake_saved_audiences)
+
+    acct = asyncio.run(meta_live.get_live_account())
+    assert acct.is_live
+    assert acct.adstudies == [{"id": "s1", "name": "AB"}]
+    assert acct.saved_audiences == [{"id": "ca1", "name": "Buyers"}]
+
+
+def test_introspection_error_does_not_blank_campaigns(monkeypatch):
+    monkeypatch.setattr(meta_live, "get_meta_config", _configured)
+    _patch_fetchers(monkeypatch, {"n": 0})
+
+    async def boom(config):
+        raise MetaApiError("missing scope")
+
+    monkeypatch.setattr(meta_live, "get_adstudies", boom)
+    monkeypatch.setattr(meta_live, "get_saved_audiences", boom)
+
+    knowledge = {"raw": {"campaigns": [{"id": "9", "name": "Cached"}]}}
+    acct = asyncio.run(meta_live.get_live_account(knowledge=knowledge))
+
+    # Core campaigns stay LIVE; only the optional data degrades to [].
+    assert acct.source == "live"
+    assert acct.error is None
+    assert acct.campaigns[0]["name"] == "Live"
+    assert acct.adstudies == []
+    assert acct.saved_audiences == []
+
+
+# --- introspection helpers ----------------------------------------------------
+
+def _introspect_account() -> "meta_live.LiveAccount":
+    return meta_live.LiveAccount(
+        campaigns=[{"id": "1", "effective_status": "ACTIVE"}],
+        adsets=[
+            {"id": "a", "campaign_id": "1", "effective_status": "ACTIVE"},
+            {"id": "b", "campaign_id": "1", "effective_status": "PAUSED"},
+            {"id": "c", "campaign_id": "2", "effective_status": "ACTIVE"},
+        ],
+        ads=[],
+        source="live",
+        fetched_at="now",
+        adstudies=[
+            {
+                "id": "study1",
+                "name": "AB Test",
+                "cells": {
+                    "data": [
+                        {"id": "cell1", "adsets": {"data": [{"id": "a", "campaign_id": "1"}]}},
+                    ]
+                },
+            }
+        ],
+        saved_audiences=[
+            {"id": "ca1", "name": "Buyers"},
+            {"id": "ca2", "name": "Lookalike"},
+        ],
+    )
+
+
+def test_campaign_adsets_includes_all_statuses():
+    acct = _introspect_account()
+    assert [a["id"] for a in meta_live.campaign_adsets(acct, "1")] == ["a", "b"]
+    assert [a["id"] for a in meta_live.campaign_adsets(acct, "2")] == ["c"]
+    assert meta_live.campaign_adsets(acct, "999") == []
+
+
+def test_custom_audience_names_builds_id_to_name():
+    acct = _introspect_account()
+    assert meta_live.custom_audience_names(acct) == {"ca1": "Buyers", "ca2": "Lookalike"}
+
+
+def test_ab_test_for_campaign_matches_and_misses():
+    acct = _introspect_account()
+    study = meta_live.ab_test_for_campaign(acct, "1")
+    assert study is not None and study["id"] == "study1"
+    assert meta_live.ab_test_for_campaign(acct, "2") is None
+
+
+def test_ab_test_for_campaign_matches_by_adset_id_only():
+    """Cell references the adset by id only (no campaign_id); we resolve via acct.adsets."""
+    acct = meta_live.LiveAccount(
+        campaigns=[{"id": "1"}],
+        adsets=[{"id": "a", "campaign_id": "1"}],
+        ads=[],
+        source="live",
+        fetched_at="now",
+        adstudies=[
+            {"id": "study1", "cells": {"data": [{"id": "cell1", "adsets": {"data": [{"id": "a"}]}}]}}
+        ],
+    )
+    study = meta_live.ab_test_for_campaign(acct, "1")
+    assert study is not None and study["id"] == "study1"
