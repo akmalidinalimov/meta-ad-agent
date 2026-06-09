@@ -382,12 +382,25 @@ def find_campaign(
     if exact_matches:
         return normalize_campaign(exact_matches[0])
 
-    named_matches = [
-        campaign
-        for campaign in campaigns
-        if campaign.get("name") and all(part in question_key for part in important_name_parts(campaign["name"]))
-    ]
-    return normalize_campaign(named_matches[0]) if named_matches else None
+    # Best-overlap match: tolerate missing tokens like a "- DRAFT" suffix or a date,
+    # but require a strong majority of the name's significant words to be present.
+    best = None
+    best_hits = 0
+    best_ratio = 0.0
+    for campaign in campaigns:
+        name = campaign.get("name")
+        if not name:
+            continue
+        parts = important_name_parts(name)
+        if not parts:
+            continue
+        hits = sum(1 for part in parts if part in question_key)
+        ratio = hits / len(parts)
+        if hits > best_hits or (hits == best_hits and ratio > best_ratio):
+            best, best_hits, best_ratio = campaign, hits, ratio
+    if best is not None and best_hits >= 2 and best_ratio >= 0.6:
+        return normalize_campaign(best)
+    return None
 
 
 def normalize_campaign(campaign: dict[str, Any]) -> dict[str, str]:

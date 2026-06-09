@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
+import { CreativesView } from './components/CreativesView'
 import { Login } from './components/Login'
 import { dashboardDataProvider, mockDashboardDataProvider } from './services/dashboardDataProvider'
 import type { DashboardData } from './types/marketing'
@@ -144,6 +145,13 @@ function App() {
 
   if (authState === 'login') {
     return <Login onSuccess={() => setAuthState('authed')} />
+  }
+
+  // Deep link from the Telegram ad-set drill-down: ?adset=<id> opens the rich
+  // per-ad-set creatives view (thumbnails + lifetime stats) instead of the dashboard.
+  const adsetParam = new URLSearchParams(window.location.search).get('adset')
+  if (adsetParam) {
+    return <CreativesView adsetId={adsetParam} />
   }
 
   if (!data) {

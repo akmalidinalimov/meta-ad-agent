@@ -198,101 +198,21 @@ def _campaign_detail_text(
     return "\n".join(lines)
 
 
-# Conversion actions worth ranking creatives by, best-result-first. The first type
-# present on an ad becomes its headline "result" (Meta reports several aliases).
-_RESULT_ACTION_TYPES: list[tuple[str, str]] = [
-    ("offsite_conversion.fb_pixel_purchase", "purchases"),
-    ("purchase", "purchases"),
-    ("onsite_conversion.purchase", "purchases"),
-    ("offsite_conversion.fb_pixel_lead", "leads"),
-    ("onsite_conversion.lead_grouped", "leads"),
-    ("lead", "leads"),
-    ("complete_registration", "registrations"),
-    ("onsite_conversion.messaging_conversation_started_7d", "chats started"),
-    ("link_click", "link clicks"),
-]
-
-
-def _to_float(value: Any) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _ad_results(actions: list[dict[str, Any]] | None) -> tuple[float, str | None]:
-    """Pick the highest-priority conversion result reported for an ad."""
-    if not actions:
-        return 0.0, None
-    by_type = {a.get("action_type"): _to_float(a.get("value")) for a in actions}
-    for action_type, label in _RESULT_ACTION_TYPES:
-        if action_type in by_type and by_type[action_type] > 0:
-            return by_type[action_type], label
-    return 0.0, None
-
-
-def _rank_creatives(ads: list[dict[str, Any]], insights: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Attach per-ad performance from insights and sort best-performing first."""
-    by_ad = {str(row.get("ad_id")): row for row in (insights or [])}
-    enriched: list[dict[str, Any]] = []
-    for ad in ads or []:
-        row = by_ad.get(str(ad.get("id")), {})
-        results, results_label = _ad_results(row.get("actions"))
-        ad = {
-            **ad,
-            "_perf": {
-                "impressions": int(_to_float(row.get("impressions"))),
-                "spend": _to_float(row.get("spend")),
-                "ctr": _to_float(row.get("ctr")),
-                "results": results,
-                "results_label": results_label,
-                "has_data": bool(row),
-            },
-        }
-        enriched.append(ad)
-    enriched.sort(
-        key=lambda a: (a["_perf"]["results"], a["_perf"]["ctr"], a["_perf"]["impressions"]),
-        reverse=True,
-    )
-    return enriched
-
-
-def _adset_creatives_sync(adset_id: str) -> tuple[list[dict[str, Any]], str]:
-    """Fetch ONE ad set's ads + ad-level insights (scoped to the ad set) and rank
-    them by performance. Falls back to the cached snapshot's ad list on error.
-    Returns (ranked_ads, source)."""
-    from ..meta_client import (
-        MetaApiError,
-        get_ads_for_adset,
-        get_adset_ad_insights,
-        get_meta_config,
-    )
-
-    config = get_meta_config()
-    if config.is_configured:
-        try:
-            async def _gather() -> tuple[list, list]:
-                return await asyncio.gather(
-                    get_ads_for_adset(config, adset_id),
-                    get_adset_ad_insights(config, adset_id),
-                )
-
-            ads, insights = asyncio.run(_gather())
-            return _rank_creatives(ads, insights), "live"
-        except MetaApiError:
-            logger.exception("Scoped ad-set creatives fetch failed; falling back to snapshot")
-        except Exception:
-            logger.exception("Unexpected error fetching ad-set creatives")
-
-    account = _live_account_sync()
-    ads = [a for a in account.get("ads", []) if str(a.get("adset_id")) == str(adset_id)]
-    return _rank_creatives(ads, []), account.get("source", "snapshot")
+# Creative ranking + scoped fetch live in adset_creatives (shared with the web-app
+# creatives view). Re-exported here under the historical names so existing call
+# sites and tests keep working.
+from ..adset_creatives import (  # noqa: E402
+    fetch_adset_creatives_sync as _adset_creatives_sync,
+    to_float as _to_float,
+)
 
 
 def _perf_line(perf: dict[str, Any]) -> str | None:
     if not perf.get("has_data"):
         return None
     bits = [f"{perf['impressions']:,} impr", f"CTR {perf['ctr']:.2f}%", f"${perf['spend']:,.2f} spend"]
+    if perf.get("clicks"):
+        bits.append(f"{int(perf['clicks']):,} clicks")
     if perf.get("results") and perf.get("results_label"):
         bits.append(f"{int(perf['results']):,} {perf['results_label']}")
     return "📊 " + " · ".join(bits)

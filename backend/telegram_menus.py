@@ -144,8 +144,17 @@ def campaign_adsets_keyboard(campaign_id: str, adsets: list[dict[str, Any]]) -> 
 
 
 def adset_ads_keyboard(adset_id: str, campaign_id: str) -> dict[str, Any]:
-    """Leaf keyboard: just a Back button to the parent campaign's ad sets."""
-    return {"inline_keyboard": [[{"text": "⬅️ Back", "callback_data": f"cmp:c:{campaign_id}"}]]}
+    """Leaf keyboard: open the rich creatives view in the web app (thumbnails +
+    stats) when a dashboard URL is configured, plus a Back button to the parent
+    campaign's ad sets."""
+    rows: list[list[dict[str, Any]]] = []
+    url = _dashboard_url()
+    if url and adset_id:
+        sep = "&" if "?" in url else "?"
+        creatives_url = f"{url}{sep}adset={adset_id}&campaign={campaign_id}"
+        rows.append([{"text": "🖼 View creatives", "web_app": {"url": creatives_url}}])
+    rows.append([{"text": "⬅️ Back", "callback_data": f"cmp:c:{campaign_id}"}])
+    return {"inline_keyboard": rows}
 
 
 # --- Task 4: Pending Approvals drill-down (callback namespace `apv`). ---

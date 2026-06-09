@@ -191,7 +191,9 @@ def test_rank_creatives_orders_by_results_then_ctr():
          "actions": [{"action_type": "offsite_conversion.fb_pixel_lead", "value": "7"}]},
         {"ad_id": "a3", "impressions": "200", "spend": "2", "ctr": "5.0", "actions": []},
     ]
-    ranked = telegram_router._rank_creatives(ads, insights)
+    import backend.adset_creatives as ac
+
+    ranked = ac.rank_creatives(ads, insights)
     assert [a["name"] for a in ranked] == ["TopResults", "HighCtrNoResults", "Low"]
     assert ranked[0]["_perf"]["results"] == 7
     assert ranked[0]["_perf"]["results_label"] == "leads"

@@ -173,9 +173,11 @@ async def get_ads_for_adset(config: MetaConfig, adset_id: str) -> list[dict[str,
 
 
 async def get_adset_ad_insights(
-    config: MetaConfig, adset_id: str, *, date_preset: str = "last_30d"
+    config: MetaConfig, adset_id: str, *, date_preset: str = "maximum"
 ) -> list[dict[str, Any]]:
-    """Ad-level performance for ONE ad set, used to rank its creatives."""
+    """Ad-level lifetime performance for ONE ad set, used to rank its creatives.
+    Defaults to the `maximum` (lifetime) window so paused/older creatives still
+    report spend/impressions/clicks instead of zeros from a 30-day window."""
     return await paged_get(
         config,
         f"/{adset_id}/insights",
