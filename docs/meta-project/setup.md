@@ -8,15 +8,15 @@ Three files in this folder:
 ## Prerequisites
 
 - A Claude.ai plan with **custom connectors** (Pro / Max / Team / Enterprise). You're on **Max** ✅.
-- The **Meta connector deployed** at a private secret URL `https://82-70-42-188.sslip.io/mcp/<SECRET>`
-  (the `/mcp/<SECRET>` endpoint on the VM). Claude will deploy it and give you the exact secret URL.
+- The **Meta connector deployed** at a private secret URL `https://82-70-42-188.sslip.io/mcp/<SECRET>/mcp`
+  (the `/mcp/<SECRET>/mcp` endpoint on the VM). Claude will deploy it and give you the exact secret URL.
   Until it's connected, the Project can chat but can't fetch/edit live data.
 
 ## Steps
 
 ### 1. Connect the Meta tool (after the connector is deployed)
 1. claude.ai → **Settings → Connectors → Add custom connector**.
-2. Name: `Meta Ads`. URL: `https://82-70-42-188.sslip.io/mcp/<SECRET>` (Claude will give you the
+2. Name: `Meta Ads`. URL: `https://82-70-42-188.sslip.io/mcp/<SECRET>/mcp` (Claude will give you the
    exact secret URL).
 3. Leave **Advanced settings / OAuth EMPTY** — this connector uses a private secret URL, no OAuth.
 4. Click **Add**. The Meta tools become available.
