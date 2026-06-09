@@ -120,12 +120,25 @@ _CONFIG_TRIGGERS = (
     "configuration", "custom audience", "custom audiences", "billing", "bid",
 )
 
+# When any of these appear, the operator is asking how a campaign PERFORMED or what to
+# DO next (scale / which-is-best / why), not how it is configured — yield to the
+# performance ranking path so "which audience should we scale" and "which placements
+# worked" keep their performance answer.
+_PERFORMANCE_SIGNALS = (
+    "worked", "performed", "performing", "performance", "best", "top ", "winning",
+    "winner", "scale", "should we", "should i", "why", "rank", "ranking", "results",
+    "convert", "converting", "cost per", "cpl", "roas", "ctr", "lead rate",
+)
+
 
 def is_configuration_question(question: str) -> bool:
     """True when the question asks how a campaign is CONFIGURED (objective, audience,
     interests, placements, age, geo, targeting, A/B, billing, bid) rather than how it
-    is PERFORMING. Used to route to the config answer before the performance ranking."""
+    is PERFORMING. Performance/recommendation phrasings ("which audience should we
+    scale", "which placements worked") yield to the performance ranking path."""
     lower = question.lower()
+    if any(signal in lower for signal in _PERFORMANCE_SIGNALS):
+        return False
     return any(trigger in lower for trigger in _CONFIG_TRIGGERS)
 
 
