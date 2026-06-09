@@ -62,9 +62,10 @@ def validate_init_data(init_data: str, *, max_age_seconds: int = 86400) -> dict[
     if not received_hash:
         logger.warning("webapp-auth validation failed: missing hash in initData")
         return None
-    # Newer Telegram clients add an Ed25519 `signature` field that is NOT part of the
-    # HMAC data-check-string; including it makes the hash mismatch. Drop it.
-    pairs.pop("signature", None)
+    # Telegram computes the HMAC `hash` over ALL remaining fields, INCLUDING the
+    # newer Ed25519 `signature` field — only `hash` itself is excluded. (An earlier
+    # version dropped `signature`, which broke real Mini App logins; verified live
+    # that Telegram includes it in the data-check-string.)
     data_check_string = "\n".join(f"{key}={pairs[key]}" for key in sorted(pairs))
     secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     computed = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()

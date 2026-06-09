@@ -58,6 +58,13 @@ def _open_bot(monkeypatch):
         lambda chat_id, message_id, text, **kwargs: edits.append((text, kwargs)) or {"ok": True},
     )
     monkeypatch.setattr(telegram_router, "_live_account_sync", _account)
+    # The ad-set leaf fetches its creatives scoped to the ad set; stub that seam to
+    # return the account's ads for the requested ad set (ranked, no insights).
+    monkeypatch.setattr(
+        telegram_router,
+        "_adset_creatives_sync",
+        lambda sid: ([a for a in _account()["ads"] if str(a.get("adset_id")) == str(sid)], "live"),
+    )
     return sent, edits
 
 
@@ -109,6 +116,45 @@ def test_adset_callback_renders_creative_detail(monkeypatch):
     assert "vid123" in text  # video link
     assert "adsmanager.facebook.com" in text  # Ads Manager link
     assert "act=555" in text
+
+
+def test_rank_creatives_orders_by_results_then_ctr():
+    ads = [
+        {"id": "a1", "name": "Low"},
+        {"id": "a2", "name": "TopResults"},
+        {"id": "a3", "name": "HighCtrNoResults"},
+    ]
+    insights = [
+        {"ad_id": "a1", "impressions": "100", "spend": "1", "ctr": "0.5", "actions": []},
+        {"ad_id": "a2", "impressions": "50", "spend": "9", "ctr": "1.0",
+         "actions": [{"action_type": "offsite_conversion.fb_pixel_lead", "value": "7"}]},
+        {"ad_id": "a3", "impressions": "200", "spend": "2", "ctr": "5.0", "actions": []},
+    ]
+    ranked = telegram_router._rank_creatives(ads, insights)
+    assert [a["name"] for a in ranked] == ["TopResults", "HighCtrNoResults", "Low"]
+    assert ranked[0]["_perf"]["results"] == 7
+    assert ranked[0]["_perf"]["results_label"] == "leads"
+
+
+def test_adset_leaf_shows_ranked_performance(monkeypatch):
+    _, edits = _open_bot(monkeypatch)
+    ranked = [
+        {"id": "ad_top", "name": "Winner", "status": "ACTIVE",
+         "creative": {"title": "Best hook"},
+         "_perf": {"impressions": 1200, "spend": 45.0, "ctr": 2.1, "results": 12,
+                   "results_label": "leads", "has_data": True}},
+    ]
+    monkeypatch.setattr(telegram_router, "_adset_creatives_sync", lambda sid: (ranked, "live"))
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"message": {"chat": {"id": 1001}, "message_id": 7}, "from": {"username": "a"}, "data": f"cmp:s:{LONG_ADSET_ID}"}},
+    )
+    assert resp.status_code == 200
+    text = next(t for t, _ in edits)
+    assert "Creatives by performance" in text
+    assert "12 leads" in text
+    assert "CTR 2.10%" in text
 
 
 def test_snapshot_source_annotates_as_of_last_sync(monkeypatch):

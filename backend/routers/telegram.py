@@ -145,6 +145,106 @@ def _campaign_detail_text(campaign: dict[str, Any], adsets: list[dict[str, Any]]
     return "\n".join(lines)
 
 
+# Conversion actions worth ranking creatives by, best-result-first. The first type
+# present on an ad becomes its headline "result" (Meta reports several aliases).
+_RESULT_ACTION_TYPES: list[tuple[str, str]] = [
+    ("offsite_conversion.fb_pixel_purchase", "purchases"),
+    ("purchase", "purchases"),
+    ("onsite_conversion.purchase", "purchases"),
+    ("offsite_conversion.fb_pixel_lead", "leads"),
+    ("onsite_conversion.lead_grouped", "leads"),
+    ("lead", "leads"),
+    ("complete_registration", "registrations"),
+    ("onsite_conversion.messaging_conversation_started_7d", "chats started"),
+    ("link_click", "link clicks"),
+]
+
+
+def _to_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _ad_results(actions: list[dict[str, Any]] | None) -> tuple[float, str | None]:
+    """Pick the highest-priority conversion result reported for an ad."""
+    if not actions:
+        return 0.0, None
+    by_type = {a.get("action_type"): _to_float(a.get("value")) for a in actions}
+    for action_type, label in _RESULT_ACTION_TYPES:
+        if action_type in by_type and by_type[action_type] > 0:
+            return by_type[action_type], label
+    return 0.0, None
+
+
+def _rank_creatives(ads: list[dict[str, Any]], insights: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attach per-ad performance from insights and sort best-performing first."""
+    by_ad = {str(row.get("ad_id")): row for row in (insights or [])}
+    enriched: list[dict[str, Any]] = []
+    for ad in ads or []:
+        row = by_ad.get(str(ad.get("id")), {})
+        results, results_label = _ad_results(row.get("actions"))
+        ad = {
+            **ad,
+            "_perf": {
+                "impressions": int(_to_float(row.get("impressions"))),
+                "spend": _to_float(row.get("spend")),
+                "ctr": _to_float(row.get("ctr")),
+                "results": results,
+                "results_label": results_label,
+                "has_data": bool(row),
+            },
+        }
+        enriched.append(ad)
+    enriched.sort(
+        key=lambda a: (a["_perf"]["results"], a["_perf"]["ctr"], a["_perf"]["impressions"]),
+        reverse=True,
+    )
+    return enriched
+
+
+def _adset_creatives_sync(adset_id: str) -> tuple[list[dict[str, Any]], str]:
+    """Fetch ONE ad set's ads + ad-level insights (scoped to the ad set) and rank
+    them by performance. Falls back to the cached snapshot's ad list on error.
+    Returns (ranked_ads, source)."""
+    from ..meta_client import (
+        MetaApiError,
+        get_ads_for_adset,
+        get_adset_ad_insights,
+        get_meta_config,
+    )
+
+    config = get_meta_config()
+    if config.is_configured:
+        try:
+            async def _gather() -> tuple[list, list]:
+                return await asyncio.gather(
+                    get_ads_for_adset(config, adset_id),
+                    get_adset_ad_insights(config, adset_id),
+                )
+
+            ads, insights = asyncio.run(_gather())
+            return _rank_creatives(ads, insights), "live"
+        except MetaApiError:
+            logger.exception("Scoped ad-set creatives fetch failed; falling back to snapshot")
+        except Exception:
+            logger.exception("Unexpected error fetching ad-set creatives")
+
+    account = _live_account_sync()
+    ads = [a for a in account.get("ads", []) if str(a.get("adset_id")) == str(adset_id)]
+    return _rank_creatives(ads, []), account.get("source", "snapshot")
+
+
+def _perf_line(perf: dict[str, Any]) -> str | None:
+    if not perf.get("has_data"):
+        return None
+    bits = [f"{perf['impressions']:,} impr", f"CTR {perf['ctr']:.2f}%", f"${perf['spend']:,.2f} spend"]
+    if perf.get("results") and perf.get("results_label"):
+        bits.append(f"{int(perf['results']):,} {perf['results_label']}")
+    return "📊 " + " · ".join(bits)
+
+
 def _adset_detail_text(
     adset: dict[str, Any], ads: list[dict[str, Any]], account_id: str, campaign_id: str, source: str
 ) -> str:
@@ -161,22 +261,33 @@ def _adset_detail_text(
             pass
     if adset.get("optimization_goal"):
         lines.append(f"Optimization: {html.escape(str(adset.get('optimization_goal')))}")
-    lines.append(f"\n<b>Ads ({len(ads)})</b>")
+    any_data = any((ad.get("_perf") or {}).get("has_data") for ad in ads)
+    header = "🏆 <b>Creatives by performance" if any_data else "<b>Creatives"
+    lines.append(f"\n{header} ({len(ads)})</b>")
     if not ads:
-        lines.append("No ads in this ad set.")
-    for ad in ads[:10]:
+        lines.append("No ads in this ad set yet.")
+    elif not any_data:
+        lines.append("<i>No delivery data in the last 30 days — shown unranked.</i>")
+    for index, ad in enumerate(ads[:10], start=1):
         creative = ad.get("creative") or {}
+        perf = ad.get("_perf") or {}
         lines.append("")
-        lines.append(f"• <b>{html.escape(str(ad.get('name') or 'Ad'))}</b> — {html.escape(_campaign_status_label(ad))}")
+        lines.append(
+            f"{index}. <b>{html.escape(str(ad.get('name') or 'Ad'))}</b>"
+            f" — {html.escape(_campaign_status_label(ad))}"
+        )
+        perf_line = _perf_line(perf)
+        if perf_line:
+            lines.append(f"  {perf_line}")
         if creative.get("title"):
             lines.append(f"  Title: {html.escape(str(creative.get('title')))}")
         body = str(creative.get("body") or "").strip()
         if body:
             lines.append(f"  Body: {html.escape(body[:140])}{'…' if len(body) > 140 else ''}")
         if creative.get("thumbnail_url"):
-            lines.append(f"  Thumbnail: {html.escape(str(creative.get('thumbnail_url')))}")
+            lines.append(f"  🖼 {html.escape(str(creative.get('thumbnail_url')))}")
         if creative.get("video_id"):
-            lines.append(f"  Video: https://www.facebook.com/watch/?v={html.escape(str(creative.get('video_id')))}")
+            lines.append(f"  ▶️ https://www.facebook.com/watch/?v={html.escape(str(creative.get('video_id')))}")
     if account_id and campaign_id:
         acct = account_id[4:] if account_id.startswith("act_") else account_id
         lines.append(
@@ -203,7 +314,6 @@ def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict
     account = _live_account_sync()
     campaigns = account.get("campaigns", [])
     adsets = account.get("adsets", [])
-    ads = account.get("ads", [])
     source = account.get("source", "snapshot")
 
     if tail == "list":
@@ -227,10 +337,10 @@ def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict
             _edit(callback, "This ad set is no longer available.", campaigns_list_keyboard(campaigns))
             return {"ok": False, "telegram": command, "message": "adset not found"}
         campaign_id = str(adset.get("campaign_id") or "")
-        child_ads = [a for a in ads if str(a.get("adset_id")) == sid]
+        ranked_ads, ads_source = _adset_creatives_sync(sid)
         _edit(
             callback,
-            _adset_detail_text(adset, child_ads, account.get("account_id", ""), campaign_id, source),
+            _adset_detail_text(adset, ranked_ads, account.get("account_id", ""), campaign_id, ads_source),
             adset_ads_keyboard(sid, campaign_id),
         )
         return {"ok": True, "telegram": command, "adset": sid}

@@ -12,12 +12,17 @@ from backend.webapp_auth import make_session, user_allowed, valid_session, valid
 TOKEN = "123456:TEST-bot-token"
 
 
-def _make_init_data(token: str, user: dict, *, auth_date: int | None = None) -> str:
+def _make_init_data(
+    token: str, user: dict, *, auth_date: int | None = None, signature: str | None = None
+) -> str:
     pairs = {
         "auth_date": str(auth_date or int(time.time())),
         "query_id": "AAA",
         "user": json.dumps(user, separators=(",", ":")),
     }
+    if signature is not None:
+        # Real Telegram clients include `signature` in the HMAC data-check-string.
+        pairs["signature"] = signature
     data_check_string = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs))
     secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     pairs["hash"] = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
@@ -33,12 +38,13 @@ def test_validate_init_data_accepts_valid_and_rejects_tampered(monkeypatch):
     assert validate_init_data(_make_init_data("999:other", {"id": 42})) is None  # wrong token
 
 
-def test_validate_init_data_ignores_signature_field(monkeypatch):
-    # Newer clients add an Ed25519 `signature` not covered by the HMAC hash; it must
-    # be excluded from the data-check-string or validation breaks.
+def test_validate_init_data_includes_signature_field(monkeypatch):
+    # Newer clients add an Ed25519 `signature` field. Verified live that Telegram
+    # INCLUDES it in the HMAC data-check-string (only `hash` is excluded), so a real
+    # initData carrying `signature` must validate.
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
-    init = _make_init_data(TOKEN, {"id": 5, "username": "op"})
-    user = validate_init_data(init + "&signature=Zm9vYmFyYmF6")
+    init = _make_init_data(TOKEN, {"id": 5, "username": "op"}, signature="Zm9vYmFyYmF6")
+    user = validate_init_data(init)
     assert user and user["id"] == 5
 
 

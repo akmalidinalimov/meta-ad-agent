@@ -134,6 +134,38 @@ async def get_ads(config: MetaConfig) -> list[dict[str, Any]]:
     )
 
 
+async def get_ads_for_adset(config: MetaConfig, adset_id: str) -> list[dict[str, Any]]:
+    """Fetch the ads of ONE ad set directly (scoped), so the drill-down is complete
+    regardless of the account-wide ad page limit."""
+    return await paged_get(
+        config,
+        f"/{adset_id}/ads",
+        {
+            "fields": (
+                "id,name,campaign_id,adset_id,status,effective_status,end_time,"
+                "creative{id,name,title,body,object_type,thumbnail_url,image_url,video_id}"
+            ),
+            "limit": 50,
+        },
+    )
+
+
+async def get_adset_ad_insights(
+    config: MetaConfig, adset_id: str, *, date_preset: str = "last_30d"
+) -> list[dict[str, Any]]:
+    """Ad-level performance for ONE ad set, used to rank its creatives."""
+    return await paged_get(
+        config,
+        f"/{adset_id}/insights",
+        {
+            "level": "ad",
+            "fields": "ad_id,ad_name,impressions,reach,spend,ctr,clicks,actions",
+            "date_preset": date_preset,
+            "limit": 200,
+        },
+    )
+
+
 async def get_video_source(config: MetaConfig, video_id: str) -> dict[str, Any]:
     if not config.is_configured:
         raise MetaApiError("Meta access token and ad account ID are required.")
