@@ -187,18 +187,22 @@ def test_apply_live_reports_meta_error(monkeypatch):
     assert any("Meta rejected" in text for text, _ in sent)
 
 
-def test_question_routes_to_conversational_chat(monkeypatch):
+def test_question_routes_to_agentic_brain(monkeypatch):
+    import backend.agentic_chat as agentic_chat
+    import backend.pending_context_store as pending_store
+
     sent = _open_bot(monkeypatch)
-    monkeypatch.setattr(
-        telegram_router,
-        "answer_agent_question_sync",
-        lambda message, **kwargs: {"answer": "Scale **Business education** next.", "sources": ["test"]},
-    )
+    monkeypatch.setattr(pending_store, "get_pending", lambda op_key, **kw: None)
+
+    async def fake_reply(message, *, operator_key):
+        return "Scale <b>Business education</b> next."
+
+    monkeypatch.setattr(agentic_chat, "agentic_reply", fake_reply)
     client = TestClient(app)
     resp = client.post(
         "/api/telegram/command",
         json={"message": {"chat": {"id": 1001}, "from": {"username": "a"}, "text": "Which audience should I scale?"}},
     )
     assert resp.status_code == 200
-    assert resp.json()["answer"].startswith("Scale")
+    assert resp.json()["agentic"] is True
     assert any("<b>Business education</b>" in text for text, _ in sent)
