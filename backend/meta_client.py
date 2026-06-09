@@ -237,28 +237,28 @@ async def update_ad(config: MetaConfig, ad_id: str, payload: dict[str, Any]) -> 
     return await post_meta_object(config, f"/{ad_id}", payload)
 
 
-async def get_insights(
-    config: MetaConfig,
+_INSIGHTS_FIELDS = (
+    "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
+    "date_start,date_stop,impressions,reach,frequency,spend,cpm,ctr,cpc,clicks,actions,action_values,"
+    # Video engagement for hook-rate / hold-rate creative analysis.
+    "video_play_actions,video_thruplay_watched_actions,video_p25_watched_actions,"
+    "video_p50_watched_actions,video_p75_watched_actions,video_p100_watched_actions,"
+    "video_avg_time_watched_actions"
+)
+
+
+def _insights_params(
     *,
-    breakdowns: list[str] | None = None,
-    level: str = "ad",
-    date_preset: str = "last_90d",
-    since: date | str | None = None,
-    until: date | str | None = None,
-    time_increment: int | None = 1,
-) -> list[dict[str, Any]]:
-    params: dict[str, Any] = {
-        "level": level,
-        "fields": (
-            "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
-            "date_start,date_stop,impressions,reach,frequency,spend,cpm,ctr,cpc,clicks,actions,action_values,"
-            # Video engagement for hook-rate / hold-rate creative analysis.
-            "video_play_actions,video_thruplay_watched_actions,video_p25_watched_actions,"
-            "video_p50_watched_actions,video_p75_watched_actions,video_p100_watched_actions,"
-            "video_avg_time_watched_actions"
-        ),
-        "limit": 200,
-    }
+    level: str | None,
+    breakdowns: list[str] | None,
+    date_preset: str,
+    since: date | str | None,
+    until: date | str | None,
+    time_increment: int | None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"fields": _INSIGHTS_FIELDS, "limit": 200}
+    if level:
+        params["level"] = level
     if time_increment is not None:
         # Per-period rows (default daily). Omit to aggregate over the whole window —
         # much smaller output for ad-hoc breakdown queries.
@@ -269,8 +269,42 @@ async def get_insights(
         params["date_preset"] = date_preset
     if breakdowns:
         params["breakdowns"] = ",".join(breakdowns)
+    return params
 
+
+async def get_insights(
+    config: MetaConfig,
+    *,
+    breakdowns: list[str] | None = None,
+    level: str = "ad",
+    date_preset: str = "last_90d",
+    since: date | str | None = None,
+    until: date | str | None = None,
+    time_increment: int | None = 1,
+) -> list[dict[str, Any]]:
+    params = _insights_params(level=level, breakdowns=breakdowns, date_preset=date_preset,
+                              since=since, until=until, time_increment=time_increment)
     return await paged_get(config, f"/{config.ad_account_id}/insights", params)
+
+
+async def get_entity_insights(
+    config: MetaConfig,
+    object_id: str,
+    *,
+    breakdowns: list[str] | None = None,
+    date_preset: str = "maximum",
+    since: date | str | None = None,
+    until: date | str | None = None,
+    time_increment: int | None = None,
+) -> list[dict[str, Any]]:
+    """Insights for ONE entity (campaign/adset/ad) via its own endpoint, so a scoped
+    breakdown query returns that entity's complete rows instead of being lost in the
+    account-wide page cap. `level` is omitted — the entity id determines the scope."""
+    if not config.is_configured:
+        raise MetaApiError("Meta access token and ad account ID are required.")
+    params = _insights_params(level=None, breakdowns=breakdowns, date_preset=date_preset,
+                              since=since, until=until, time_increment=time_increment)
+    return await paged_get(config, f"/{object_id}/insights", params)
 
 
 async def paged_get(config: MetaConfig, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:

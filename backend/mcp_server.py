@@ -21,6 +21,7 @@ from .meta_client import (
     MetaApiError,
     get_ad_account_summary,
     get_ad_sets,
+    get_entity_insights,
     get_insights,
     get_meta_config,
     update_ad_set,
@@ -126,12 +127,14 @@ async def _get_insights(level: str, object_id: str | None = None,
         return {"rows": [], "configured": False}
     # Aggregate over the whole window (time_increment=None) instead of per-day rows —
     # keeps breakdown queries small enough for the Project's context.
-    rows = await get_insights(config, level=level, breakdowns=breakdowns,
-                              date_preset=date_preset, time_increment=None)
     if object_id:
-        key = {"campaign": "campaign_id", "adset": "adset_id", "ad": "ad_id"}.get(level)
-        if key:
-            rows = [r for r in rows if r.get(key) is None or str(r.get(key)) == str(object_id)]
+        # Scope to the entity's own endpoint so breakdown rows are complete (the
+        # account-wide call caps at one page and would miss the target entity).
+        rows = await get_entity_insights(config, str(object_id), breakdowns=breakdowns,
+                                         date_preset=date_preset, time_increment=None)
+    else:
+        rows = await get_insights(config, level=level, breakdowns=breakdowns,
+                                  date_preset=date_preset, time_increment=None)
     trimmed = [{k: r[k] for k in _INSIGHT_KEEP if k in r} for r in rows]
     truncated = len(trimmed) > _INSIGHT_ROW_CAP
     return {

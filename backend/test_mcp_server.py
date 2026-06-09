@@ -33,19 +33,34 @@ def test_list_campaigns_returns_live(monkeypatch):
     assert out["campaigns"][0]["name"] == "Income"
 
 
-def test_get_insights_passes_breakdowns(monkeypatch):
+def test_get_insights_scoped_uses_entity_endpoint(monkeypatch):
     captured = {}
-    async def fake_insights(config, *, breakdowns=None, level="ad", date_preset="last_90d", time_increment=1, **kw):
+    async def fake_entity_insights(config, object_id, *, breakdowns=None, date_preset="maximum", time_increment=None, **kw):
+        captured["object_id"] = object_id
         captured["breakdowns"] = breakdowns
-        captured["level"] = level
         captured["time_increment"] = time_increment
         return [{"campaign_id": "1", "age": "25-34", "spend": "5", "clicks": "10", "ctr": "2.0", "actions": []}]
-    monkeypatch.setattr(mcp_server, "get_insights", fake_insights)
+    monkeypatch.setattr(mcp_server, "get_entity_insights", fake_entity_insights)
     monkeypatch.setattr(mcp_server, "get_meta_config", lambda: SimpleNamespace(is_configured=True, ad_account_id="act_1"))
     out = asyncio.run(mcp_server._get_insights(level="campaign", object_id="1", breakdowns=["age"], date_preset="last_30d"))
+    assert captured["object_id"] == "1"  # scoped to the entity's own endpoint
     assert captured["breakdowns"] == ["age"]
     assert captured["time_increment"] is None  # aggregated over the window, not per-day
     assert out["rows"][0]["age"] == "25-34"
+
+
+def test_get_insights_unscoped_uses_account_endpoint(monkeypatch):
+    captured = {}
+    async def fake_insights(config, *, breakdowns=None, level="ad", date_preset="last_90d", time_increment=1, **kw):
+        captured["level"] = level
+        captured["time_increment"] = time_increment
+        return [{"campaign_id": "9", "age": "25-34", "spend": "5", "actions": []}]
+    monkeypatch.setattr(mcp_server, "get_insights", fake_insights)
+    monkeypatch.setattr(mcp_server, "get_meta_config", lambda: SimpleNamespace(is_configured=True, ad_account_id="act_1"))
+    out = asyncio.run(mcp_server._get_insights(level="campaign", object_id=None, breakdowns=["age"], date_preset="last_30d"))
+    assert captured["level"] == "campaign"
+    assert captured["time_increment"] is None
+    assert out["rows"][0]["campaign_id"] == "9"
 
 
 def test_update_status_blocks_destructive_without_confirm(monkeypatch):
