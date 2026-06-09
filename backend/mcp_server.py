@@ -109,19 +109,37 @@ async def _get_adset_creatives(adset_id: str) -> dict[str, Any]:
     return {"configured": True, "source": source, "creatives": [serialize_creative(a) for a in ranked]}
 
 
+# Compact per-row projection so deep breakdown queries don't blow the context.
+# (The raw insights row carries large video_* arrays + action_values we drop here.)
+_INSIGHT_KEEP = (
+    "campaign_id", "campaign_name", "adset_id", "adset_name", "ad_id", "ad_name",
+    "age", "gender", "country", "region", "publisher_platform", "platform_position",
+    "impressions", "reach", "spend", "clicks", "ctr", "cpc", "cpm", "actions",
+)
+_INSIGHT_ROW_CAP = 300
+
+
 async def _get_insights(level: str, object_id: str | None = None,
-                        breakdowns: list[str] | None = None, date_preset: str = "maximum") -> list[dict[str, Any]]:
+                        breakdowns: list[str] | None = None, date_preset: str = "maximum") -> dict[str, Any]:
     config = get_meta_config()
     if not config.is_configured:
-        return []
-    rows = await get_insights(config, level=level, breakdowns=breakdowns, date_preset=date_preset)
+        return {"rows": [], "configured": False}
+    # Aggregate over the whole window (time_increment=None) instead of per-day rows —
+    # keeps breakdown queries small enough for the Project's context.
+    rows = await get_insights(config, level=level, breakdowns=breakdowns,
+                              date_preset=date_preset, time_increment=None)
     if object_id:
         key = {"campaign": "campaign_id", "adset": "adset_id", "ad": "ad_id"}.get(level)
         if key:
-            # Keep rows that lack the id field (e.g. breakdown-only rows); only drop
-            # rows that carry the id and don't match the requested object.
             rows = [r for r in rows if r.get(key) is None or str(r.get(key)) == str(object_id)]
-    return rows
+    trimmed = [{k: r[k] for k in _INSIGHT_KEEP if k in r} for r in rows]
+    truncated = len(trimmed) > _INSIGHT_ROW_CAP
+    return {
+        "level": level, "object_id": object_id, "breakdowns": breakdowns or [],
+        "date_preset": date_preset, "row_count": len(trimmed), "truncated": truncated,
+        "rows": trimmed[:_INSIGHT_ROW_CAP],
+        **({"note": f"Showing first {_INSIGHT_ROW_CAP} of {len(trimmed)} rows — narrow with object_id or a breakdown."} if truncated else {}),
+    }
 
 
 async def _search(query: str) -> dict[str, Any]:
@@ -260,8 +278,8 @@ async def get_adset_creatives(adset_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def insights(level: str, object_id: str | None = None,
-                   breakdowns: list[str] | None = None, date_preset: str = "maximum") -> list[dict[str, Any]]:
-    """Live performance rows. level: campaign|adset|ad. breakdowns: any of age, gender, country, region, publisher_platform, platform_position. date_preset e.g. last_7d, last_30d, maximum. (Tool is named `insights` so the module keeps `get_insights` bound to meta_client's function.)"""
+                   breakdowns: list[str] | None = None, date_preset: str = "maximum") -> dict[str, Any]:
+    """Live performance, AGGREGATED over the date window (not per-day). level: campaign|adset|ad. Pass object_id to scope to one entity. breakdowns: any of age, gender, country, region, publisher_platform, platform_position. date_preset e.g. last_7d, last_30d, maximum. Returns {rows, row_count, truncated}; narrow with object_id/breakdown if truncated."""
     return await _get_insights(level, object_id, breakdowns, date_preset)
 
 

@@ -245,10 +245,10 @@ async def get_insights(
     date_preset: str = "last_90d",
     since: date | str | None = None,
     until: date | str | None = None,
+    time_increment: int | None = 1,
 ) -> list[dict[str, Any]]:
     params: dict[str, Any] = {
         "level": level,
-        "time_increment": 1,
         "fields": (
             "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
             "date_start,date_stop,impressions,reach,frequency,spend,cpm,ctr,cpc,clicks,actions,action_values,"
@@ -259,6 +259,10 @@ async def get_insights(
         ),
         "limit": 200,
     }
+    if time_increment is not None:
+        # Per-period rows (default daily). Omit to aggregate over the whole window —
+        # much smaller output for ad-hoc breakdown queries.
+        params["time_increment"] = time_increment
     if since and until:
         params["time_range"] = f'{{"since":"{since}","until":"{until}"}}'
     else:

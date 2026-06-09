@@ -35,15 +35,17 @@ def test_list_campaigns_returns_live(monkeypatch):
 
 def test_get_insights_passes_breakdowns(monkeypatch):
     captured = {}
-    async def fake_insights(config, *, breakdowns=None, level="ad", date_preset="last_90d", **kw):
+    async def fake_insights(config, *, breakdowns=None, level="ad", date_preset="last_90d", time_increment=1, **kw):
         captured["breakdowns"] = breakdowns
         captured["level"] = level
-        return [{"age": "25-34", "spend": "5", "clicks": "10", "ctr": "2.0", "actions": []}]
+        captured["time_increment"] = time_increment
+        return [{"campaign_id": "1", "age": "25-34", "spend": "5", "clicks": "10", "ctr": "2.0", "actions": []}]
     monkeypatch.setattr(mcp_server, "get_insights", fake_insights)
     monkeypatch.setattr(mcp_server, "get_meta_config", lambda: SimpleNamespace(is_configured=True, ad_account_id="act_1"))
-    rows = asyncio.run(mcp_server._get_insights(level="campaign", object_id="1", breakdowns=["age"], date_preset="last_30d"))
+    out = asyncio.run(mcp_server._get_insights(level="campaign", object_id="1", breakdowns=["age"], date_preset="last_30d"))
     assert captured["breakdowns"] == ["age"]
-    assert rows[0]["age"] == "25-34"
+    assert captured["time_increment"] is None  # aggregated over the window, not per-day
+    assert out["rows"][0]["age"] == "25-34"
 
 
 def test_update_status_blocks_destructive_without_confirm(monkeypatch):
