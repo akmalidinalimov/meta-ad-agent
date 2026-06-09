@@ -123,6 +123,28 @@ def edit_message_reply_markup(chat_id: Any, message_id: Any, reply_markup: dict[
     )
 
 
+def edit_message_text(
+    chat_id: Any,
+    message_id: Any,
+    text: str,
+    reply_markup: dict[str, Any] | None = None,
+    parse_mode: str | None = None,
+) -> dict[str, Any]:
+    """Replace an existing message's text (and optionally its inline buttons).
+
+    Used by the in-place drill-down navigation so tapping a button rewrites the
+    same message instead of spamming the chat with new ones.
+    """
+    if not chat_id or not message_id:
+        return {"ok": False, "skipped": True}
+    payload: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id, "text": text}
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    return telegram_api("editMessageText", payload)
+
+
 def answer_callback_query(callback_query_id: str | None, text: str | None = None) -> dict[str, Any]:
     """Acknowledge a button tap so Telegram stops the loading spinner."""
     if not callback_query_id:

@@ -5,7 +5,17 @@ import backend.telegram_outbound as telegram_outbound
 import backend.telegram_setup as telegram_setup
 from backend.app import app
 from backend.chat_service import to_telegram_html
-from backend.telegram_menus import main_menu_keyboard, main_reply_keyboard, welcome_text
+from backend.telegram_menus import (
+    adset_ads_keyboard,
+    approval_adset_detail_keyboard,
+    approval_adsets_keyboard,
+    campaign_adsets_keyboard,
+    campaigns_list_keyboard,
+    main_menu_keyboard,
+    main_reply_keyboard,
+    pending_approvals_keyboard,
+    welcome_text,
+)
 
 
 def test_main_menu_keyboard_has_core_buttons():
@@ -27,7 +37,55 @@ def test_main_reply_keyboard_is_persistent_with_core_buttons():
     labels = [b["text"] for row in kb["keyboard"] for b in row]
     assert "📊 KPIs" in labels
     assert "🤖 Suggestions" in labels
-    assert "📊 Analytics" in labels
+    # Task 6: the redundant Analytics reply button is gone (Dashboard menu button stays).
+    assert "📊 Analytics" not in labels
+    # Tasks 3 + 4: the new drill-down entry points are present.
+    assert "📁 Campaigns" in labels
+    assert "📝 Pending Approvals" in labels
+
+
+def _all_callback_data(kb):
+    return [b["callback_data"] for row in kb["inline_keyboard"] for b in row if "callback_data" in b]
+
+
+def _all_labels(kb):
+    return [b["text"] for row in kb["inline_keyboard"] for b in row]
+
+
+def test_drilldown_keyboards_respect_callback_data_limit():
+    long_id = "9" * 17  # Meta IDs are ~17 digits
+    campaigns = [{"id": long_id, "name": "X" * 80, "status": "ACTIVE"}]
+    adsets = [{"id": long_id, "name": "Y" * 80, "campaign_id": long_id, "status": "PAUSED"}]
+    approval_id = "approval_20260101T000000Z"
+    approvals = [{"id": approval_id, "after": {"campaign": {"name": "Z" * 80}}}]
+    approval_adsets = [{"name": "S" * 80}]
+
+    keyboards = [
+        campaigns_list_keyboard(campaigns),
+        campaign_adsets_keyboard(long_id, adsets),
+        adset_ads_keyboard(long_id, long_id),
+        pending_approvals_keyboard(approvals),
+        approval_adsets_keyboard(approval_id, approval_adsets),
+        approval_adset_detail_keyboard(approval_id),
+    ]
+    for kb in keyboards:
+        for cd in _all_callback_data(kb):
+            assert len(cd.encode("utf-8")) <= 64, cd
+
+
+def test_drilldown_keyboards_have_back_buttons():
+    long_id = "9" * 17
+    adsets = [{"id": long_id, "name": "Ad set", "campaign_id": long_id}]
+    assert "⬅️ Back" in _all_labels(campaign_adsets_keyboard(long_id, adsets))
+    assert "⬅️ Back" in _all_labels(adset_ads_keyboard(long_id, long_id))
+    assert "⬅️ Back" in _all_labels(approval_adsets_keyboard("a1", [{"name": "S"}]))
+    assert "⬅️ Back" in _all_labels(approval_adset_detail_keyboard("a1"))
+
+
+def test_campaigns_list_caps_at_twenty():
+    campaigns = [{"id": str(i), "name": f"C{i}", "status": "ACTIVE"} for i in range(50)]
+    kb = campaigns_list_keyboard(campaigns)
+    assert len(kb["inline_keyboard"]) == 20
 
 
 def test_to_telegram_html_converts_bold_and_escapes():
