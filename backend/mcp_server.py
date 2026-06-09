@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .adset_creatives import fetch_adset_creatives, rank_creatives, serialize_creative
 from .campaign_specific_analysis import find_campaign
@@ -29,7 +30,14 @@ from .meta_live import get_live_account
 
 _DESTRUCTIVE_BUDGET_FRACTION = 0.25
 
-mcp = FastMCP("Meta Ads")
+# The connector is reached through Caddy (Host = the public sslip.io domain) and
+# Claude.ai connects server-side, so MCP's default localhost-only DNS-rebinding
+# guard would 421 every real request. Our security boundary is the unguessable
+# secret mount path + HTTPS + the write gates, so disable the host/origin check.
+mcp = FastMCP(
+    "Meta Ads",
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 
 def requires_confirmation(action: str, change: dict[str, Any], current: dict[str, Any]) -> bool:
