@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -16,6 +17,8 @@ from ..webapp_auth import (
     valid_session,
     validate_init_data,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -54,7 +57,13 @@ class WebAppAuthRequest(BaseModel):
 @router.post("/api/telegram/webapp-auth")
 def webapp_auth(body: WebAppAuthRequest, response: Response) -> dict[str, Any]:
     user = validate_init_data(body.initData)
-    if not user or not user_allowed(user):
+    if not user:
+        # validate_init_data already logged the precise cause (missing bot token /
+        # missing hash / bad hash / stale auth_date / malformed user).
+        logger.warning("webapp-auth rejected: invalid initData user=unknown")
+        raise HTTPException(status_code=401, detail="Telegram authentication failed.")
+    if not user_allowed(user):
+        logger.warning("webapp-auth rejected: user not in allowlist user=%s", user.get("id"))
         raise HTTPException(status_code=401, detail="Telegram authentication failed.")
     _set_session_cookie(response, make_session(f"tg:{user.get('id')}"))
     return {"ok": True, "user": {"id": user.get("id"), "username": user.get("username")}}

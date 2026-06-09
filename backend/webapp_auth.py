@@ -15,10 +15,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 from typing import Any
 from urllib.parse import parse_qsl
+
+logger = logging.getLogger(__name__)
 
 COOKIE_NAME = "session"
 _DEFAULT_TTL = 7 * 24 * 3600
@@ -48,11 +51,16 @@ def validate_init_data(init_data: str, *, max_age_seconds: int = 86400) -> dict[
     HMAC_SHA256(key=secret_key, msg=data_check_string) over the sorted k=v lines.
     """
     token = _bot_token()
-    if not init_data or not token:
+    if not init_data:
+        logger.warning("webapp-auth validation failed: missing initData")
+        return None
+    if not token:
+        logger.warning("webapp-auth validation failed: missing bot token (TELEGRAM_BOT_TOKEN unset)")
         return None
     pairs = dict(parse_qsl(init_data, keep_blank_values=True))
     received_hash = pairs.pop("hash", None)
     if not received_hash:
+        logger.warning("webapp-auth validation failed: missing hash in initData")
         return None
     # Newer Telegram clients add an Ed25519 `signature` field that is NOT part of the
     # HMAC data-check-string; including it makes the hash mismatch. Drop it.
@@ -61,18 +69,25 @@ def validate_init_data(init_data: str, *, max_age_seconds: int = 86400) -> dict[
     secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     computed = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(computed, received_hash):
+        logger.warning("webapp-auth validation failed: bad hash (HMAC mismatch)")
         return None
     try:
         auth_date = int(pairs.get("auth_date", "0"))
     except ValueError:
+        logger.warning("webapp-auth validation failed: stale auth_date (unparseable)")
         return None
     if max_age_seconds and (time.time() - auth_date) > max_age_seconds:
+        logger.warning("webapp-auth validation failed: stale auth_date (older than %ss)", max_age_seconds)
         return None
     try:
         user = json.loads(pairs.get("user", "{}"))
     except json.JSONDecodeError:
+        logger.warning("webapp-auth validation failed: malformed user payload")
         return None
-    return user or None
+    if not user:
+        logger.warning("webapp-auth validation failed: empty user payload")
+        return None
+    return user
 
 
 def user_allowed(user: dict[str, Any]) -> bool:
@@ -81,11 +96,16 @@ def user_allowed(user: dict[str, Any]) -> bool:
 
     allowed = allowed_telegram_values("TELEGRAM_ALLOWED_USER_IDS")
     admin = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+    user_id = str(user.get("id"))
+    # The configured admin must never be locked out, even if an allowlist is set
+    # that omits them.
+    if admin and user_id == admin:
+        return True
     if admin:
         allowed.add(admin)
     if not allowed:
         return True
-    return str(user.get("id")) in allowed
+    return user_id in allowed
 
 
 def make_session(sub: str, *, ttl_seconds: int = _DEFAULT_TTL) -> str:

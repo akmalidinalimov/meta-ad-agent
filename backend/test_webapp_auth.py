@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from fastapi.testclient import TestClient
 
 from backend.app import app
-from backend.webapp_auth import make_session, valid_session, validate_init_data
+from backend.webapp_auth import make_session, user_allowed, valid_session, validate_init_data
 
 TOKEN = "123456:TEST-bot-token"
 
@@ -77,6 +77,31 @@ def test_webapp_auth_with_valid_init_data(monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["user"]["id"] == 7
     assert "session" in resp.cookies
+
+
+def test_admin_chat_id_always_allowed_even_when_allowlist_excludes_it(monkeypatch):
+    # The configured admin must never be locked out, even if TELEGRAM_ALLOWED_USER_IDS
+    # is set to a different id.
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "999")
+    monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "42")
+    assert user_allowed({"id": 42}) is True
+    assert user_allowed({"id": 999}) is True
+    assert user_allowed({"id": 5}) is False
+
+
+def test_webapp_auth_rejection_logs_cause(monkeypatch, caplog):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("SESSION_SECRET", "unit-secret")
+    monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
+    monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
+    client = TestClient(app)
+    init = _make_init_data(TOKEN, {"id": 7, "username": "op"})
+    with caplog.at_level("WARNING"):
+        resp = client.post("/api/telegram/webapp-auth", json={"initData": init + "x"})
+    assert resp.status_code == 401
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    assert "bad hash" in messages  # cause from validate_init_data
+    assert "webapp-auth rejected" in messages  # cause from the router
 
 
 def test_session_guard_blocks_without_cookie_when_enabled(monkeypatch):
