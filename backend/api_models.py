@@ -14,6 +14,13 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     message: str
+    # Optional operator session id so the web chat can refine its in-flight autonomous
+    # draft across turns (maps to a pending_context_store operator key). When absent the
+    # shared "web:default" key is used.
+    sessionId: str | None = None
+    # When True (the default), an autonomously built best-guess campaign is created in
+    # Meta as PAUSED immediately (no separate approval tap), per operator decision.
+    autoExecute: bool = True
 
 
 class ChatResponse(BaseModel):
@@ -108,6 +115,9 @@ class AgentTaskRequest(BaseModel):
     campaignGroupId: str | None = None
     segmentIds: list[str] = []
     prepareApproval: bool = False
+    # Optional operator key (e.g. "tg:12345") so a Telegram-originated task can refine
+    # its in-flight autonomous draft across turns. None keeps the prior behavior.
+    operatorKey: str | None = None
 
 
 class CouncilRequest(BaseModel):

@@ -14,7 +14,7 @@ from .. import approval_store, telegram_outbound
 from ..api_models import AgentTaskRequest, TelegramTestMessageRequest
 from ..approval_store import list_approval_requests
 from ..chat_service import answer_agent_question_sync, to_telegram_html
-from ..execution_service import apply_live_sync, dry_run_sync
+from ..execution_service import apply_live_sync, auto_execute_paused, dry_run_sync
 from ..telegram_commands import normalize_telegram_command
 from ..telegram_digest import compose_kpi_digest_text
 from ..telegram_menus import (
@@ -111,9 +111,44 @@ def _live_account_sync() -> dict[str, Any]:
         "campaigns": acct.campaigns,
         "adsets": acct.adsets,
         "ads": acct.ads,
+        "adstudies": acct.adstudies,
+        "saved_audiences": acct.saved_audiences,
         "account_id": get_meta_config().ad_account_id,
         "source": acct.source,
     }
+
+
+def _approval_total_daily_budget(approval: dict[str, Any]) -> float | None:
+    adsets = (approval.get("after") or {}).get("adsets") or []
+    total = sum(_to_float(a.get("daily_budget")) / 100 for a in adsets)
+    return total or None
+
+
+def _approval_audience_names(approval: dict[str, Any]) -> list[str]:
+    adsets = (approval.get("after") or {}).get("adsets") or []
+    return [str(a.get("name", "")).replace(" - DRAFT", "") for a in adsets if a.get("name")]
+
+
+def _autonomous_created_text(created: list[dict[str, Any]]) -> str:
+    """Confirmation message after auto-creating a PAUSED campaign on Telegram."""
+    counts: dict[str, int] = {}
+    for obj in created or []:
+        counts[str(obj.get("level") or "object")] = counts.get(str(obj.get("level") or "object"), 0) + 1
+    campaign = next((c for c in (created or []) if c.get("level") == "campaign"), {})
+    name = html.escape(str(campaign.get("name", "campaign")))
+    parts = []
+    for level, label in (("campaign", "campaign"), ("adset", "ad set"), ("ad", "ad")):
+        n = counts.get(level, 0)
+        if n:
+            parts.append(f"{n} {label}" + ("s" if n != 1 else ""))
+    summary = ", ".join(parts) or "objects"
+    lines = [
+        f"✅ Created in Meta as <b>PAUSED</b>: {name}.",
+        f"({summary}) — nothing spends until you enable delivery.",
+    ]
+    if campaign.get("id"):
+        lines.append(f"id {html.escape(str(campaign.get('id')))}")
+    return "\n".join(lines)
 
 
 def _campaign_status_label(entity: dict[str, Any]) -> str:
@@ -133,7 +168,14 @@ def _campaigns_list_text(account: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _campaign_detail_text(campaign: dict[str, Any], adsets: list[dict[str, Any]], source: str) -> str:
+def _campaign_detail_text(
+    campaign: dict[str, Any],
+    adsets: list[dict[str, Any]],
+    source: str,
+    adstudies: list[dict[str, Any]] | None = None,
+) -> str:
+    from ..campaign_specific_analysis import ab_test_line
+
     name = html.escape(str(campaign.get("name") or campaign.get("id")))
     lines = [f"📁 <b>{name}</b>"]
     if source != "live":
@@ -141,6 +183,17 @@ def _campaign_detail_text(campaign: dict[str, Any], adsets: list[dict[str, Any]]
     lines.append(f"Status: {html.escape(_campaign_status_label(campaign))}")
     if campaign.get("objective"):
         lines.append(f"Objective: {html.escape(str(campaign.get('objective')))}")
+    if campaign.get("buying_type"):
+        lines.append(f"Buying type: {html.escape(str(campaign.get('buying_type')))}")
+    budget = campaign.get("daily_budget") or campaign.get("lifetime_budget")
+    if budget:
+        try:
+            label = "Daily budget" if campaign.get("daily_budget") else "Lifetime budget"
+            lines.append(f"{label}: ${float(budget) / 100:,.2f}")
+        except (TypeError, ValueError):
+            pass
+    ab = ab_test_line(campaign, adsets, adstudies or [])
+    lines.append(f"A/B test: {html.escape(ab)}")
     lines.append(f"\nAd sets ({len(adsets)}): tap one to see its ads.")
     return "\n".join(lines)
 
@@ -246,8 +299,21 @@ def _perf_line(perf: dict[str, Any]) -> str | None:
 
 
 def _adset_detail_text(
-    adset: dict[str, Any], ads: list[dict[str, Any]], account_id: str, campaign_id: str, source: str
+    adset: dict[str, Any],
+    ads: list[dict[str, Any]],
+    account_id: str,
+    campaign_id: str,
+    source: str,
+    audience_names: dict[str, str] | None = None,
 ) -> str:
+    # Reuse the same config formatters chat uses so the two surfaces stay in sync.
+    from ..campaign_specific_analysis import (
+        format_custom_audiences,
+        format_geo,
+        format_interests,
+        format_placements,
+    )
+
     name = html.escape(str(adset.get("name") or adset.get("id")))
     lines = [f"📦 <b>{name}</b>"]
     if source != "live":
@@ -261,6 +327,32 @@ def _adset_detail_text(
             pass
     if adset.get("optimization_goal"):
         lines.append(f"Optimization: {html.escape(str(adset.get('optimization_goal')))}")
+
+    targeting = adset.get("targeting") or {}
+    age_min = targeting.get("age_min")
+    age_max = targeting.get("age_max")
+    if age_min is not None or age_max is not None:
+        lines.append(f"Age: {html.escape(f'{age_min or 18}-{age_max or 65}')}")
+    geo = format_geo(targeting)
+    if geo:
+        lines.append(f"Geo: {html.escape(geo)}")
+    interests = format_interests(targeting, 8)
+    if interests:
+        lines.append(f"Interests: {html.escape(interests)}")
+    custom = format_custom_audiences(targeting, audience_names or {})
+    if custom:
+        lines.append(f"Custom audiences: {html.escape(custom)}")
+    placements = format_placements(targeting)
+    if placements:
+        lines.append(f"Placements: {html.escape(placements)}")
+    billing = adset.get("billing_event")
+    bid = adset.get("bid_strategy")
+    if billing or bid:
+        billing_bid = f"{billing or 'n/a'} / {bid or 'n/a'}"
+        lines.append(f"Billing/bid: {html.escape(billing_bid)}")
+    if adset.get("is_dynamic_creative"):
+        lines.append("Dynamic creative (DCO): on")
+
     any_data = any((ad.get("_perf") or {}).get("has_data") for ad in ads)
     header = "🏆 <b>Creatives by performance" if any_data else "<b>Creatives"
     lines.append(f"\n{header} ({len(ads)})</b>")
@@ -315,6 +407,12 @@ def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict
     campaigns = account.get("campaigns", [])
     adsets = account.get("adsets", [])
     source = account.get("source", "snapshot")
+    adstudies = account.get("adstudies") or []
+    audience_names = {
+        str(a["id"]): a.get("name", "")
+        for a in (account.get("saved_audiences") or [])
+        if isinstance(a, dict) and a.get("id") is not None
+    }
 
     if tail == "list":
         _edit(callback, _campaigns_list_text(account), campaigns_list_keyboard(campaigns))
@@ -327,7 +425,7 @@ def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict
             _edit(callback, "This campaign is no longer available.", campaigns_list_keyboard(campaigns))
             return {"ok": False, "telegram": command, "message": "campaign not found"}
         child = [a for a in adsets if str(a.get("campaign_id")) == cid]
-        _edit(callback, _campaign_detail_text(campaign, child, source), campaign_adsets_keyboard(cid, child))
+        _edit(callback, _campaign_detail_text(campaign, child, source, adstudies), campaign_adsets_keyboard(cid, child))
         return {"ok": True, "telegram": command, "campaign": cid}
 
     if tail.startswith("s:"):
@@ -340,7 +438,7 @@ def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict
         ranked_ads, ads_source = _adset_creatives_sync(sid)
         _edit(
             callback,
-            _adset_detail_text(adset, ranked_ads, account.get("account_id", ""), campaign_id, ads_source),
+            _adset_detail_text(adset, ranked_ads, account.get("account_id", ""), campaign_id, ads_source, audience_names),
             adset_ads_keyboard(sid, campaign_id),
         )
         return {"ok": True, "telegram": command, "adset": sid}
@@ -480,9 +578,16 @@ def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
 
 
 def _reply_conversational(command: dict[str, Any], text: str) -> dict[str, Any]:
-    """Route free text to the dashboard brain so texting == web chat."""
+    """Route free text to the dashboard brain so texting == web chat.
+
+    Passing the operator key (tg:<chatId>) lets a follow-up answer ("$150/day in
+    Tashkent") refine THIS operator's in-flight autonomous draft instead of starting over.
+    """
+    from ..pending_context_store import operator_key
+
+    op_key = operator_key(telegram_chat_id=command.get("chatId"))
     try:
-        result = answer_agent_question_sync(text)
+        result = answer_agent_question_sync(text, operator_key=op_key)
     except Exception:
         logger.exception("Telegram conversational chat failed")
         _send(command, "I hit an error answering that. Try again, or tap /menu.")
@@ -637,11 +742,57 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     if _looks_like_question(text):
         return _reply_conversational(command, text)
 
-    source_task = AgentTaskRequest(source="telegram", command=text)
+    from ..pending_context_store import clear_pending, get_pending, merge_refinement, operator_key, set_pending
+
+    op_key = operator_key(telegram_chat_id=command.get("chatId"))
+
+    # Pending refinement on the action path too: a non-question follow-up ("$150/day in
+    # Tashkent") refines the operator's in-flight autonomous draft instead of starting a
+    # fresh task. Delegates to the shared chat brain (which owns the refinement logic).
+    pending = get_pending(op_key)
+    if pending and pending.get("approvalId") and merge_refinement(pending, text, None):
+        return _reply_conversational(command, text)
+
+    source_task = AgentTaskRequest(source="telegram", command=text, operatorKey=op_key)
     result = create_orchestrated_agent_task(source_task)
     task = result.get("task", {})
     plan = task.get("plan") or {}
     answer = plan.get("answer") or "Telegram command sent to the orchestrator."
+
+    # Autonomous build on Telegram: auto-create the PAUSED campaign IMMEDIATELY (operator
+    # decision — no separate approval tap), then confirm what was created. Record a pending
+    # pointer first so a later answer can still refine the same draft.
+    approval = plan.get("generatedApprovalRequest") if isinstance(plan, dict) else None
+    if plan.get("autonomous") and isinstance(approval, dict) and approval.get("id"):
+        set_pending(
+            op_key,
+            {
+                "approvalId": approval["id"],
+                "openQuestions": approval.get("openQuestions") or [],
+                "budget": _approval_total_daily_budget(approval),
+                "audiences": _approval_audience_names(approval),
+                "createdAt": approval.get("createdAt"),
+            },
+        )
+        if approval.get("guardrailResult") != "fail":
+            exec_result = auto_execute_paused(approval["id"])
+            if exec_result.get("ok"):
+                clear_pending(op_key)
+                _send(
+                    command,
+                    clamp_telegram_text(_autonomous_created_text(exec_result.get("created", []))),
+                    parse_mode="HTML",
+                )
+                return {**result, "telegram": command, "autonomousCreated": True, "created": exec_result.get("created", [])}
+            blocked = exec_result.get("blocked") or "unknown reason"
+            _send(
+                command,
+                f"I built the PAUSED draft but did not auto-create it in Meta: {html.escape(str(blocked))}. "
+                "It is saved for approval.",
+                parse_mode="HTML",
+            )
+            return {**result, "telegram": command, "autonomousCreated": False, "blocked": blocked}
+
     telegram_reply = send_telegram_reply(command, clamp_telegram_text(format_telegram_orchestrator_reply(plan, answer)))
     return {**result, "telegram": command, "message": "Telegram command sent to the orchestrator.", "reply": telegram_reply}
 

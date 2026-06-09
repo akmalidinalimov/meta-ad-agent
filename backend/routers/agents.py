@@ -18,8 +18,21 @@ from ..agent_orchestrator import (
 from ..agent_quality import evaluate_agent_response
 from ..api_models import ChatRequest, ChatResponse, CouncilRequest
 from ..approval_store import list_approval_requests
-from ..campaign_specific_analysis import campaign_roster_answer, campaign_specific_answer
+from ..campaign_specific_analysis import (
+    campaign_configuration_answer,
+    campaign_roster_answer,
+    campaign_specific_answer,
+)
+from ..execution_service import auto_execute_paused
 from ..meta_live import get_live_account
+from ..pending_context_store import (
+    clear_pending,
+    get_pending,
+    merge_refinement,
+    operator_key,
+    set_pending,
+)
+from .. import approval_store
 from ..dashboard_service import (
     answer_audiences,
     answer_budget_pacing,
@@ -220,8 +233,145 @@ def _should_run_orchestrator(lower: str, routed: dict) -> bool:
     )
 
 
+def _ads_manager_link(account_id: str | None) -> str | None:
+    """Deep link to the account's Ads Manager (campaigns view), or None when unknown."""
+    if not account_id:
+        return None
+    acct = account_id[4:] if str(account_id).startswith("act_") else str(account_id)
+    return f"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act={acct}"
+
+
+def _created_summary(created: list[dict[str, Any]]) -> str:
+    """One-line count of created PAUSED objects, e.g. '1 campaign, 3 ad sets, 15 ads'."""
+    counts: dict[str, int] = {}
+    for obj in created or []:
+        level = str(obj.get("level") or "object")
+        counts[level] = counts.get(level, 0) + 1
+    labels = {"campaign": "campaign", "adset": "ad set", "ad": "ad"}
+    parts = []
+    for level in ("campaign", "adset", "ad"):
+        n = counts.get(level, 0)
+        if n:
+            label = labels[level]
+            parts.append(f"{n} {label}" + ("s" if n != 1 and not label.endswith("s") else ""))
+    return ", ".join(parts) or "no objects"
+
+
+def _append_autonomous_execution(answer: str, created: list[dict[str, Any]], account_id: str | None) -> str:
+    """Append the created-PAUSED-objects summary + Ads Manager deep link to the answer."""
+    lines = [
+        answer,
+        "",
+        f"Created in Meta as PAUSED: {_created_summary(created)}. Nothing spends until you enable delivery.",
+    ]
+    link = _ads_manager_link(account_id)
+    if link:
+        lines.append(f"Review in Ads Manager: {link}")
+    return "\n".join(lines)
+
+
+def _ad_account_id() -> str | None:
+    try:
+        from ..meta_client import get_meta_config
+
+        return get_meta_config().ad_account_id or None
+    except Exception:  # noqa: BLE001 - config absent in tests/dev
+        return None
+
+
+def _approval_total_daily_budget(approval: dict[str, Any]) -> float | None:
+    adsets = (approval.get("after") or {}).get("adsets") or []
+    total = sum(float(a.get("daily_budget") or 0) / 100 for a in adsets)
+    return total or None
+
+
+def _approval_audience_names(approval: dict[str, Any]) -> list[str]:
+    adsets = (approval.get("after") or {}).get("adsets") or []
+    return [str(a.get("name", "")).replace(" - DRAFT", "") for a in adsets if a.get("name")]
+
+
+def _refine_pending_campaign(
+    op_key: str,
+    pending: dict[str, Any],
+    overrides: dict[str, Any],
+    knowledge: dict[str, Any] | None,
+) -> ChatResponse | None:
+    """Rebuild the operator's in-flight autonomous draft with refinement overrides,
+    update the SAME approvalId in place, refresh the pending pointer, and return a
+    "refined your draft" answer. Returns None if the rebuild fails."""
+    from ..opportunity_finder import build_autonomous_campaign
+
+    approval_id = pending["approvalId"]
+    merged_budget = overrides.get("budget", pending.get("budget"))
+    account_id, pixel_id = _ad_account_id(), None
+    try:
+        from ..meta_client import get_meta_config
+
+        config = get_meta_config()
+        account_id = config.ad_account_id or account_id
+        pixel_id = config.pixel_id or None
+    except Exception:  # noqa: BLE001 - config absent in tests/dev
+        pass
+
+    rebuilt = build_autonomous_campaign(
+        knowledge,
+        load_playbooks(),
+        account_id=account_id,
+        budget=merged_budget,
+        n_audiences=3,
+        n_creatives=5,
+        pixel_id=pixel_id,
+        approval_id=approval_id,
+    )
+    if rebuilt is None:
+        return None
+
+    saved = approval_store.update_approval_request(approval_id, rebuilt)
+    set_pending(
+        op_key,
+        {
+            "approvalId": approval_id,
+            "openQuestions": pending.get("openQuestions") or [],
+            "budget": _approval_total_daily_budget(saved),
+            "audiences": _approval_audience_names(saved),
+            "createdAt": pending.get("createdAt"),
+        },
+    )
+
+    # build_autonomous_campaign only consumes `budget` (it re-ranks audiences/geo from the
+    # synced analysis), so the budget override is the lever that actually changes the
+    # packet. Other detected signals are acknowledged so the operator sees they registered.
+    applied = []
+    if "budget" in overrides:
+        applied.append(f"daily budget to ${float(overrides['budget']):,.0f}/day")
+    noted = []
+    if "locations" in overrides:
+        noted.append(f"locations ({', '.join(overrides['locations'])})")
+    if "audiences" in overrides:
+        noted.append(f"audiences ({', '.join(overrides['audiences'])})")
+    if "successMetric" in overrides:
+        noted.append(f"success metric ({overrides['successMetric']})")
+
+    changes = "; ".join(applied) or "your latest preferences"
+    answer = f"I refined your draft paused campaign — updated {changes}."
+    if noted:
+        answer += f" I also noted {', '.join(noted)} for the next rebuild."
+    answer += " It is still PAUSED and saved for review."
+
+    return specialist_chat_response(
+        question=" ".join(applied + noted) or "refine campaign",
+        answer=answer,
+        sources=["opportunity_finder", "pending_context_store", "storage/meta_knowledge_base.json"],
+        suggestedQuestions=[
+            "Approve this paused campaign.",
+            "Lower the daily budget further.",
+            "Swap one of the chosen audiences.",
+        ],
+    )
+
+
 @router.post("/api/agent/chat", response_model=ChatResponse)
-async def agent_chat(request: ChatRequest) -> ChatResponse:
+async def agent_chat(request: ChatRequest, *, operator_key_override: str | None = None) -> ChatResponse:
     question = request.message.strip()
     if not question:
         return ChatResponse(
@@ -235,6 +385,23 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
     dashboard_data = build_dashboard()
     meta = await meta_status()
     knowledge = load_knowledge_base()
+
+    # An explicit operator key (e.g. "tg:12345" from the Telegram conversational path)
+    # wins so refinement state is shared across that operator's turns; otherwise derive
+    # one from the web session id (or the shared web:default fallback).
+    op_key = operator_key_override or operator_key(session_id=request.sessionId)
+
+    # Pending refinement: if the operator has an in-flight autonomous draft AND this
+    # message carries a recognizable refinement signal (budget/location/etc.), rebuild
+    # the SAME approval in place instead of routing as a fresh question. Keeps the
+    # operator iterating on one draft instead of starting over.
+    pending = get_pending(op_key)
+    if pending and pending.get("approvalId"):
+        overrides = merge_refinement(pending, question, knowledge)
+        if overrides:
+            refined = _refine_pending_campaign(op_key, pending, overrides, knowledge)
+            if refined:
+                return refined
 
     # Factual roster questions ("what campaigns are active?") get a guaranteed,
     # data-grounded list from LIVE Meta data — never a stale snapshot, the generic
@@ -252,6 +419,38 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
                     "Which active campaign has the best lead rate?",
                     "Which campaign should we scale next?",
                     "What should we pause?",
+                ],
+            )
+
+    # Live campaign CONFIGURATION questions ("what audience/interests/placements did
+    # <campaign> use? was A/B enabled?") get a deterministic config answer from live
+    # Meta data — routed EARLY, before the performance ranking path, so a config question
+    # never falls through to the performance specialist. Returns None for non-config or
+    # unresolved campaigns, so the performance path still wins.
+    if knowledge or acct.campaigns:
+        config_answer = campaign_configuration_answer(
+            question,
+            knowledge,
+            campaigns=acct.campaigns,
+            adsets=acct.adsets,
+            adstudies=acct.adstudies,
+            saved_audiences=acct.saved_audiences,
+            source=acct.source,
+        )
+        if config_answer:
+            config_sources = (
+                ["campaign_specific_analysis", "meta_live"]
+                if acct.is_live
+                else ["campaign_specific_analysis", "storage/meta_knowledge_base.json"]
+            )
+            return specialist_chat_response(
+                question,
+                answer=config_answer,
+                sources=config_sources,
+                suggestedQuestions=[
+                    "How is this campaign performing?",
+                    "Which ad set should we scale?",
+                    "Was an A/B test run on this campaign?",
                 ],
             )
 
@@ -306,6 +505,35 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
             if orchestrated.get("generatedStrategy"):
                 orchestrated["generatedStrategy"]["playbookId"] = saved_playbook["id"]
             orchestrated["answer"] += "\n\nI saved this as a draft playbook in the dashboard. It is still not executed in Meta Ads."
+
+        approval = orchestrated.get("generatedApprovalRequest")
+        if orchestrated.get("autonomous") and isinstance(approval, dict) and approval.get("id"):
+            # Record a pending pointer so a later turn ("$150/day", "Tashkent only")
+            # refines THIS draft in place instead of starting over.
+            set_pending(
+                op_key,
+                {
+                    "approvalId": approval["id"],
+                    "openQuestions": approval.get("openQuestions") or [],
+                    "budget": _approval_total_daily_budget(approval),
+                    "audiences": _approval_audience_names(approval),
+                    "createdAt": approval.get("createdAt"),
+                },
+            )
+            # Auto-create the PAUSED campaign immediately (no separate approval tap),
+            # unless the operator opted out or the guardrail hard-failed.
+            if request.autoExecute and approval.get("guardrailResult") != "fail":
+                result = auto_execute_paused(approval["id"])
+                if result.get("ok"):
+                    orchestrated["answer"] = _append_autonomous_execution(
+                        orchestrated["answer"], result.get("created", []), _ad_account_id()
+                    )
+                    clear_pending(op_key)
+                elif result.get("blocked"):
+                    orchestrated["answer"] += (
+                        f"\n\nI did not auto-create it in Meta: {result['blocked']} "
+                        "The PAUSED draft is saved and waiting for your approval."
+                    )
         return ChatResponse(**orchestrated)
 
     wants_tracking_answer = any(word in lower for word in ["pixel", "tracking", "visit", "landing", "lead rate", "funnel"])

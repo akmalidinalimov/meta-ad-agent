@@ -25,14 +25,16 @@ def to_telegram_html(text: str) -> str:
     return _BOLD_RE.sub(r"<b>\1</b>", escaped)
 
 
-async def answer_agent_question(message: str) -> dict[str, Any]:
+async def answer_agent_question(message: str, *, operator_key: str | None = None) -> dict[str, Any]:
     # Imported lazily to avoid a router<->service import cycle at module load.
     from .api_models import ChatRequest
     from .routers.agents import agent_chat
 
-    response = await agent_chat(ChatRequest(message=message))
+    # operator_key (e.g. "tg:12345") lets the Telegram path share autonomous-draft
+    # refinement state across an operator's turns; None keeps the web:default behavior.
+    response = await agent_chat(ChatRequest(message=message), operator_key_override=operator_key)
     return {"answer": response.answer, "sources": list(response.sources or [])}
 
 
-def answer_agent_question_sync(message: str) -> dict[str, Any]:
-    return asyncio.run(answer_agent_question(message))
+def answer_agent_question_sync(message: str, *, operator_key: str | None = None) -> dict[str, Any]:
+    return asyncio.run(answer_agent_question(message, operator_key=operator_key))

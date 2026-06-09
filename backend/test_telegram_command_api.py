@@ -463,3 +463,119 @@ def test_telegram_wrong_native_secret_token_is_rejected(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 401
+
+
+def test_telegram_autonomous_build_auto_creates_paused(monkeypatch, tmp_path):
+    """An autonomous build over Telegram auto-creates the PAUSED campaign immediately
+    (no separate approval tap) and confirms what was created."""
+    import backend.routers.telegram as telegram_router
+    import backend.pending_context_store as pending_store
+
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    # Isolate pending state (the router imports these names inside the handler).
+    monkeypatch.setattr(pending_store, "get_pending", lambda op_key, **kw: None)
+    monkeypatch.setattr(pending_store, "set_pending", lambda *a, **k: {})
+    monkeypatch.setattr(pending_store, "clear_pending", lambda *a, **k: None)
+
+    plan = {
+        "activeAgent": "orchestrator",
+        "answer": "I built a best-guess paused campaign on my own.",
+        "autonomous": True,
+        "generatedApprovalRequest": {
+            "id": "autonomous_tg",
+            "status": "needs_review",
+            "guardrailResult": "pass",
+            "after": {"campaign": {"name": "Best Guess - DRAFT"}, "adsets": [{"name": "AI - DRAFT", "daily_budget": 10000}]},
+            "createdAt": "now",
+        },
+    }
+    monkeypatch.setattr(
+        telegram_router,
+        "create_orchestrated_agent_task",
+        lambda request: {"ok": True, "task": {"id": "task_1", "plan": plan}},
+    )
+
+    exec_calls = []
+    monkeypatch.setattr(
+        telegram_router,
+        "auto_execute_paused",
+        lambda approval_id: exec_calls.append(approval_id)
+        or {
+            "ok": True,
+            "created": [
+                {"level": "campaign", "id": "cmp_live", "name": "Best Guess - DRAFT"},
+                {"level": "adset", "id": "as_live", "name": "AI - DRAFT"},
+            ],
+            "blocked": None,
+        },
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "message": {
+                "chat": {"id": 1001},
+                "from": {"id": 2002, "username": "akmal"},
+                "text": "just create a test on your own, you decide",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["autonomousCreated"] is True
+    assert exec_calls == ["autonomous_tg"]
+    body = sent[-1][0]
+    assert "Created in Meta as <b>PAUSED</b>" in body
+    assert "Best Guess - DRAFT" in body
+    assert "1 campaign" in body
+    assert "1 ad set" in body
+
+
+def test_telegram_followup_refines_in_flight_draft(monkeypatch, tmp_path):
+    """A non-question follow-up ("$150/day in Tashkent") refines the operator's in-flight
+    autonomous draft (via the shared chat brain) instead of starting a fresh task."""
+    import backend.routers.telegram as telegram_router
+    import backend.pending_context_store as pending_store
+
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
+    # The operator has a pending draft -> the action path must delegate to the chat brain.
+    monkeypatch.setattr(
+        pending_store, "get_pending", lambda op_key, **kw: {"approvalId": "autonomous_tg", "budget": 100.0}
+    )
+
+    conv_calls = []
+    monkeypatch.setattr(
+        telegram_router,
+        "answer_agent_question_sync",
+        lambda message, **kwargs: conv_calls.append((message, kwargs))
+        or {"answer": "I refined your draft.", "sources": ["pending_context_store"]},
+    )
+    # If a fresh task were created instead, this would fire — assert it does NOT.
+    monkeypatch.setattr(
+        telegram_router,
+        "create_orchestrated_agent_task",
+        lambda request: (_ for _ in ()).throw(AssertionError("should not create a new task on refinement")),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/telegram/command",
+        headers={"x-telegram-agent-secret": "secret"},
+        json={
+            "message": {
+                "chat": {"id": 1001},
+                "from": {"id": 2002, "username": "akmal"},
+                "text": "make it $150/day in Tashkent",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    # Delegated to the chat brain with the Telegram operator key so the same draft refines.
+    assert conv_calls and conv_calls[0][0] == "make it $150/day in Tashkent"
+    assert conv_calls[0][1]["operator_key"] == "tg:1001"

@@ -113,6 +113,243 @@ def campaign_specific_answer(
     return _with_footer(audience_answer(campaign, rows), source)
 
 
+_CONFIG_TRIGGERS = (
+    "objective", "audience", "audiences", "interest", "interests", "placement", "placements",
+    "age", "geo", "location", "locations", "targeting", "a/b", "ab test", "ab-test",
+    "split test", "how was it set up", "how was it setup", "set up", "setup", "configured",
+    "configuration", "custom audience", "custom audiences", "billing", "bid",
+)
+
+
+def is_configuration_question(question: str) -> bool:
+    """True when the question asks how a campaign is CONFIGURED (objective, audience,
+    interests, placements, age, geo, targeting, A/B, billing, bid) rather than how it
+    is PERFORMING. Used to route to the config answer before the performance ranking."""
+    lower = question.lower()
+    return any(trigger in lower for trigger in _CONFIG_TRIGGERS)
+
+
+def campaign_configuration_answer(
+    question: str,
+    knowledge: dict[str, Any],
+    *,
+    campaigns: list[dict[str, Any]] | None = None,
+    adsets: list[dict[str, Any]] | None = None,
+    adstudies: list[dict[str, Any]] | None = None,
+    saved_audiences: list[dict[str, Any]] | None = None,
+    source: str = "snapshot",
+) -> str | None:
+    """Render a named campaign's live CONFIGURATION (objective, targeting, placements,
+    A/B status) — NOT its performance. Returns None for non-config questions (so the
+    performance path still wins) or when the named campaign can't be resolved."""
+    if not is_configuration_question(question):
+        return None
+
+    campaign = find_campaign(question, knowledge, campaigns=campaigns, source=source)
+    if not campaign:
+        return None
+
+    # Resolve the full campaign dict (find_campaign returns a normalized {id,name} only).
+    source_campaigns = campaigns if campaigns is not None else (knowledge.get("raw", {}).get("campaigns", []) or [])
+    full = next(
+        (c for c in source_campaigns if str(c.get("id") or "") == campaign["id"]),
+        None,
+    )
+    full = full if isinstance(full, dict) else {"id": campaign["id"], "name": campaign["name"]}
+
+    campaign_adsets = [
+        a
+        for a in (adsets or [])
+        if isinstance(a, dict) and str(a.get("campaign_id") or "") == campaign["id"]
+    ]
+    audience_names = {
+        str(a.get("id")): str(a.get("name") or "")
+        for a in (saved_audiences or [])
+        if isinstance(a, dict) and a.get("id") is not None
+    }
+    # Nothing config-worthy to report (no ad set targeting AND no A/B study for this
+    # campaign) -> return None so the performance ranking path still answers. This keeps
+    # "which audience should we scale from X" on the performance path even though it
+    # contains the config trigger word "audience".
+    ab_known = ab_test_line(full, campaign_adsets, adstudies or []) != "not detected"
+    if not campaign_adsets and not ab_known:
+        return None
+    answer = render_campaign_config(
+        full,
+        campaign_adsets,
+        adstudies=adstudies or [],
+        audience_names=audience_names,
+    )
+    return _with_footer(answer, source)
+
+
+def render_campaign_config(
+    campaign: dict[str, Any],
+    adsets: list[dict[str, Any]],
+    *,
+    adstudies: list[dict[str, Any]] | None = None,
+    audience_names: dict[str, str] | None = None,
+    max_interests: int = 12,
+) -> str:
+    """Shared config renderer used by chat and (indirectly) Telegram. Pure: no I/O."""
+    audience_names = audience_names or {}
+    name = str(campaign.get("name") or campaign.get("id") or "Unknown campaign")
+    lines = [f"Configuration for {name}:"]
+
+    objective = campaign.get("objective")
+    if objective:
+        lines.append(f"- Objective: {objective}")
+    buying_type = campaign.get("buying_type")
+    if buying_type:
+        lines.append(f"- Buying type: {buying_type}")
+
+    ab = ab_test_line(campaign, adsets, adstudies or [])
+    lines.append(f"- A/B test: {ab}")
+
+    if not adsets:
+        lines.append("\nNo ad sets found for this campaign in the available data.")
+        return "\n".join(lines)
+
+    lines.append(f"\nAd sets ({len(adsets)}):")
+    for adset in adsets[:10]:
+        adset_name = str(adset.get("name") or adset.get("id") or "Ad set")
+        lines.append(f"\n{adset_name}:")
+        targeting = adset.get("targeting") or {}
+        age = format_age(targeting)
+        if age:
+            lines.append(f"  - Age: {age}")
+        geo = format_geo(targeting)
+        if geo:
+            lines.append(f"  - Geo: {geo}")
+        interests = format_interests(targeting, max_interests)
+        if interests:
+            lines.append(f"  - Interests: {interests}")
+        custom = format_custom_audiences(targeting, audience_names)
+        if custom:
+            lines.append(f"  - Custom audiences: {custom}")
+        placements = format_placements(targeting)
+        if placements:
+            lines.append(f"  - Placements: {placements}")
+        if adset.get("optimization_goal"):
+            lines.append(f"  - Optimization: {adset.get('optimization_goal')}")
+        billing = adset.get("billing_event")
+        bid = adset.get("bid_strategy")
+        if billing or bid:
+            lines.append(f"  - Billing/bid: {billing or 'n/a'} / {bid or 'n/a'}")
+        if adset.get("is_dynamic_creative"):
+            lines.append("  - Dynamic creative (DCO): on")
+
+    return "\n".join(lines)
+
+
+def ab_test_line(
+    campaign: dict[str, Any],
+    adsets: list[dict[str, Any]],
+    adstudies: list[dict[str, Any]],
+) -> str:
+    """Report A/B (split-test / adstudy) status by scanning adstudies for this campaign."""
+    campaign_id = str(campaign.get("id") or "")
+    adset_ids = {str(a.get("id")) for a in adsets if a.get("id") is not None}
+    for study in adstudies or []:
+        if not isinstance(study, dict):
+            continue
+        cells = study.get("cells") or {}
+        cell_rows = cells.get("data", cells) if isinstance(cells, dict) else cells
+        for cell in cell_rows or []:
+            if not isinstance(cell, dict):
+                continue
+            cell_adsets = cell.get("adsets") or {}
+            adset_rows = cell_adsets.get("data", cell_adsets) if isinstance(cell_adsets, dict) else cell_adsets
+            for adset in adset_rows or []:
+                if not isinstance(adset, dict):
+                    continue
+                if str(adset.get("campaign_id") or "") == campaign_id or str(adset.get("id") or "") in adset_ids:
+                    study_name = study.get("name") or study.get("id") or "split test"
+                    return f"enabled ({study_name})"
+    return "not detected"
+
+
+def format_age(targeting: dict[str, Any]) -> str | None:
+    age_min = targeting.get("age_min")
+    age_max = targeting.get("age_max")
+    if age_min is None and age_max is None:
+        return None
+    return f"{age_min or '18'}-{age_max or '65+'}"
+
+
+def format_geo(targeting: dict[str, Any]) -> str | None:
+    geo = targeting.get("geo_locations") or {}
+    if not isinstance(geo, dict):
+        return None
+    parts: list[str] = []
+    for country in geo.get("countries") or []:
+        parts.append(str(country))
+    for region in geo.get("regions") or []:
+        if isinstance(region, dict) and region.get("name"):
+            parts.append(str(region["name"]))
+    for city in geo.get("cities") or []:
+        if isinstance(city, dict) and city.get("name"):
+            parts.append(str(city["name"]))
+    for custom in geo.get("custom_locations") or []:
+        if isinstance(custom, dict) and custom.get("name"):
+            parts.append(str(custom["name"]))
+    if not parts:
+        return None
+    return ", ".join(parts[:8]) + ("…" if len(parts) > 8 else "")
+
+
+def format_interests(targeting: dict[str, Any], max_n: int = 12) -> str | None:
+    names: list[str] = []
+    for spec in targeting.get("flexible_spec") or []:
+        if not isinstance(spec, dict):
+            continue
+        for interest in spec.get("interests") or []:
+            if isinstance(interest, dict) and interest.get("name"):
+                names.append(str(interest["name"]))
+            elif isinstance(interest, str):
+                names.append(interest)
+    # Also support a flat interests list.
+    for interest in targeting.get("interests") or []:
+        if isinstance(interest, dict) and interest.get("name"):
+            names.append(str(interest["name"]))
+        elif isinstance(interest, str):
+            names.append(interest)
+    if not names:
+        return None
+    shown = names[:max_n]
+    suffix = f" (+{len(names) - max_n} more)" if len(names) > max_n else ""
+    return ", ".join(shown) + suffix
+
+
+def format_placements(targeting: dict[str, Any]) -> str | None:
+    platforms = targeting.get("publisher_platforms") or []
+    positions: list[str] = []
+    for key in ("instagram_positions", "facebook_positions", "messenger_positions", "audience_network_positions"):
+        positions.extend(str(p) for p in (targeting.get(key) or []))
+    if not platforms and not positions:
+        return None
+    bits = []
+    if platforms:
+        bits.append("/".join(str(p) for p in platforms))
+    if positions:
+        bits.append("positions: " + ", ".join(positions[:8]) + ("…" if len(positions) > 8 else ""))
+    return "; ".join(bits)
+
+
+def format_custom_audiences(targeting: dict[str, Any], names: dict[str, str]) -> str | None:
+    resolved: list[str] = []
+    for entry in targeting.get("custom_audiences") or []:
+        if isinstance(entry, dict):
+            aud_id = str(entry.get("id") or "")
+            resolved.append(entry.get("name") or names.get(aud_id) or aud_id or "audience")
+        else:
+            aud_id = str(entry)
+            resolved.append(names.get(aud_id) or aud_id)
+    if not resolved:
+        return None
+    return ", ".join(resolved[:8]) + ("…" if len(resolved) > 8 else "")
+
+
 def find_campaign(
     question: str,
     knowledge: dict[str, Any],

@@ -192,7 +192,7 @@ def test_question_routes_to_conversational_chat(monkeypatch):
     monkeypatch.setattr(
         telegram_router,
         "answer_agent_question_sync",
-        lambda message: {"answer": "Scale **Business education** next.", "sources": ["test"]},
+        lambda message, **kwargs: {"answer": "Scale **Business education** next.", "sources": ["test"]},
     )
     client = TestClient(app)
     resp = client.post(

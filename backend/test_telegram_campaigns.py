@@ -11,7 +11,14 @@ LONG_ADSET_ID = "238400000000000002"
 def _account():
     return {
         "campaigns": [
-            {"id": LONG_CAMPAIGN_ID, "name": "Spring Promo", "status": "ACTIVE", "objective": "OUTCOME_SALES"},
+            {
+                "id": LONG_CAMPAIGN_ID,
+                "name": "Spring Promo",
+                "status": "ACTIVE",
+                "objective": "OUTCOME_SALES",
+                "buying_type": "AUCTION",
+                "daily_budget": "20000",
+            },
             {"id": "120200000000000099", "name": "Old Brand", "status": "PAUSED"},
         ],
         "adsets": [
@@ -22,6 +29,20 @@ def _account():
                 "status": "ACTIVE",
                 "daily_budget": "5000",
                 "optimization_goal": "OFFSITE_CONVERSIONS",
+                "billing_event": "IMPRESSIONS",
+                "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                "is_dynamic_creative": True,
+                "targeting": {
+                    "age_min": 25,
+                    "age_max": 44,
+                    "geo_locations": {"cities": [{"name": "Tashkent"}]},
+                    "publisher_platforms": ["instagram", "facebook"],
+                    "instagram_positions": ["reels", "story"],
+                    "flexible_spec": [
+                        {"interests": [{"name": f"Interest {i}"} for i in range(20)]}
+                    ],
+                    "custom_audiences": [{"id": "ca_77"}],
+                },
             }
         ],
         "ads": [
@@ -40,6 +61,14 @@ def _account():
                 },
             }
         ],
+        "adstudies": [
+            {
+                "id": "study_1",
+                "name": "Spring A/B",
+                "cells": {"data": [{"adsets": {"data": [{"id": LONG_ADSET_ID, "campaign_id": LONG_CAMPAIGN_ID}]}}]},
+            }
+        ],
+        "saved_audiences": [{"id": "ca_77", "name": "Past Buyers"}],
         "account_id": "act_555",
         "source": "live",
     }
@@ -93,6 +122,11 @@ def test_campaign_callback_edits_to_adsets(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["campaign"] == LONG_CAMPAIGN_ID
+    # The campaign detail text now shows buying type, an A/B indicator, and campaign budget.
+    text = next(t for t, _ in edits)
+    assert "Buying type: AUCTION" in text
+    assert "A/B test: enabled (Spring A/B)" in text
+    assert "Daily budget: $200.00" in text
     # Ad set names live in the inline keyboard buttons; callbacks drill to cmp:s:<id>.
     markup = next(kwargs["reply_markup"] for _, kwargs in edits if "reply_markup" in kwargs)
     labels = [b["text"] for row in markup["inline_keyboard"] for b in row]
@@ -116,6 +150,33 @@ def test_adset_callback_renders_creative_detail(monkeypatch):
     assert "vid123" in text  # video link
     assert "adsmanager.facebook.com" in text  # Ads Manager link
     assert "act=555" in text
+    # New config fields: interests/placements/age/geo/custom-audience names/billing-bid/DCO.
+    assert "Age: 25-44" in text
+    assert "Tashkent" in text
+    assert "Interest 0" in text
+    assert "+12 more" in text  # interest list truncated to 8 of 20
+    assert "instagram" in text
+    assert "Past Buyers" in text  # custom-audience id ca_77 resolved to name
+    assert "Billing/bid: IMPRESSIONS / LOWEST_COST_WITHOUT_CAP" in text
+    assert "Dynamic creative (DCO): on" in text
+    # Stays well under Telegram's 4096-char limit.
+    assert len(text) < 4096
+
+
+def test_adset_detail_resolves_custom_audience_id_fallback(monkeypatch):
+    # When the saved-audience map has no name, the raw id is shown (no crash).
+    _, edits = _open_bot(monkeypatch)
+    account = _account()
+    account["saved_audiences"] = []  # force fallback to id
+    monkeypatch.setattr(telegram_router, "_live_account_sync", lambda: account)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"message": {"chat": {"id": 1001}, "message_id": 7}, "from": {"username": "a"}, "data": f"cmp:s:{LONG_ADSET_ID}"}},
+    )
+    assert resp.status_code == 200
+    text = next(t for t, _ in edits)
+    assert "Custom audiences: ca_77" in text
 
 
 def test_rank_creatives_orders_by_results_then_ctr():
