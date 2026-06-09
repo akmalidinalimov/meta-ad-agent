@@ -8,17 +8,21 @@ Three files in this folder:
 ## Prerequisites
 
 - A Claude.ai plan with **custom connectors** (Pro / Max / Team / Enterprise). You're on **Max** ✅.
-- The **Meta connector deployed** at `https://82-70-42-188.sslip.io/mcp` (the `/mcp` endpoint on the
-  VM). **This is not built yet** — Claude will build + deploy it, then give you the exact URL + the
-  one-time "Allow" step. Until it's connected, the Project can chat but can't fetch/edit live data.
+- The **Meta connector deployed** at a private secret URL `https://82-70-42-188.sslip.io/mcp/<SECRET>`
+  (the `/mcp/<SECRET>` endpoint on the VM). Claude will deploy it and give you the exact secret URL.
+  Until it's connected, the Project can chat but can't fetch/edit live data.
 
 ## Steps
 
 ### 1. Connect the Meta tool (after the connector is deployed)
 1. claude.ai → **Settings → Connectors → Add custom connector**.
-2. Name: `Meta Ads`. URL: `https://82-70-42-188.sslip.io/mcp`.
-3. Click **Connect / Allow** and complete the one-time sign-in (OAuth). You should see the Meta
-   tools become available.
+2. Name: `Meta Ads`. URL: `https://82-70-42-188.sslip.io/mcp/<SECRET>` (Claude will give you the
+   exact secret URL).
+3. Leave **Advanced settings / OAuth EMPTY** — this connector uses a private secret URL, no OAuth.
+4. Click **Add**. The Meta tools become available.
+
+Security: the secret URL is your key — don't share it. If it leaks, rotate `MCP_PATH_SECRET` on the
+server and re-add the connector with the new URL.
 
 ### 2. Create the Project
 1. claude.ai → **Projects → Create project**. Name it e.g. **"Shahlo Meta Ads"**.
