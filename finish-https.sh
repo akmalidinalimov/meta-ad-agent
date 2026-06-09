@@ -7,16 +7,15 @@ set -euo pipefail
 
 DOMAIN="${1:?Usage: finish-https.sh <subdomain.duckdns.org>}"
 APP_DIR=/home/opc/meta-ad-agent
-HASH="$(cat /home/opc/caddy/pw.hash)"
 
 echo "==> 1/6 Writing Caddyfile for ${DOMAIN}"
+# Auth is handled inside the app (session cookie: browser login + Telegram Mini App
+# initData), so Caddy is a plain HTTPS reverse proxy. Set DASHBOARD_SESSION_AUTH=true,
+# DASHBOARD_PASSWORD, SESSION_SECRET, and PUBLIC_DASHBOARD_URL in the app's .env.
 sudo mkdir -p /etc/caddy
 sudo tee /etc/caddy/Caddyfile >/dev/null <<EOF
 ${DOMAIN} {
     encode gzip
-    basic_auth {
-        admin ${HASH}
-    }
     reverse_proxy 127.0.0.1:8000
 }
 EOF
@@ -81,12 +80,12 @@ curl -s "https://api.telegram.org/bot${TOKEN}/setWebhook?url=https://${DOMAIN}/a
 
 echo "==> 6/6 Verifying"
 echo "  internal app: $(curl -s http://127.0.0.1:8000/api/health)"
-echo -n "  HTTPS (expect 401 = cert OK + password lock active): "
+echo -n "  HTTPS (expect 200 = cert OK; dashboard data is gated by the app session): "
 for i in $(seq 1 18); do
   CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 https://${DOMAIN}/api/health 2>/dev/null || echo 000)"
   if [ "$CODE" != "000" ]; then echo "HTTP $CODE"; break; fi
   sleep 5
 done
 echo ""
-echo "DONE. Open: https://${DOMAIN}/   (user: admin, password from setup)"
+echo "DONE. Open: https://${DOMAIN}/   (sign in with DASHBOARD_PASSWORD; Telegram Mini App needs no password)"
 echo "Webhook status: curl -s \"https://api.telegram.org/bot\${TOKEN}/getWebhookInfo\""
