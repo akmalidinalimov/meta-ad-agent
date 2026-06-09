@@ -92,11 +92,16 @@ def test_telegram_command_creates_agent_task(monkeypatch, tmp_path):
     assert tasks[0]["requestedAction"].startswith("Create a campaign")
     assert tasks[0]["activeAgent"] == "orchestrator"
     assert sent[0][1]["chat_id"] == "1001"
-    assert "approval-ready campaign plan" in sent[0][0]
-    assert "Agent: orchestrator" in sent[0][0]
-    assert "Quality:" in sent[0][0]
-    assert "Involved agents:" in sent[0][0]
-    assert "Next:" in sent[0][0]
+    assert sent[0][1]["parse_mode"] == "HTML"
+    body = sent[0][0]
+    # Humanized HTML structure: emoji header, bold metadata, delimited sections.
+    assert "<b>🤖 Orchestrator</b>" in body
+    assert "approval-ready campaign plan" in body
+    assert "Agent: <b>orchestrator</b>" in body
+    assert "Quality:" in body
+    assert "Involved agents:" in body
+    assert "<b>Next:</b>" in body
+    assert "🔒 Safety:" in body
 
 
 def test_telegram_natural_language_meta_action_creates_approval(monkeypatch, tmp_path):
@@ -147,7 +152,8 @@ def test_telegram_status_command_replies_without_creating_task(monkeypatch, tmp_
     assert response.status_code == 200
     assert response.json()["shortcut"] == "status"
     assert client.get("/api/tasks").json()["tasks"] == []
-    assert "Agent status" in sent[0][0]
+    assert "<b>📈 Agent status</b>" in sent[0][0]
+    assert sent[0][1]["parse_mode"] == "HTML"
 
 
 def test_telegram_attention_question_replies_with_monitoring_context(monkeypatch, tmp_path):
@@ -171,8 +177,9 @@ def test_telegram_attention_question_replies_with_monitoring_context(monkeypatch
 
     assert response.status_code == 200
     assert response.json()["shortcut"] == "attention"
-    assert "What needs attention now" in sent[0][0]
+    assert "<b>🚨 What needs attention now</b>" in sent[0][0]
     assert "Lead rate dropped" in sent[0][0]
+    assert sent[0][1]["parse_mode"] == "HTML"
     assert client.get("/api/tasks").json()["tasks"] == []
 
 
@@ -186,7 +193,8 @@ def test_telegram_tasks_and_approvals_commands_show_queue(monkeypatch, tmp_path)
     create_approval_request(
         build_campaign_creation_approval(
             {
-                "name": "Queue approval",
+                # Special chars exercise the HTML-escape path in telegram_approvals_text.
+                "name": "Queue <approval> & more",
                 "segments": [{"id": "income", "name": "Income", "startingBudgetUsd": 50}],
                 "rules": {"maxDailyBudgetUsd": 100},
             },
@@ -209,8 +217,14 @@ def test_telegram_tasks_and_approvals_commands_show_queue(monkeypatch, tmp_path)
 
     assert tasks_response.json()["shortcut"] == "tasks"
     assert approvals_response.json()["shortcut"] == "approvals"
+    assert "<b>🗒️ Latest tasks</b>" in sent[0][0]
+    assert sent[0][1]["parse_mode"] == "HTML"
     assert "Prepare launch" in sent[0][0]
-    assert "Queue approval" in sent[1][0]
+    assert "<b>📝 Latest approvals</b>" in sent[1][0]
+    assert sent[1][1]["parse_mode"] == "HTML"
+    # Dynamic campaign name with special chars must be HTML-escaped (no raw < or &).
+    assert "Queue &lt;approval&gt; &amp; more" in sent[1][0]
+    assert "Queue <approval> & more" not in sent[1][0]
 
 
 def test_telegram_agents_and_help_commands_reply(monkeypatch, tmp_path):
@@ -231,7 +245,11 @@ def test_telegram_agents_and_help_commands_reply(monkeypatch, tmp_path):
 
     assert agents_response.json()["shortcut"] == "agents"
     assert help_response.json()["shortcut"] == "help"
+    assert "<b>🤖 Available agents</b>" in sent[0][0]
+    assert sent[0][1]["parse_mode"] == "HTML"
     assert "Orchestrator Agent" in sent[0][0]
+    assert "<b>📖 Meta Agent commands</b>" in sent[1][0]
+    assert sent[1][1]["parse_mode"] == "HTML"
     assert "/approvals" in sent[1][0]
 
 

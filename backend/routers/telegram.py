@@ -75,9 +75,9 @@ def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
     elif target == "suggestions":
         _send_pending_suggestions(command)
     elif target == "status":
-        _send(command, telegram_status_text())
+        _send(command, telegram_status_text(), parse_mode="HTML")
     elif target == "alerts":
-        _send(command, telegram_attention_text())
+        _send(command, telegram_attention_text(), parse_mode="HTML")
     elif target == "chat":
         _send(command, '💬 Just text me your question — e.g. "what are my best creatives right now?"')
     elif target == "analytics":
@@ -232,7 +232,7 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         return shortcut
     if is_attention_question(text):
         answer = telegram_attention_text()
-        _send(command, answer)
+        _send(command, answer, parse_mode="HTML")
         return {"ok": True, "shortcut": "attention", "telegram": command, "answer": answer}
 
     # Questions -> conversational brain (control by texting). Other free text
