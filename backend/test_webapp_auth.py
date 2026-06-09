@@ -33,6 +33,15 @@ def test_validate_init_data_accepts_valid_and_rejects_tampered(monkeypatch):
     assert validate_init_data(_make_init_data("999:other", {"id": 42})) is None  # wrong token
 
 
+def test_validate_init_data_ignores_signature_field(monkeypatch):
+    # Newer clients add an Ed25519 `signature` not covered by the HMAC hash; it must
+    # be excluded from the data-check-string or validation breaks.
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    init = _make_init_data(TOKEN, {"id": 5, "username": "op"})
+    user = validate_init_data(init + "&signature=Zm9vYmFyYmF6")
+    assert user and user["id"] == 5
+
+
 def test_validate_init_data_rejects_stale(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
     old = _make_init_data(TOKEN, {"id": 1}, auth_date=int(time.time()) - 90000)

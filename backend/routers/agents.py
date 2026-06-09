@@ -184,6 +184,41 @@ def format_council_answer(council: dict[str, Any]) -> str:
 
 
 
+# Informational questions ("what campaigns are active?", "which audience is best?")
+# must be answered from the account data by the LLM, NOT handed to the orchestrator,
+# which replies with generic campaign-creation / agent-description text. The orchestrator
+# only runs when the message expresses an explicit create/change action.
+_QUESTION_STARTERS = (
+    "what", "which", "why", "how", "who", "when", "where", "is ", "are ", "do ", "does ",
+    "can ", "show", "list", "tell me", "explain", "compare", "summarize", "summarise",
+)
+_ACTION_WORDS = (
+    "create", "build", "launch", "set up", "setup", "draft", "make a", "make me", "plan a",
+    "generate a", "rename", "pause", "resume", "turn off", "turn on", "increase", "decrease",
+    "raise the", "lower the", "duplicate", "set budget", "change the budget", "prepare a",
+    "prepare the", "scale up", "scale the",
+)
+# The orchestrator legitimately *describes* these agents/workflows for questions about
+# the agent system itself; only those keep using it for non-action questions.
+_ORCHESTRATOR_INFO_AGENTS = {"meta_ai_advisor", "meta_ai_strategist", "execution"}
+_AGENT_SYSTEM_WORDS = ("sub-agent", "subagent", "agent role", "orchestrator", "specialist")
+
+
+def _wants_action(lower: str) -> bool:
+    stripped = lower.strip()
+    if stripped.endswith("?") or stripped.startswith(_QUESTION_STARTERS):
+        return False
+    return any(word in lower for word in _ACTION_WORDS)
+
+
+def _should_run_orchestrator(lower: str, routed: dict) -> bool:
+    return (
+        _wants_action(lower)
+        or routed.get("agentId") in _ORCHESTRATOR_INFO_AGENTS
+        or any(word in lower for word in _AGENT_SYSTEM_WORDS)
+    )
+
+
 @router.post("/api/agent/chat", response_model=ChatResponse)
 async def agent_chat(request: ChatRequest) -> ChatResponse:
     question = request.message.strip()
@@ -241,7 +276,7 @@ async def agent_chat(request: ChatRequest) -> ChatResponse:
             extra={"proactiveInsights": insights},
         )
 
-    orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks())
+    orchestrated = orchestrate_agent_chat(question, knowledge=knowledge, playbooks=load_playbooks()) if _should_run_orchestrator(lower, routed) else None
     if orchestrated:
         generated_playbook = orchestrated.get("generatedPlaybook")
         if generated_playbook:

@@ -726,7 +726,20 @@ def knowledge_chat_preview(knowledge: dict[str, Any]) -> dict[str, Any]:
     summary = analysis.get("summary", {})
     tracking = tracking_calculations_from_knowledge(knowledge)
     days = knowledge.get("snapshot", {}).get("days") or 90
+    # Full campaign list with live status + objective + daily budget so the agent can
+    # answer factual questions like "what campaigns are active?" precisely.
+    raw_campaigns = valid_rows(knowledge.get("raw", {}).get("campaigns", []))
+    campaigns_overview = [
+        {
+            "name": row.get("name"),
+            "status": row.get("status") or row.get("effective_status"),
+            "objective": row.get("objective"),
+            "dailyBudget": row.get("daily_budget"),
+        }
+        for row in raw_campaigns
+    ][:60]
     return {
+        "campaigns": campaigns_overview,
         "role": "canonical_meta_ads_knowledge_base",
         "analysisWindowDays": days,
         "instructions": [

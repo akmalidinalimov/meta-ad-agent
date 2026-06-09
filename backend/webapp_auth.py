@@ -54,6 +54,9 @@ def validate_init_data(init_data: str, *, max_age_seconds: int = 86400) -> dict[
     received_hash = pairs.pop("hash", None)
     if not received_hash:
         return None
+    # Newer Telegram clients add an Ed25519 `signature` field that is NOT part of the
+    # HMAC data-check-string; including it makes the hash mismatch. Drop it.
+    pairs.pop("signature", None)
     data_check_string = "\n".join(f"{key}={pairs[key]}" for key in sorted(pairs))
     secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     computed = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
