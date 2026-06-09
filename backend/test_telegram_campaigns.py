@@ -222,6 +222,47 @@ def test_adset_leaf_shows_ranked_performance(monkeypatch):
     assert "2.10%" in text
 
 
+def test_show_creatives_here_sends_video_inline(monkeypatch):
+    _open_bot(monkeypatch)
+    videos: list = []
+    photos: list = []
+    monkeypatch.setattr(telegram_outbound, "send_video", lambda chat_id, video, **k: videos.append((video, k)) or {"ok": True})
+    monkeypatch.setattr(telegram_outbound, "send_photo", lambda chat_id, photo, **k: photos.append((photo, k)) or {"ok": True})
+    monkeypatch.setattr(
+        telegram_router,
+        "_video_source_sync",
+        lambda vid: {"source": "https://cdn/x.mp4", "permalink_url": "https://fb/watch"},
+    )
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"id": "e", "message": {"chat": {"id": 1001}, "message_id": 7}, "from": {"username": "a"}, "data": f"cmp:p:{LONG_ADSET_ID}"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["media"] == 1
+    assert videos and videos[0][0] == "https://cdn/x.mp4"  # video sent inline
+    assert "Hero Video Ad" in videos[0][1].get("caption", "")
+
+
+def test_show_creatives_here_falls_back_to_photo_when_no_video_source(monkeypatch):
+    _open_bot(monkeypatch)
+    photos: list = []
+    monkeypatch.setattr(telegram_outbound, "send_video", lambda *a, **k: {"ok": False})
+    monkeypatch.setattr(telegram_outbound, "send_photo", lambda chat_id, photo, **k: photos.append((photo, k)) or {"ok": True})
+    monkeypatch.setattr(telegram_router, "_video_source_sync", lambda vid: {})  # no playable source
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"id": "e", "message": {"chat": {"id": 1001}, "message_id": 7}, "from": {"username": "a"}, "data": f"cmp:p:{LONG_ADSET_ID}"}},
+    )
+    assert resp.status_code == 200
+    # Thumbnail photo sent with a Watch-video button as fallback.
+    assert photos and photos[0][0] == "https://example.com/thumb.jpg"
+    markup = photos[0][1].get("reply_markup") or {}
+    labels = [b["text"] for row in markup.get("inline_keyboard", []) for b in row]
+    assert any("Watch video" in label for label in labels)
+
+
 def test_snapshot_source_annotates_as_of_last_sync(monkeypatch):
     sent, _ = _open_bot(monkeypatch)
     account = _account()

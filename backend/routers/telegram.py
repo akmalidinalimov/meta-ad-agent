@@ -326,9 +326,74 @@ def _open_campaigns_list(command: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "telegram": command, "menu": "campaigns", "source": account.get("source")}
 
 
+def _video_source_sync(video_id: str) -> dict[str, Any]:
+    """Resolve a Meta video's playable source URL + permalink (sync wrapper)."""
+    from ..meta_client import get_meta_config, get_video_source
+
+    cfg = get_meta_config()
+    if not (cfg.is_configured and video_id):
+        return {}
+    try:
+        return asyncio.run(get_video_source(cfg, str(video_id)))
+    except Exception:
+        logger.exception("Video source fetch failed for %s", video_id)
+        return {}
+
+
+def _send_creative_media(command: dict[str, Any], adset_id: str) -> dict[str, Any]:
+    """Send the ad set's top creatives as inline media: videos play on tap, images
+    render as photos. Capped to the top few to stay responsive."""
+    chat_id = command.get("chatId")
+    ranked, _source = _adset_creatives_sync(adset_id)
+    if not ranked:
+        _send(command, "🎨 No creatives found for this ad set.")
+        return {"ok": True, "telegram": command, "media": 0}
+
+    _send(command, f"📸 <b>Top {min(3, len(ranked))} creatives</b> — tap a video to watch it.", parse_mode="HTML")
+    medals = ["🥇", "🥈", "🥉"]
+    sent = 0
+    for index, ad in enumerate(ranked[:3]):
+        creative = ad.get("creative") or {}
+        perf = ad.get("_perf") or {}
+        rank = medals[index] if index < 3 else f"{index + 1}."
+        caption_lines = [f"{rank} <b>{html.escape(str(ad.get('name') or 'Creative'))}</b>"]
+        perf_line = _perf_line(perf)
+        if perf_line:
+            caption_lines.append(perf_line)
+        title = str(creative.get("title") or "").strip()
+        if title:
+            caption_lines.append(f"✍️ {html.escape(title[:120])}")
+        caption = "\n".join(caption_lines)[:1024]
+        thumb = creative.get("image_url") or creative.get("thumbnail_url")
+        video_id = creative.get("video_id")
+        delivered = False
+        if video_id:
+            src = _video_source_sync(str(video_id))
+            video_url = src.get("source")
+            watch = src.get("permalink_url") or f"https://www.facebook.com/watch/?v={video_id}"
+            if video_url and chat_id:
+                resp = telegram_outbound.send_video(chat_id, video_url, caption=caption, parse_mode="HTML")
+                delivered = bool(resp.get("ok"))
+            if not delivered and chat_id and thumb:
+                # Fallback: show the thumbnail with a Watch button to the video page.
+                markup = {"inline_keyboard": [[{"text": "▶️ Watch video", "url": watch}]]}
+                resp = telegram_outbound.send_photo(chat_id, thumb, caption=caption, parse_mode="HTML", reply_markup=markup)
+                delivered = bool(resp.get("ok"))
+        elif thumb and chat_id:
+            resp = telegram_outbound.send_photo(chat_id, thumb, caption=caption, parse_mode="HTML")
+            delivered = bool(resp.get("ok"))
+        if delivered:
+            sent += 1
+    if not sent:
+        _send(command, "⚠️ Couldn't load the creative media. Open <b>View creatives</b> for the full gallery.", parse_mode="HTML")
+    return {"ok": True, "telegram": command, "media": sent}
+
+
 def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
     raw = str(command.get("callbackData") or "")
     tail = raw.split(":", 1)[1] if ":" in raw else ""
+    if tail.startswith("p:"):
+        return _send_creative_media(command, tail[2:])
     account = _live_account_sync()
     campaigns = account.get("campaigns", [])
     adsets = account.get("adsets", [])

@@ -88,10 +88,10 @@ async def send_telegram_message(text: str, **kwargs: Any) -> dict[str, Any]:
     return await asyncio.to_thread(send_telegram_message_sync, text, **kwargs)
 
 
-def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+def telegram_api(method: str, payload: dict[str, Any], *, timeout: int = 15) -> dict[str, Any]:
     """Call any Telegram Bot API method (setMyCommands, setChatMenuButton,
-    answerCallbackQuery, editMessageText, ...). Returns the parsed JSON or an
-    error dict; never raises."""
+    answerCallbackQuery, editMessageText, sendPhoto, sendVideo, ...). Returns the
+    parsed JSON or an error dict; never raises."""
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         return {"ok": False, "skipped": True, "error": "Telegram bot token is not configured."}
@@ -103,7 +103,7 @@ def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=15, context=ssl_context()) as response:
+        with urllib.request.urlopen(request, timeout=timeout, context=ssl_context()) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.URLError as error:
         return {"ok": False, "skipped": False, "error": str(error)}
@@ -111,6 +111,50 @@ def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
         return json.loads(raw)
     except json.JSONDecodeError:
         return {"ok": False, "skipped": False, "error": "Telegram returned a non-JSON response."}
+
+
+def send_photo(
+    chat_id: Any,
+    photo: str,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+    reply_markup: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Send an image by URL so a creative thumbnail renders inline in the chat."""
+    if not chat_id or not photo:
+        return {"ok": False, "skipped": True}
+    payload: dict[str, Any] = {"chat_id": chat_id, "photo": photo}
+    if caption:
+        payload["caption"] = caption
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    return telegram_api("sendPhoto", payload, timeout=30)
+
+
+def send_video(
+    chat_id: Any,
+    video: str,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+    reply_markup: dict[str, Any] | None = None,
+    supports_streaming: bool = True,
+) -> dict[str, Any]:
+    """Send a video by URL so the creative plays inline (tap to watch)."""
+    if not chat_id or not video:
+        return {"ok": False, "skipped": True}
+    payload: dict[str, Any] = {"chat_id": chat_id, "video": video, "supports_streaming": supports_streaming}
+    if caption:
+        payload["caption"] = caption
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    # Telegram downloads the remote video before responding, so allow extra time.
+    return telegram_api("sendVideo", payload, timeout=45)
 
 
 def edit_message_reply_markup(chat_id: Any, message_id: Any, reply_markup: dict[str, Any]) -> dict[str, Any]:

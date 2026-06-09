@@ -148,6 +148,8 @@ def adset_ads_keyboard(adset_id: str, campaign_id: str) -> dict[str, Any]:
     stats) when a dashboard URL is configured, plus a Back button to the parent
     campaign's ad sets."""
     rows: list[list[dict[str, Any]]] = []
+    if adset_id:
+        rows.append([{"text": "📸 Show creatives here", "callback_data": f"cmp:p:{adset_id}"}])
     url = _dashboard_url()
     if url and adset_id:
         sep = "&" if "?" in url else "?"
