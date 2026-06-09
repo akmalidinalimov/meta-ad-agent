@@ -476,6 +476,65 @@
   min-height: 320px;
 }
 
+.login-shell {
+  display: grid;
+  place-items: center;
+  min-height: 80vh;
+}
+
+.login-card {
+  display: grid;
+  gap: 12px;
+  width: min(360px, 92vw);
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+}
+
+.login-card h1 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--text);
+}
+
+.login-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.login-card input {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+}
+
+.login-card button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: var(--weight-strong);
+  cursor: pointer;
+}
+
+.login-card button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.login-error {
+  color: var(--chart-4, #d33);
+  font-size: 13px;
+}
+
 .empty-state {
   min-height: 280px;
   gap: 8px;

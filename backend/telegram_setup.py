@@ -9,6 +9,7 @@ button pointing at the Analytics Mini App.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from .telegram_outbound import telegram_api
@@ -30,7 +31,12 @@ def register_bot_ui() -> dict[str, Any]:
     results (never raises)."""
     results: dict[str, Any] = {}
     results["setMyCommands"] = telegram_api("setMyCommands", {"commands": BOT_COMMANDS})
-    # MVP: a "commands" menu button opens the command list. Phase B swaps this
-    # for a web_app button that opens the Analytics Mini App.
-    results["setChatMenuButton"] = telegram_api("setChatMenuButton", {"menu_button": {"type": "commands"}})
+    # With a dashboard URL set, the menu button opens the Analytics Mini App; otherwise
+    # it falls back to showing the command list.
+    url = os.getenv("PUBLIC_DASHBOARD_URL", "").strip()
+    if url:
+        menu_button = {"type": "web_app", "text": "📊 Dashboard", "web_app": {"url": url}}
+    else:
+        menu_button = {"type": "commands"}
+    results["setChatMenuButton"] = telegram_api("setChatMenuButton", {"menu_button": menu_button})
     return results

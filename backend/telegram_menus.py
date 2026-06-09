@@ -7,7 +7,12 @@ routers/telegram.py dispatches.
 
 from __future__ import annotations
 
+import os
 from typing import Any
+
+
+def _dashboard_url() -> str:
+    return os.getenv("PUBLIC_DASHBOARD_URL", "").strip()
 
 
 # Labels for the persistent reply keyboard (docked under the text input). Tapping
@@ -31,12 +36,16 @@ REPLY_BUTTON_ACTIONS: dict[str, str] = {
 
 
 def main_reply_keyboard() -> dict[str, Any]:
-    """Persistent buttons docked under the message input (always visible)."""
+    """Persistent buttons docked under the message input (always visible). When a
+    dashboard URL is configured, Analytics is a web_app button that opens the Mini
+    App in-place; otherwise it is a plain button that replies with the link."""
+    url = _dashboard_url()
+    analytics = {"text": BTN_ANALYTICS, "web_app": {"url": url}} if url else {"text": BTN_ANALYTICS}
     return {
         "keyboard": [
             [{"text": BTN_KPIS}, {"text": BTN_SUGGESTIONS}],
             [{"text": BTN_STATUS}, {"text": BTN_ALERTS}],
-            [{"text": BTN_ASK}, {"text": BTN_ANALYTICS}],
+            [{"text": BTN_ASK}, analytics],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
