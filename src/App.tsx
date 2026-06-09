@@ -7,7 +7,7 @@ import './App.css'
 
 const LOAD_TIMEOUT_MS = 30000
 
-type AuthState = 'checking' | 'authed' | 'login'
+type AuthState = 'checking' | 'authed' | 'login' | 'tg_error'
 
 type TelegramWebApp = { initData?: string; ready?: () => void; expand?: () => void }
 
@@ -15,6 +15,9 @@ async function bootstrapAuth(): Promise<AuthState> {
   // Telegram Mini App: authenticate with the signed initData (no password).
   const tg = (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp
   if (tg?.initData) {
+    // Inside Telegram the operator must never see the password screen. If the
+    // initData auth fails, surface a retryable error instead of falling through
+    // to the browser session/password path.
     try {
       tg.ready?.()
       tg.expand?.()
@@ -23,11 +26,9 @@ async function bootstrapAuth(): Promise<AuthState> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData: tg.initData }),
       })
-      if (response.ok) {
-        return 'authed'
-      }
+      return response.ok ? 'authed' : 'tg_error'
     } catch {
-      // fall through to the session check
+      return 'tg_error'
     }
   }
   try {
@@ -78,6 +79,13 @@ function App() {
     }
   }, [])
 
+  const runBootstrapAuth = useCallback(() => {
+    setAuthState('checking')
+    void bootstrapAuth().then((state) => {
+      setAuthState(state)
+    })
+  }, [])
+
   useEffect(() => {
     let mounted = true
     void bootstrapAuth().then((state) => {
@@ -116,6 +124,20 @@ function App() {
     return (
       <main className="app-shell">
         <div className="loading-panel">Loading…</div>
+      </main>
+    )
+  }
+
+  if (authState === 'tg_error') {
+    return (
+      <main className="app-shell login-shell">
+        <div className="login-card">
+          <h1>Meta Ad Agent</h1>
+          <p>Couldn't verify your Telegram session.</p>
+          <button type="button" onClick={runBootstrapAuth}>
+            Retry
+          </button>
+        </div>
       </main>
     )
   }
