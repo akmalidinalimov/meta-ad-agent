@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import approval_store, telegram_outbound
+from .. import access_control, approval_store, telegram_outbound
 from ..api_models import TelegramTestMessageRequest
 from ..approval_store import list_approval_requests
 from ..execution_service import apply_live_sync, dry_run_sync
@@ -26,6 +26,8 @@ from ..telegram_menus import (
     campaigns_list_keyboard,
     main_reply_keyboard,
     pending_approvals_keyboard,
+    team_panel_keyboard,
+    viewer_reply_keyboard,
     welcome_text,
 )
 from ..task_service import sync_task_with_approval
@@ -41,6 +43,22 @@ from ..telegram_service import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# --- RBAC: role gate for the Telegram surface --------------------------------
+# Managers (owner/admin) get the full control surface; viewers may only browse
+# (read-only buttons) and are blocked from any write action and from free-text
+# requests; users with no role have no access at all.
+_VIEWER_BLOCKED_ACTIONS = {
+    "approve", "dryrun", "applylive", "cancel", "reject", "changes",
+    "needs_changes", "agap", "manage", "view",
+}
+_NO_ACCESS = "🚫 You don't have access to this bot. You can leave."
+_VIEWER_NOTICE = (
+    "👀 You have <b>viewer</b> access — browse with the buttons below. "
+    "I can't take requests or make changes for you."
+)
+# Reply-button labels + read-only commands a viewer is still allowed to use.
+_VIEWER_FREE_TEXT_ALLOWED = {"start", "menu", "kpis", "suggestions", "status", "alerts"}
 
 
 def _send(command: dict[str, Any], text: str, **kwargs: Any) -> dict[str, Any] | None:
@@ -504,6 +522,71 @@ def _handle_pending(command: dict[str, Any], callback: dict[str, Any]) -> dict[s
     return {"ok": True, "telegram": command, "pending": "list"}
 
 
+# --- Task 4: Team admin panel (managers only) --------------------------------
+
+def _team_text(members: list[dict[str, Any]]) -> str:
+    lines = [f"👥 <b>Team</b> ({len(members)})"]
+    if not members:
+        lines.append("\nNo members yet.")
+        return "\n".join(lines)
+    lines.append("")
+    for m in members:
+        username = m.get("username")
+        ident = ("@" + str(username)) if username else str(m.get("userId") or "?")
+        role = str(m.get("role") or "viewer")
+        if role == "owner":
+            lines.append(f"👑 {html.escape(ident)} — <b>owner</b>")
+        else:
+            lines.append(f"• {html.escape(ident)} — {html.escape(role)}")
+    lines.append("\n👆 Tap a member to flip their role, 🗑 to remove, or ➕ to add.")
+    return "\n".join(lines)
+
+
+def _open_team_panel(command: dict[str, Any]) -> dict[str, Any]:
+    from .. import members_store
+
+    members = members_store.list_members()
+    _send(command, _team_text(members), parse_mode="HTML", reply_markup=team_panel_keyboard(members))
+    return {"ok": True, "telegram": command, "team": "list"}
+
+
+def _handle_team(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
+    from .. import members_store
+    from ..pending_context_store import operator_key, set_pending
+
+    tail = command.get("approvalId") or ""
+    verb, _, rest = tail.partition(":")
+    actor = str(command.get("userId") or command.get("chatId"))
+    if verb == "add":
+        set_pending(operator_key(telegram_chat_id=command.get("chatId")), {"kind": "team_add"})
+        _send(
+            command,
+            "Send the new member as <code>@username admin</code> or <code>123456 viewer</code>.",
+            parse_mode="HTML",
+        )
+        return {"ok": True, "telegram": command, "team": "add_prompt"}
+    if verb == "remove":
+        try:
+            members_store.remove_member(rest, actor=actor)
+            _send(command, "✅ Removed.")
+        except ValueError as e:
+            _send(command, f"⚠️ {e}")
+        except KeyError:
+            _send(command, "That member is no longer on the team.")
+        return _open_team_panel(command)
+    if verb == "setrole":
+        key, _, role = rest.partition("~")
+        try:
+            members_store.set_role(key, role, actor=actor)
+            _send(command, f"✅ Role set to {role}.")
+        except ValueError as e:
+            _send(command, f"⚠️ {e}")
+        except KeyError:
+            _send(command, "Member not found.")
+        return _open_team_panel(command)
+    return _open_team_panel(command)
+
+
 def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
     if target == "kpis":
         _send(command, compose_kpi_digest_text(), parse_mode="HTML")
@@ -517,6 +600,8 @@ def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
         return _open_campaigns_list(command)
     elif target == "pending":
         return _open_pending_list(command)
+    elif target == "team":
+        return _open_team_panel(command)
     elif target == "chat":
         _send(command, '💬 Just text me your question — e.g. "what are my best creatives right now?"')
     elif target == "analytics":
@@ -541,8 +626,20 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         raise HTTPException(status_code=401, detail="Invalid Telegram command secret.")
 
     command = normalize_telegram_command(payload)
-    if not telegram_command_allowed(command):
-        raise HTTPException(status_code=403, detail="Telegram chat or user is not allowed to control this agent.")
+
+    # --- RBAC gate -----------------------------------------------------------
+    # Resolve the caller's role from the managed members store. None == no access.
+    role = access_control.role_for(command.get("userId") or command.get("chatId"), command.get("username"))
+    if role is None:
+        _send(command, _NO_ACCESS)
+        return {"ok": False, "telegram": command, "denied": "no_access"}
+
+    action = command.get("action")
+    if not access_control.is_manager(role):
+        # Viewers may browse but never take a write action or open the team panel.
+        if action in _VIEWER_BLOCKED_ACTIONS or (action or "").startswith("team"):
+            _send(command, _VIEWER_NOTICE, parse_mode="HTML", reply_markup=viewer_reply_keyboard())
+            return {"ok": False, "telegram": command, "denied": "viewer_action"}
 
     # Acknowledge any button tap immediately so Telegram stops the loading spinner.
     callback = payload.get("callback_query") or {}
@@ -662,6 +759,9 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     if action == "apv":
         return _handle_pending(command, callback)
 
+    if action == "team":
+        return _handle_team(command, callback)
+
     # Inline Approve/Reject for an agentic free-text proposal (activate / big budget
     # increase / create-test-campaign). callbackData is agap:approve | agap:reject.
     if action == "agap":
@@ -727,6 +827,34 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         answer = telegram_attention_text()
         _send(command, answer, parse_mode="HTML")
         return {"ok": True, "shortcut": "attention", "telegram": command, "answer": answer}
+
+    # --- Team add capture (managers only) --------------------------------------
+    # When the manager tapped ➕ Add member we stashed a {"kind": "team_add"} pointer;
+    # the next free-text message is the new member spec ("@alice admin" / "123 viewer").
+    from ..pending_context_store import get_pending as _get_pending, clear_pending as _clear_pending, operator_key as _opkey
+
+    _pend = _get_pending(_opkey(telegram_chat_id=command.get("chatId")))
+    if _pend and _pend.get("kind") == "team_add" and access_control.is_manager(role):
+        from .. import members_store
+
+        parts = text.split()
+        ident, new_role = (parts[0], parts[1].lower()) if len(parts) >= 2 else (text.strip(), "viewer")
+        kwargs = {"user_id": ident} if ident.isdigit() else {"username": ident}
+        try:
+            members_store.add_member(role=new_role, added_by=str(command.get("userId")), **kwargs)
+            _clear_pending(_opkey(telegram_chat_id=command.get("chatId")))
+            _send(command, f"✅ Added {ident} as {new_role}.")
+        except ValueError as e:
+            _send(command, f"⚠️ {e}")
+        return {"ok": True, "telegram": command, "team": "added"}
+
+    # --- Viewer free-text block ------------------------------------------------
+    # Viewers can browse with reply buttons (handled above) but may not make
+    # free-text requests of the agent. Anything that isn't a known reply-button
+    # label or a read-only command is refused with the viewer notice.
+    if not access_control.is_manager(role) and text.strip().lower() not in REPLY_BUTTON_ACTIONS and lowered not in _VIEWER_FREE_TEXT_ALLOWED:
+        _send(command, _VIEWER_NOTICE, parse_mode="HTML", reply_markup=viewer_reply_keyboard())
+        return {"ok": False, "telegram": command, "denied": "viewer_chat"}
 
     # --- Agentic free text -----------------------------------------------------
     # Anything that isn't a reply-keyboard button label, a start/menu command, or a

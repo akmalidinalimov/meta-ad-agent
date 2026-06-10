@@ -1,8 +1,26 @@
+import os
+
 from fastapi.testclient import TestClient
 
 import backend.routers.telegram as telegram_router
 import backend.telegram_outbound as telegram_outbound
 from backend.app import app
+
+
+def _seed_owner(monkeypatch, username="a"):
+    """RBAC gate: isolate the members store and seed the test caller (@a) as owner."""
+    import json
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix="_members.json")
+    os.close(fd)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(
+            [{"userId": None, "username": username, "role": "owner",
+              "addedBy": "system", "addedAt": "2026-01-01T00:00:00+00:00"}],
+            fh,
+        )
+    monkeypatch.setenv("MEMBERS_STORE_PATH", path)
 
 LONG_CAMPAIGN_ID = "120200000000000001"
 LONG_ADSET_ID = "238400000000000002"
@@ -77,6 +95,7 @@ def _account():
 def _open_bot(monkeypatch):
     for var in ("TELEGRAM_COMMAND_SECRET", "TELEGRAM_ALLOWED_CHAT_IDS", "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_ADMIN_CHAT_ID"):
         monkeypatch.delenv(var, raising=False)
+    _seed_owner(monkeypatch)
     sent = []
     edits = []
     monkeypatch.setattr(telegram_outbound, "send_telegram_message_sync", lambda text, **kwargs: sent.append((text, kwargs)) or {"ok": True})

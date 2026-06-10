@@ -24,6 +24,7 @@ BTN_ALERTS = "🚨 Alerts"
 BTN_CAMPAIGNS = "📁 Campaigns"
 BTN_PENDING = "📝 Pending Approvals"
 BTN_ASK = "💬 Ask the agent"
+BTN_TEAM = "👥 Team"
 
 # label (lowercased) -> menu action target handled by _handle_menu.
 REPLY_BUTTON_ACTIONS: dict[str, str] = {
@@ -34,6 +35,7 @@ REPLY_BUTTON_ACTIONS: dict[str, str] = {
     BTN_CAMPAIGNS.lower(): "campaigns",
     BTN_PENDING.lower(): "pending",
     BTN_ASK.lower(): "chat",
+    BTN_TEAM.lower(): "team",
 }
 
 
@@ -47,10 +49,23 @@ def main_reply_keyboard() -> dict[str, Any]:
             [{"text": BTN_KPIS}, {"text": BTN_SUGGESTIONS}],
             [{"text": BTN_STATUS}, {"text": BTN_ALERTS}],
             [{"text": BTN_CAMPAIGNS}, {"text": BTN_PENDING}],
-            [{"text": BTN_ASK}],
+            [{"text": BTN_ASK}, {"text": BTN_TEAM}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
+    }
+
+
+def viewer_reply_keyboard() -> dict[str, Any]:
+    """Read-only reply keyboard for viewer-role members: browse buttons only, no
+    Ask/Team (those route to actions a viewer may not take)."""
+    return {
+        "keyboard": [
+            [{"text": BTN_KPIS}, {"text": BTN_STATUS}],
+            [{"text": BTN_ALERTS}, {"text": BTN_CAMPAIGNS}],
+            [{"text": BTN_PENDING}],
+        ],
+        "resize_keyboard": True,
     }
 
 
@@ -190,6 +205,28 @@ def approval_adsets_keyboard(approval_id: str, adsets: list[dict[str, Any]]) -> 
 def approval_adset_detail_keyboard(approval_id: str) -> dict[str, Any]:
     """Leaf keyboard: Back button to the approval's ad set list."""
     return {"inline_keyboard": [[{"text": "⬅️ Back", "callback_data": f"apv:a:{approval_id}"}]]}
+
+
+# --- Task 4: Team admin panel (callback namespace `team`). ---
+# Schemes: team:add, team:list, team:remove:<key>, team:setrole:<key>~<role>.
+# A member key is a numeric Telegram id or "u:<username>" — both stay well under
+# the 64-byte callback_data limit alongside the short verbs and role names.
+
+
+def team_panel_keyboard(members: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = [[{"text": "➕ Add member", "callback_data": "team:add"}]]
+    for m in members:
+        key = str(m["userId"]) if m.get("userId") else "u:" + str(m.get("username"))
+        label = (m.get("username") and "@" + m["username"]) or m.get("userId") or "?"
+        if m["role"] == "owner":
+            rows.append([{"text": f"👑 {label} (owner)", "callback_data": "team:list"}])
+        else:
+            other = "viewer" if m["role"] == "admin" else "admin"
+            rows.append([
+                {"text": f"{label} · {m['role']}", "callback_data": f"team:setrole:{key}~{other}"},
+                {"text": "🗑", "callback_data": f"team:remove:{key}"},
+            ])
+    return {"inline_keyboard": rows}
 
 
 def welcome_text() -> str:
