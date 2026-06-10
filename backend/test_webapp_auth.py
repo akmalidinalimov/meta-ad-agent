@@ -72,11 +72,20 @@ def test_login_sets_session_cookie(monkeypatch):
     assert "session" in ok.cookies
 
 
-def test_webapp_auth_with_valid_init_data(monkeypatch):
+def test_webapp_auth_with_valid_init_data(monkeypatch, tmp_path):
+    import importlib
+
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
     monkeypatch.setenv("SESSION_SECRET", "unit-secret")
+    monkeypatch.setenv("MEMBERS_STORE_PATH", str(tmp_path / "members.json"))
+    # The Mini App user must be a known member now (store-based access).
+    monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "7")
     monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
-    monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
+    from backend import members_store
+
+    importlib.reload(members_store)
+    members_store.list_members()  # seed owner id 7
+
     client = TestClient(app)
     init = _make_init_data(TOKEN, {"id": 7, "username": "op"})
     resp = client.post("/api/telegram/webapp-auth", json={"initData": init})
@@ -85,14 +94,23 @@ def test_webapp_auth_with_valid_init_data(monkeypatch):
     assert "session" in resp.cookies
 
 
-def test_admin_chat_id_always_allowed_even_when_allowlist_excludes_it(monkeypatch):
-    # The configured admin must never be locked out, even if TELEGRAM_ALLOWED_USER_IDS
-    # is set to a different id.
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "999")
+def test_user_allowed_reflects_member_store(monkeypatch, tmp_path):
+    # Mini App access is now driven by the members store, not an env allowlist.
+    # The seeded owner (TELEGRAM_ADMIN_CHAT_ID) and any added member are allowed;
+    # everyone else is rejected.
+    import importlib
+
+    monkeypatch.setenv("MEMBERS_STORE_PATH", str(tmp_path / "members.json"))
     monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "42")
-    assert user_allowed({"id": 42}) is True
-    assert user_allowed({"id": 999}) is True
-    assert user_allowed({"id": 5}) is False
+    monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
+    from backend import members_store
+
+    importlib.reload(members_store)
+    members_store.add_member(user_id="999", role="admin", added_by="42")
+
+    assert user_allowed({"id": 42}) is True  # seeded owner
+    assert user_allowed({"id": 999}) is True  # added member
+    assert user_allowed({"id": 5}) is False  # unknown user
 
 
 def test_webapp_auth_rejection_logs_cause(monkeypatch, caplog):

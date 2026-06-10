@@ -71,10 +71,12 @@ def webapp_auth(body: WebAppAuthRequest, response: Response) -> dict[str, Any]:
 
 @router.get("/api/auth/session")
 def session_status(request: Request) -> dict[str, Any]:
-    # When the guard is off, the app is open, so report authenticated so the SPA
-    # skips the login screen.
-    authenticated = not dashboard_auth_enabled() or valid_session(request.cookies.get(COOKIE_NAME))
-    return {"authenticated": bool(authenticated)}
+    from ..webapp_auth import session_role
+    token = request.cookies.get(COOKIE_NAME)
+    if not dashboard_auth_enabled():
+        return {"authenticated": True, "role": "owner"}
+    authed = valid_session(token)
+    return {"authenticated": bool(authed), "role": session_role(token) if authed else None}
 
 
 @router.post("/api/auth/logout")

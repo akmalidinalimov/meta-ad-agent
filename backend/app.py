@@ -26,6 +26,7 @@ from .routers import approvals as approvals_router
 from .routers import crm as crm_router
 from .routers import dashboard as dashboard_router
 from .routers import funnel as funnel_router
+from .routers import members as members_router
 from .routers import meta as meta_router
 from .routers import meta_ai as meta_ai_router
 from .routers import monitoring as monitoring_router
@@ -170,7 +171,8 @@ async def _session_guard(request: Request, call_next):
     """Gate dashboard data endpoints on a valid session — only when
     DASHBOARD_SESSION_AUTH=true (off in tests/dev, on in production behind no Caddy
     password)."""
-    from .webapp_auth import COOKIE_NAME, dashboard_auth_enabled, valid_session
+    from .access_control import can
+    from .webapp_auth import COOKIE_NAME, dashboard_auth_enabled, session_role, valid_session
 
     # The MCP connector is gated by its own secret mount path, not the dashboard
     # session — never apply the session guard to it.
@@ -180,8 +182,12 @@ async def _session_guard(request: Request, call_next):
     if dashboard_auth_enabled():
         path = request.url.path
         if path.startswith("/api/") and path not in _AUTH_PUBLIC_PATHS:
-            if not valid_session(request.cookies.get(COOKIE_NAME)):
+            token = request.cookies.get(COOKIE_NAME)
+            if not valid_session(token):
                 return JSONResponse({"detail": "Authentication required."}, status_code=401)
+            # Viewers (and any non-act role) may read but never mutate.
+            if request.method not in ("GET", "HEAD", "OPTIONS") and not can(session_role(token), "act"):
+                return JSONResponse({"detail": "Read-only access."}, status_code=403)
     return await call_next(request)
 
 
@@ -200,6 +206,7 @@ for module in (
     telegram_router,
     meta_ai_router,
     agents_router,
+    members_router,
 ):
     app.include_router(module.router)
 
