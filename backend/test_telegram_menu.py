@@ -1,3 +1,5 @@
+import os
+
 from fastapi.testclient import TestClient
 
 import backend.routers.telegram as telegram_router
@@ -103,9 +105,27 @@ def test_register_bot_ui_registers_commands_and_menu_button(monkeypatch):
     assert "setChatMenuButton" in methods
 
 
+def _seed_owner(monkeypatch, username="a"):
+    """RBAC gate: isolate the members store to a tmp file and seed the test caller
+    (@a) as the owner so the existing button/callback flows stay authorized."""
+    import json
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix="_members.json")
+    os.close(fd)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(
+            [{"userId": None, "username": username, "role": "owner",
+              "addedBy": "system", "addedAt": "2026-01-01T00:00:00+00:00"}],
+            fh,
+        )
+    monkeypatch.setenv("MEMBERS_STORE_PATH", path)
+
+
 def _open_bot(monkeypatch):
     for var in ("TELEGRAM_COMMAND_SECRET", "TELEGRAM_ALLOWED_CHAT_IDS", "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_ADMIN_CHAT_ID"):
         monkeypatch.delenv(var, raising=False)
+    _seed_owner(monkeypatch)
     sent = []
     monkeypatch.setattr(telegram_outbound, "send_telegram_message_sync", lambda text, **kwargs: sent.append((text, kwargs)) or {"ok": True})
     monkeypatch.setattr(telegram_outbound, "answer_callback_query", lambda *a, **k: {"ok": True})

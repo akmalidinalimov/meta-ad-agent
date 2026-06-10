@@ -21,6 +21,34 @@ from backend.approval_store import (
 from backend.meta_execution import build_campaign_creation_approval
 
 
+def _seed_members(monkeypatch, tmp_path, *, owner_user_id=None, owner_username=None,
+                  admin_user_ids=None, members=None):
+    """Point the RBAC members store at an isolated tmp file and seed it.
+
+    Either pass explicit ``members`` records, or let members_store seed itself from
+    TELEGRAM_ADMIN_CHAT_ID / TELEGRAM_ALLOWED_USER_IDS on first read.
+    """
+    import json
+
+    path = tmp_path / "members.json"
+    monkeypatch.setenv("MEMBERS_STORE_PATH", str(path))
+    if members is not None:
+        path.write_text(json.dumps(members), encoding="utf-8")
+        return path
+    if owner_user_id is not None:
+        monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", str(owner_user_id))
+    if owner_username is not None:
+        path.write_text(
+            json.dumps([{"userId": None, "username": owner_username, "role": "owner",
+                         "addedBy": "system", "addedAt": "2026-01-01T00:00:00+00:00"}]),
+            encoding="utf-8",
+        )
+        return path
+    if admin_user_ids is not None:
+        monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", str(admin_user_ids))
+    return path
+
+
 def _make_async(fn):
     """Wrap a sync function as an async one so it can stand in for agentic_reply
     (which the router awaits via asyncio.run)."""
@@ -35,6 +63,10 @@ def bind_tmp_command_store(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
     sent = []
     monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "1001")
+    # RBAC gate: isolate the members store to tmp and seed the test caller (user
+    # 2002 / @akmal, posting from chat 1001) as a manager so the existing flows
+    # stay authorized without weakening the production role gate.
+    _seed_members(monkeypatch, tmp_path, owner_user_id="1001", admin_user_ids="2002")
     monkeypatch.setattr(agent_task_store, "create_agent_task", lambda task: create_agent_task(task, storage_dir=storage_dir))
     monkeypatch.setattr(tasks_router_mod, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
     monkeypatch.setattr(telegram_service_mod, "list_agent_tasks", lambda: list_agent_tasks(storage_dir=storage_dir))
@@ -337,7 +369,7 @@ def test_telegram_command_rejects_invalid_secret(monkeypatch, tmp_path):
 
 
 def test_telegram_command_rejects_unallowed_chat(monkeypatch, tmp_path):
-    bind_tmp_command_store(monkeypatch, tmp_path)
+    _, sent = bind_tmp_command_store(monkeypatch, tmp_path)
     monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "secret")
     monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "1001")
     client = TestClient(app)
@@ -354,7 +386,11 @@ def test_telegram_command_rejects_unallowed_chat(monkeypatch, tmp_path):
         },
     )
 
-    assert response.status_code == 403
+    # RBAC gate: an unknown caller is denied access (no role) — the request is
+    # accepted (200) but refused with a no-access message instead of a 403.
+    assert response.status_code == 200
+    assert response.json()["denied"] == "no_access"
+    assert "don't have access" in sent[-1][0]
 
 
 def test_telegram_command_allows_configured_user_id(monkeypatch, tmp_path):
