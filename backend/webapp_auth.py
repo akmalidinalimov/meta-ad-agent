@@ -91,22 +91,9 @@ def validate_init_data(init_data: str, *, max_age_seconds: int = 86400) -> dict[
     return user
 
 
-def user_allowed(user: dict[str, Any]) -> bool:
-    """Mini App users must be on the same allowlist the bot uses (no list = allow)."""
-    from .telegram_service import allowed_telegram_values
-
-    allowed = allowed_telegram_values("TELEGRAM_ALLOWED_USER_IDS")
-    admin = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()
-    user_id = str(user.get("id"))
-    # The configured admin must never be locked out, even if an allowlist is set
-    # that omits them.
-    if admin and user_id == admin:
-        return True
-    if admin:
-        allowed.add(admin)
-    if not allowed:
-        return True
-    return user_id in allowed
+def user_allowed(user):
+    from .access_control import role_for
+    return role_for(str(user.get("id")), user.get("username")) is not None
 
 
 def make_session(sub: str, *, ttl_seconds: int = _DEFAULT_TTL) -> str:
@@ -114,6 +101,25 @@ def make_session(sub: str, *, ttl_seconds: int = _DEFAULT_TTL) -> str:
     payload = f"{sub}.{exp}"
     signature = hmac.new(_session_secret(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
+
+
+def session_subject(token):
+    if not valid_session(token):
+        return None
+    sub, _exp, _sig = token.rsplit(".", 2)
+    return sub
+
+
+def session_role(token):
+    sub = session_subject(token)
+    if sub is None:
+        return None
+    if sub == "admin":
+        return "owner"
+    if sub.startswith("tg:"):
+        from .access_control import role_for
+        return role_for(sub[3:], None)
+    return None
 
 
 def valid_session(token: str | None) -> bool:
