@@ -3734,3 +3734,95 @@
   color: #b91c1c;
   background: #fee2e2;
 }
+
+/* --- Team & access panel (RBAC) --- */
+.team-panel {
+  display: grid;
+  gap: 1rem;
+}
+.team-intro {
+  color: #475569;
+  font-size: 0.9rem;
+  margin: 0 0 0.75rem;
+}
+.team-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.team-add-form input {
+  flex: 1 1 220px;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.team-add-form select,
+.team-row-actions select {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  background: #fff;
+}
+.team-list {
+  display: grid;
+  gap: 0.4rem;
+}
+.team-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.team-row.owner {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+.team-row-id {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.team-role-chip {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #475569;
+  background: #e2e8f0;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+}
+.team-row.admin .team-role-chip {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+.team-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  color: #475569;
+}
+.icon-button.danger-button {
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.icon-button.danger-button:hover {
+  background: #fee2e2;
+}

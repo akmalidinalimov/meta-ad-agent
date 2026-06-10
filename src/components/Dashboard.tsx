@@ -39,6 +39,7 @@ import {
 import { COLORS, iconMap } from './dashboard/constants'
 import { RankingsView } from './dashboard/views/RankingsView'
 import { SettingsView } from './dashboard/views/SettingsView'
+import { TeamPanel } from './dashboard/views/TeamPanel'
 import { ChartFrame } from './dashboard/shared/ChartFrame'
 import { ChatMessageContent } from './dashboard/shared/ChatMessageContent'
 import { EmptyState } from './dashboard/shared/EmptyState'
@@ -93,10 +94,11 @@ import type {
 } from '../types/marketing'
 
 const navItems = [
-  { id: 'chat', label: 'Chat', icon: Send },
+  { id: 'chat', label: 'Chat', icon: Send, managerOnly: true },
   { id: 'overview', label: 'Monitor', icon: LayoutDashboard },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'team', label: 'Team', icon: Users, managerOnly: true },
 ] as const
 
 type ViewId = (typeof navItems)[number]['id']
@@ -107,6 +109,8 @@ function viewHeading(view: ViewId): string {
   switch (view) {
     case 'chat':
       return 'Set up a campaign by chatting'
+    case 'team':
+      return 'Team & Access'
     case 'rankings':
       return 'Performance Rankings'
     case 'settings':
@@ -121,6 +125,7 @@ interface DashboardProps {
   data: DashboardData
   isRefreshing?: boolean
   onRefresh?: () => Promise<DashboardData>
+  role?: string | null
 }
 
 const defaultFilters: DashboardFilters = {
@@ -133,8 +138,13 @@ const defaultFilters: DashboardFilters = {
   objective: 'all',
 }
 
-export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardProps) {
-  const [activeView, setActiveView] = useState<ViewId>('chat')
+export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }: DashboardProps) {
+  // Viewers get a read-only console: no chat, no Team panel, no write controls.
+  // A null role means auth is off (dev) → treat as full access.
+  const isManager = role === 'owner' || role === 'admin' || role === null
+  const canAct = role !== 'viewer'
+  const visibleNavItems = navItems.filter((item) => !('managerOnly' in item && item.managerOnly) || isManager)
+  const [activeView, setActiveView] = useState<ViewId>(isManager ? 'chat' : 'overview')
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -250,6 +260,12 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
           <h1>{viewHeading(activeView)}</h1>
         </div>
         <div className="topbar-actions">
+          {role === 'viewer' && (
+            <div className="status-pill neutral" title="Read-only access">
+              <ShieldAlert size={16} />
+              Viewer · read-only
+            </div>
+          )}
           <div className={`status-pill ${dataSourceTone}`}>
             {data.dataSource?.kind === 'meta' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
             {data.dataSource?.label ?? 'Dashboard data loaded'}
@@ -264,7 +280,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
       </header>
 
       <nav className="app-nav" aria-label="Dashboard sections">
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const Icon = item.icon
           return (
             <button
@@ -292,7 +308,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
 
       {/* Chat-first front door: set up a campaign by chatting; the agent drafts a
           paused packet and the approval cards execute it — all on one screen. */}
-      {activeView === 'chat' && (
+      {activeView === 'chat' && isManager && (
         <CampaignChatView
           data={data}
           chatMessages={chatMessages}
@@ -300,8 +316,11 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
           isChatLoading={isChatLoading}
           onChatInputChange={setChatInput}
           onChatSend={sendChatMessage}
+          canAct={canAct}
         />
       )}
+
+      {activeView === 'team' && isManager && <TeamPanel />}
 
       {/* Empty state is scoped to the data-driven Overview only, so an over-narrow
           filter never hides Settings (reconnect) or Command Center (ask the agent). */}
@@ -315,6 +334,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
             trend={trend}
             placements={placements}
             onAskWhy={askAgentsAbout}
+            canAct={canAct}
           />
         ) : (
           <EmptyState onReset={() => setFilters(defaultFilters)} />
@@ -555,6 +575,7 @@ function CampaignChatView({
   isChatLoading,
   onChatInputChange,
   onChatSend,
+  canAct = true,
 }: {
   data: DashboardData
   chatMessages: ChatMessage[]
@@ -562,6 +583,7 @@ function CampaignChatView({
   isChatLoading: boolean
   onChatInputChange: (value: string) => void
   onChatSend: (message: string) => void
+  canAct?: boolean
 }) {
   const [tasks, setTasks] = useState<AgentTask[]>([])
   const [agents, setAgents] = useState<AgentSpec[]>([])
@@ -626,7 +648,7 @@ function CampaignChatView({
         onSend={onChatSend}
       />
 
-      <ApprovalQueue data={data} />
+      <ApprovalQueue data={data} canAct={canAct} />
 
       <details className="overview-details">
         <summary>Agent activity</summary>
@@ -788,6 +810,7 @@ function Overview({
   trend,
   placements,
   onAskWhy,
+  canAct = true,
 }: {
   data: DashboardData
   kpis: DashboardKpi[]
@@ -796,11 +819,12 @@ function Overview({
   trend: ReturnType<typeof deriveTrend>
   placements: ReturnType<typeof derivePlacementScores>
   onAskWhy: (message: string) => void
+  canAct?: boolean
 }) {
   return (
     <>
       {/* DECIDE: hero, KPIs, and the "what's wrong" diagnosis row */}
-      <DecisionHero data={data} onAskWhy={onAskWhy} />
+      <DecisionHero data={data} onAskWhy={onAskWhy} canAct={canAct} />
       <KpiGrid kpis={kpis} />
       <section className="overview-command-grid">
         <FunnelPanel funnel={funnel} />
@@ -815,7 +839,7 @@ function Overview({
 
       {/* REVIEW: approvals surfaced high — acting on suggestions is the point */}
       <section className="overview-review-grid">
-        <ApprovalQueue data={data} />
+        <ApprovalQueue data={data} canAct={canAct} />
         <InsightsPanel data={data} />
       </section>
 
@@ -930,7 +954,7 @@ function TopProblemsPanel({ data }: { data: DashboardData }) {
   )
 }
 
-function DecisionHero({ data, onAskWhy }: { data: DashboardData; onAskWhy: (message: string) => void }) {
+function DecisionHero({ data, onAskWhy, canAct = true }: { data: DashboardData; onAskWhy: (message: string) => void; canAct?: boolean }) {
   const attentionItems = buildOperatorAttention(data)
   const topItem = attentionItems[0]
   const hasDanger = attentionItems.some((item) => item.tone === 'danger')
@@ -961,20 +985,22 @@ function DecisionHero({ data, onAskWhy }: { data: DashboardData; onAskWhy: (mess
           <small>Risk if ignored</small>
           <strong>{risk}</strong>
         </div>
-        <button
-          className="sync-button secondary"
-          type="button"
-          onClick={() =>
-            onAskWhy(
-              topItem
-                ? `Why is "${topItem.title}" the top priority right now, and what exactly should I do about it?`
-                : 'What is the most important thing to do with my campaigns right now, and why?',
-            )
-          }
-        >
-          <Bot size={16} />
-          Ask agents why
-        </button>
+        {canAct && (
+          <button
+            className="sync-button secondary"
+            type="button"
+            onClick={() =>
+              onAskWhy(
+                topItem
+                  ? `Why is "${topItem.title}" the top priority right now, and what exactly should I do about it?`
+                  : 'What is the most important thing to do with my campaigns right now, and why?',
+              )
+            }
+          >
+            <Bot size={16} />
+            Ask agents why
+          </button>
+        )}
       </div>
     </section>
   )
@@ -1268,7 +1294,7 @@ function ProactiveOpportunityDetails({ opportunity }: { opportunity: ProactiveOp
   )
 }
 
-export function ApprovalQueue({ data }: { data: DashboardData }) {
+export function ApprovalQueue({ data, canAct = true }: { data: DashboardData; canAct?: boolean }) {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
   const [message, setMessage] = useState<string | null>(null)
   // null = unknown (status not yet loaded); drives whether live execution is offered.
@@ -1459,7 +1485,8 @@ export function ApprovalQueue({ data }: { data: DashboardData }) {
                 )}
               </div>
               <div className="approval-button-stack">
-                {approval.status === 'needs_review' && (
+                {!canAct && <span className="status-pill neutral">View only</span>}
+                {canAct && approval.status === 'needs_review' && (
                   <>
                     <button className="sync-button secondary" type="button" onClick={() => void approve(approval.id)}>
                       Approve
