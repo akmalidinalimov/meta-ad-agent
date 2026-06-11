@@ -37,7 +37,7 @@ function formatElapsed(seconds: number | null): string {
 }
 
 function formatClock(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function relativeTime(iso: string | null): string {
@@ -159,8 +159,8 @@ export function AgentOffice({ pollMs = 30000 }: { pollMs?: number }) {
           <h6>Recent activity</h6>
           <ul>
             {payload.events.slice(0, 5).map((event, index) => (
-              <li key={`${event.at}-${index}`}>
-                <time>{formatClock(event.at)}</time>
+              <li key={`${event.agentId}-${event.at}-${index}`}>
+                <time dateTime={event.at}>{formatClock(event.at)}</time>
                 <span>
                   <b>{payload.agents.find((a) => a.id === event.agentId)?.name ?? event.agentId}</b>{' '}
                   — {event.summary}

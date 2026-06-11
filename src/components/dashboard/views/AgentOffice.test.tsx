@@ -106,4 +106,10 @@ describe('AgentOffice', () => {
       expect(screen.getByText(/unavailable/i)).toBeTruthy()
     })
   })
+
+  it('shows Connecting… before the first response arrives', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {}))) // never resolves
+    render(<AgentOffice />)
+    expect(screen.getByText('Connecting…')).toBeTruthy()
+  })
 })
