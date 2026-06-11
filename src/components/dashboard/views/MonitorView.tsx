@@ -43,9 +43,19 @@ export function MonitorView({ metrics, trend, funnel }: MonitorViewProps) {
     }
   }, [])
 
+  // Anchor KPI windows to the data's own calendar, not wall-clock today —
+  // with snapshot/fallback data the latest data day acts as the partial "today",
+  // keeping the KPI rail consistent with the trend/funnel below it.
+  const anchorDate = useMemo(() => {
+    if (metrics.length === 0) return undefined
+    let latest = metrics[0].date
+    for (const row of metrics) if (row.date > latest) latest = row.date
+    return latest
+  }, [metrics])
+
   const kpis = useMemo(
-    () => deriveMonitorKpis(metrics, { weeklyBudgetTargetUsd: budgetTarget }),
-    [metrics, budgetTarget],
+    () => deriveMonitorKpis(metrics, { weeklyBudgetTargetUsd: budgetTarget, today: anchorDate }),
+    [metrics, budgetTarget, anchorDate],
   )
 
   const stages = STAGE_LABELS.map(({ step, label }) => {
@@ -92,7 +102,7 @@ export function MonitorView({ metrics, trend, funnel }: MonitorViewProps) {
           </ChartFrame>
         </div>
         <div className="monitor-funnel">
-          <h5>Funnel · 7 days</h5>
+          <h5>Funnel · filtered range</h5>
           {stages.map((stage) => (
             <div key={stage.label} className="monitor-funnel-row">
               <span>{stage.label}</span>

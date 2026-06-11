@@ -81,4 +81,34 @@ describe('MonitorView', () => {
     expect(screen.getByText('Spend · 7d')).toBeTruthy()
     expect(screen.getByText('CTR')).toBeTruthy()
   })
+
+  it('anchors KPI windows to the latest metric date, not wall-clock today', async () => {
+    stubFetch()
+    // 8 days of historic data ending long before today; spend 10/day
+    const historic: DailyAdMetric[] = []
+    for (let day = 14; day <= 21; day++) {
+      historic.push({
+        date: `2026-05-${day}`,
+        campaignId: 'c1',
+        adSetId: 'as1',
+        adId: 'a1',
+        creativeId: 'cr1',
+        placement: 'instagram_reels' as DailyAdMetric['placement'],
+        spendUsd: 10,
+        impressions: 1000,
+        clicks: 25,
+        landingPageViews: 20,
+        leads: 5,
+        telegramSubscribers: 3,
+        webinarAttendees: 1,
+        purchases: 0,
+        purchaseRevenueUsd: 0,
+      })
+    }
+    render(<MonitorView metrics={historic} trend={trend} funnel={funnel} />)
+    await waitFor(() => expect(screen.getByText('Cost / Lead')).toBeTruthy())
+    // Latest date (05-21) is treated as partial "today"; the 7 complete days
+    // before it (05-14..05-20) sum to $70 — NOT $0 as with a wall-clock anchor.
+    expect(screen.getByText('$70.00')).toBeTruthy()
+  })
 })
