@@ -31,8 +31,8 @@ Login flow, session auth, and the topbar (title, data-source pill, refresh) are 
 
 ## 3. Monitor screen layout
 
-Light theme, three zones, no vertical scrolling at desktop widths (≥1180px). On narrower
-viewports the zones stack: KPIs → chart/funnel → Agent Office.
+Light theme, three zones, no vertical scrolling at desktop widths (≥1180px). Mobile gets its
+own layout (§3.4), not just stacked desktop zones.
 
 ### 3.1 Left — KPI rail (~200px)
 
@@ -40,7 +40,7 @@ Five KPIs, stacked, each: small uppercase label, large value, one-line plain-lan
 
 | KPI | Value | Delta line | Source |
 |---|---|---|---|
-| Spend · 7d | currency | pace vs budget ("on pace", "ahead of budget") | existing filtered metrics (`spendUsd`) |
+| Spend · 7d | currency | pace vs weekly budget target if configured, else Δ% vs previous 7 days | existing filtered metrics (`spendUsd`) |
 | Leads | count | Δ% vs previous 7 days | existing metrics (`leads`) |
 | Cost / Lead | currency | Δ% vs previous 7 days, worded ("▼ 12% — improving") | spend ÷ leads |
 | Telegram STARTs | count | Δ% vs previous 7 days | existing metrics (`telegramSubscribers`) |
@@ -49,6 +49,17 @@ Five KPIs, stacked, each: small uppercase label, large value, one-line plain-lan
 Tone colors (green/red) apply only to the delta line, never the value. Purchases/ROAS are
 deliberately excluded until purchase tracking is activated (see `meta-ad-agent-signals-state`
 memory); the rail design leaves room to add a sixth KPI later.
+
+**Delta integrity rules:**
+- "Spend pace vs budget" only renders when a weekly budget target exists — a new optional
+  field on the Settings tab (stored alongside existing dashboard settings). Without it, the
+  delta falls back to a plain Δ% comparison; the UI never invents a pace claim.
+- All Δ comparisons use **complete days only**: the current window is the last 7 complete
+  days vs the 7 before that. Today's partial data is shown in the trend chart but excluded
+  from delta math, so the rail doesn't show false drops every morning.
+- The topbar shows one **freshness stamp** for the whole screen ("data as of 10:41"), driven
+  by the live-fetch timestamp; if the last fetch fell back to snapshot data, the stamp says so
+  ("snapshot · 09:58"). The agent panel inherits this rather than having its own.
 
 ### 3.2 Center — trend + funnel
 
@@ -68,10 +79,34 @@ Two parts:
    CSS in `App.css` (desk, walk, pulse keyframes already present). All animation respects
    `prefers-reduced-motion: reduce` (static fallback with status dots only).
 2. **Status list** below the scene: one row per agent — avatar, name, live status sentence,
-   and elapsed time (e.g. "working — scanning 14 ad sets · 2m"; "idle — next run 14:00").
+   and elapsed time (e.g. "working — scanning 14 ad sets · 2m"). Idle agents show their last
+   real activity instead of a bare "idle" (e.g. "last: finished scan, 2h ago · next 14:00") so
+   the panel never reads as dead between scheduled runs.
+3. **Recent activity feed** (compact, last 5 events) under the status list: timestamped lines
+   of completed agent work, e.g. "10:41 Monitor — scan done, 14 ad sets healthy, 1 flagged",
+   "09:58 Analyst — KPI digest sent to Telegram". The office is a living log of work done,
+   not just a right-now snapshot — this is what keeps the screen honest *and* alive when all
+   jobs are between runs.
 
 A small header line summarizes: "2 working · 2 idle". ("Moving" is not a backend state — the
 walk animation plays as a transition whenever an agent's state changes between polls.)
+
+### 3.4 Mobile / Telegram Mini App layout (≤768px)
+
+The operator will most often glance at this from a phone, frequently inside Telegram (the
+dashboard is already reachable via web_app buttons). Mobile is a first-class layout, not
+stacked desktop zones:
+
+1. **KPI grid first**: the five KPIs as a 2-column grid (Spend spanning full width on top, or
+   2×3 with one empty cell), values slightly smaller, deltas intact. This alone answers "is
+   everything fine?" without scrolling.
+2. **Agent strip second**: the office scene is replaced by a horizontal status strip — avatar
+   + status dot per agent in one row, with the "2 working · 2 idle" summary; tapping/expanding
+   reveals the status list + recent activity feed. No walking animation on mobile.
+3. **Trend + funnel last**, inside a collapsed-by-default section ("Trend & funnel ▾") to keep
+   the initial viewport to roughly one screen.
+
+Target: KPIs + agent strip visible without scrolling on a ~380px-wide viewport.
 
 ## 4. Agent Office — data contract (real data, not theater)
 
@@ -98,17 +133,25 @@ job is running.
       "state": "working",            // "working" | "idle" | "scheduled"
       "activity": "scanning 14 ad sets",
       "sinceSeconds": 120,           // elapsed in current state, null if unknown
-      "nextRunAt": null              // ISO timestamp when state == "scheduled"
+      "nextRunAt": null,             // ISO timestamp when state == "scheduled"
+      "lastActivity": "finished scan — 14 ad sets healthy",
+      "lastActiveAt": "2026-06-11T08:41:00Z"
     }
+  ],
+  "events": [                        // newest first, capped at 20
+    { "agentId": "monitor", "summary": "scan done — 14 ad sets healthy, 1 flagged",
+      "at": "2026-06-11T10:41:00Z" }
   ],
   "updatedAt": "2026-06-11T10:41:00Z"
 }
 ```
 
-Backend implementation: a small in-process **agent activity registry** (module-level, like the
-existing TTL caches) that schedulers/jobs mark on start/finish (`begin(agent_id, activity)` /
-`end(agent_id)`), plus next-run times read from the existing scheduler config. No new storage
-files; state is ephemeral and resets on restart (acceptable — it reflects "right now").
+Backend implementation: a small **agent activity registry** that schedulers/jobs mark on
+start/finish (`begin(agent_id, activity)` / `end(agent_id, summary)`), plus next-run times read
+from the existing scheduler config. Live working state is in-process/ephemeral, but completed
+events and `lastActiveAt` are persisted to `backend/storage/agent_activity.json` (same pattern
+as the other JSON stores, capped at ~50 events) so a service restart doesn't wipe the feed and
+make the office look like nothing ever happened.
 
 Frontend polls every 30s (aligned with the existing refresh cadence); on fetch failure the
 office shows the last known state with a stale indicator rather than erroring.
@@ -139,13 +182,16 @@ surface is removed.
 
 ## 7. Testing
 
-- **Frontend (vitest, jsdom):** KPI rail renders values/deltas/tones from fixture metrics;
-  funnel renders five stages with widths; Agent Office renders working/idle/scheduled states
-  and the summary line; reduced-motion fallback renders without animated classes. House
-  style: `// @vitest-environment jsdom`, assert with `.toBeTruthy()`.
-- **Backend (pytest):** activity registry begin/end transitions; `/api/agents/status` shape,
-  session guard (401 unauthenticated), viewer access allowed; scheduler integration marks
-  Monitor working during a scan.
+- **Frontend (vitest, jsdom):** KPI rail renders values/deltas/tones from fixture metrics
+  (incl. complete-days delta windows and the no-budget-target fallback); funnel renders five
+  stages with widths; Agent Office renders working/idle/scheduled states, last-activity lines,
+  the recent-events feed, and the summary line; mobile agent strip renders; reduced-motion
+  fallback renders without animated classes. House style: `// @vitest-environment jsdom`,
+  assert with `.toBeTruthy()`.
+- **Backend (pytest):** activity registry begin/end transitions and event persistence
+  (capped, survives reload from JSON); `/api/agents/status` shape incl. events, session guard
+  (401 unauthenticated), viewer access allowed; scheduler integration marks Monitor working
+  during a scan; weekly budget target setting round-trips through the settings API.
 - **Regression:** full suites stay green (baseline 522 backend + 51 frontend, minus tests that
   covered deleted web-only UI, which are removed with their components).
 - `npm run lint` and `npm run build` pass.
