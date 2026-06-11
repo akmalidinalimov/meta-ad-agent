@@ -27,6 +27,7 @@ from .routers import crm as crm_router
 from .routers import dashboard as dashboard_router
 from .routers import funnel as funnel_router
 from .routers import members as members_router
+from .routers import agent_status as agent_status_router
 from .routers import meta as meta_router
 from .routers import meta_ai as meta_ai_router
 from .routers import monitoring as monitoring_router
@@ -207,6 +208,7 @@ for module in (
     meta_ai_router,
     agents_router,
     members_router,
+    agent_status_router,
 ):
     app.include_router(module.router)
 
