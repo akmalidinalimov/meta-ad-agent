@@ -23,6 +23,7 @@ class TargetsUpdate(BaseModel):
     minLeadRate: float | None = None
     maxCostPerStart: float | None = None
     minStartRate: float | None = None
+    weeklyBudgetTargetUsd: float | None = None
 
 
 @router.get("/api/targets")

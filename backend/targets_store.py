@@ -21,10 +21,11 @@ TARGETS_FILE = "kpi_targets.json"
 # Each target is (key, direction): "max" = actual should stay AT OR BELOW the target
 # (cost-type KPIs); "min" = actual should stay AT OR ABOVE the target (rate-type KPIs).
 TARGET_FIELDS: dict[str, str] = {
-    "maxCpl": "max",            # $ ceiling for cost per lead
-    "minLeadRate": "min",       # % floor for lead rate (leads / clicks)
-    "maxCostPerStart": "max",   # $ ceiling for cost per Telegram START
-    "minStartRate": "min",      # % floor for Telegram START rate
+    "maxCpl": "max",                  # $ ceiling for cost per lead
+    "minLeadRate": "min",             # % floor for lead rate (leads / clicks)
+    "maxCostPerStart": "max",         # $ ceiling for cost per Telegram START
+    "minStartRate": "min",            # % floor for Telegram START rate
+    "weeklyBudgetTargetUsd": "max",   # $ target for 7-day spend (Monitor pace KPI)
 }
 
 

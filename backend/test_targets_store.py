@@ -29,6 +29,16 @@ def test_zero_or_blank_coerces_to_none(tmp_path):
     assert not has_any_target(loaded)
 
 
+def test_weekly_budget_target_round_trips(tmp_path):
+    saved = save_targets({"weeklyBudgetTargetUsd": 500}, storage_dir=tmp_path)
+    assert saved["weeklyBudgetTargetUsd"] == 500.0
+    assert load_targets(storage_dir=tmp_path)["weeklyBudgetTargetUsd"] == 500.0
+
+
+def test_weekly_budget_target_defaults_to_none(tmp_path):
+    assert load_targets(storage_dir=tmp_path)["weeklyBudgetTargetUsd"] is None
+
+
 def _empty_dir():
     import tempfile
     from pathlib import Path
