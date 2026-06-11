@@ -378,6 +378,8 @@ async def agentic_reply(message: str, *, operator_key: str) -> str:
         logger.exception("agentic_chat: failed to build Anthropic client")
         return "I hit an error reaching the model. Try again in a moment, or tap /menu."
 
+    # Single-slot per agent: concurrent operator messages share the "analyst"
+    # slot (last begin wins) — acceptable for a dashboard status display.
     agent_begin("analyst", "answering an operator question")
     done_summary: str | None = None
     try:
