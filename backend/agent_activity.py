@@ -11,12 +11,15 @@ snapshot. An agent never shows "working" unless something is genuinely running.
 
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .storage_io import read_json, update_json
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[1]
 STORAGE_DIR = ROOT / "storage"
@@ -58,7 +61,7 @@ def end(agent_id: str, summary: str | None = None, *, storage_dir: Path = STORAG
         return
     with _lock:
         live = _live.pop(agent_id, None)
-    if not summary:
+    if not summary or not summary.strip():
         return
     at = _now_iso()
     activity = (live or {}).get("activity") or summary
@@ -73,7 +76,10 @@ def end(agent_id: str, summary: str | None = None, *, storage_dir: Path = STORAG
             "at": at,
         }
 
-    update_json(_path(storage_dir), mutate, default={"events": [], "lastActive": {}})
+    try:
+        update_json(_path(storage_dir), mutate, default={"events": [], "lastActive": {}})
+    except OSError:
+        logger.error("agent_activity: failed to persist event for %s — %s", agent_id, summary)
 
 
 def live_state() -> dict[str, dict[str, Any]]:

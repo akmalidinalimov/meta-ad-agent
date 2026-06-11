@@ -55,3 +55,8 @@ def test_events_are_capped(tmp_path):
 
 def test_stored_handles_missing_file(tmp_path):
     assert agent_activity.stored(storage_dir=tmp_path) == {"events": [], "lastActive": {}}
+
+
+def test_end_with_whitespace_summary_persists_nothing(tmp_path):
+    agent_activity.end("monitor", "   ", storage_dir=tmp_path)
+    assert agent_activity.stored(storage_dir=tmp_path)["events"] == []
