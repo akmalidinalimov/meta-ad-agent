@@ -75,7 +75,7 @@ describe('deriveMonitorKpis', () => {
     for (const row of rows) if (row.date >= '2026-06-04') row.clicks = 12
     const kpis = deriveMonitorKpis(rows, { today: TODAY })
     const ctr = kpis.find((k) => k.id === 'ctr')!
-    expect(ctr.delta).toContain('pt')
+    expect(ctr.delta).toContain('pp')
     expect(ctr.tone).toBe('bad')
   })
 

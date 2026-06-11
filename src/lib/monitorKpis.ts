@@ -16,7 +16,7 @@ export interface MonitorKpi {
 
 export interface MonitorKpiOptions {
   weeklyBudgetTargetUsd?: number | null
-  today?: string // ISO date treated as "today" (partial; excluded). Defaults to the current date.
+  today?: string // ISO date treated as "today" (partial; excluded). Defaults to the UTC date — in UTC+5 this lags local midnight by up to 5h, briefly excluding one extra complete day.
 }
 
 interface Totals {
@@ -41,7 +41,7 @@ function windowTotals(metrics: DailyAdMetric[], from: string, to: string): Total
     leads: sum((m) => m.leads),
     clicks: sum((m) => m.clicks),
     impressions: sum((m) => m.impressions),
-    starts: sum((m) => m.telegramSubscribers),
+    starts: sum((m) => m.telegramSubscribers), // telegramSubscribers carries Telegram bot START events (funnel signal), not channel subscriptions
   }
 }
 
@@ -100,8 +100,8 @@ export function deriveMonitorKpis(
     const points = ctrNow - ctrPrev
     const rounded = Math.round(Math.abs(points) * 10) / 10
     if (rounded === 0) ctrDelta = { delta: 'flat vs prev 7d', tone: 'neutral' }
-    else if (points > 0) ctrDelta = { delta: `▲ ${rounded}pt vs prev 7d`, tone: 'good' }
-    else ctrDelta = { delta: `▼ ${rounded}pt — watch`, tone: 'bad' }
+    else if (points > 0) ctrDelta = { delta: `▲ ${rounded}pp vs prev 7d`, tone: 'good' }
+    else ctrDelta = { delta: `▼ ${rounded}pp — watch`, tone: 'bad' }
   }
 
   return [
