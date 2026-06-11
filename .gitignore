@@ -32,3 +32,4 @@ playwright-report/
 *.sln
 *.sw?
 backend/storage/members.json
+.superpowers/
