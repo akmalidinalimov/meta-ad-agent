@@ -81,6 +81,12 @@
   white-space: nowrap;
 }
 
+.status-pill.neutral {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
 .status-pill.warning {
   border-color: #f6d58b;
   color: #92400e;
