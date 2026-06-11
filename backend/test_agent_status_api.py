@@ -73,3 +73,37 @@ def test_idle_agent_has_no_activity(client):
     analyst = next(a for a in resp.json()["agents"] if a["id"] == "analyst")
     assert analyst["state"] in ("idle", "scheduled")
     assert analyst["activity"] is None
+
+
+def test_scheduled_agent_reports_future_next_run(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from backend.routers import agent_status
+
+    finished = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    monkeypatch.setattr(
+        agent_status,
+        "list_monitoring_runs",
+        lambda: [{"status": "completed", "finishedAt": finished}],
+    )
+    resp = client.get("/api/agents/status", cookies=_cookie("admin"))
+    monitor = next(a for a in resp.json()["agents"] if a["id"] == "monitor")
+    assert monitor["state"] == "scheduled"
+    assert monitor["nextRunAt"] is not None  # finished 2h ago + 4h interval = 2h from now
+
+
+def test_stale_next_run_degrades_to_idle(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from backend.routers import agent_status
+
+    finished = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    monkeypatch.setattr(
+        agent_status,
+        "list_monitoring_runs",
+        lambda: [{"status": "completed", "finishedAt": finished}],
+    )
+    resp = client.get("/api/agents/status", cookies=_cookie("admin"))
+    monitor = next(a for a in resp.json()["agents"] if a["id"] == "monitor")
+    assert monitor["state"] == "idle"
+    assert monitor["nextRunAt"] is None

@@ -12,17 +12,23 @@ from ..monitoring_scheduler import list_monitoring_runs, parse_datetime
 
 router = APIRouter()
 
+MAX_FEED_EVENTS = 20  # bandwidth cap for the dashboard feed; the store keeps 50
 
-def _next_run(runs: list[dict[str, Any]], interval_hours: int) -> str | None:
-    """Most recent completed run + interval = the next scheduled run."""
+
+def _next_run(runs: list[dict[str, Any]], interval_hours: int, now: datetime) -> str | None:
+    """Most recent completed run + interval = the next scheduled run.
+
+    Returns None when that moment is already past (scheduler down or behind) —
+    a stale "scheduled" with a clock time in the past is worse than "idle".
+    """
     for run in runs:
         if run.get("status") == "completed" and run.get("finishedAt"):
             finished = parse_datetime(str(run["finishedAt"]))
             if finished:
-                # parse_datetime already ensures UTC-aware, but be safe
                 if finished.tzinfo is None:
                     finished = finished.replace(tzinfo=timezone.utc)
-                return (finished + timedelta(hours=interval_hours)).isoformat()
+                candidate = finished + timedelta(hours=interval_hours)
+                return candidate.isoformat() if candidate > now else None
     return None
 
 
@@ -36,8 +42,8 @@ def agents_status() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
 
     next_runs: dict[str, str | None] = {
-        "monitor": _next_run(list_monitoring_runs(), 4),
-        "planner": _next_run(list_opportunity_runs(), 24),
+        "monitor": _next_run(list_monitoring_runs(), 4, now),
+        "planner": _next_run(list_opportunity_runs(), 24, now),
     }
 
     agents: list[dict[str, Any]] = []
@@ -76,4 +82,4 @@ def agents_status() -> dict[str, Any]:
             }
         )
 
-    return {"agents": agents, "events": stored["events"][:20], "updatedAt": now.isoformat()}
+    return {"agents": agents, "events": stored["events"][:MAX_FEED_EVENTS], "updatedAt": now.isoformat()}
