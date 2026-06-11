@@ -395,6 +395,7 @@ const TARGET_FIELDS = [
   { key: 'minLeadRate', label: 'Min lead rate (%)', hint: 'Leads / clicks floor' },
   { key: 'maxCostPerStart', label: 'Max cost per Telegram START ($)', hint: 'Spend / START ceiling' },
   { key: 'minStartRate', label: 'Min START rate (%)', hint: 'START-rate floor' },
+  { key: 'weeklyBudgetTargetUsd', label: 'Weekly budget target ($)', hint: 'Monitor shows spend pace against this' },
 ] as const
 
 function TargetsView() {
