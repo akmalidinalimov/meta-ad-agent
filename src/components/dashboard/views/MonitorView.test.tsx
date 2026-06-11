@@ -73,4 +73,12 @@ describe('MonitorView', () => {
     render(<MonitorView metrics={metrics} trend={trend} funnel={funnel} />)
     await waitFor(() => expect(screen.getByText('Agent Office')).toBeTruthy())
   })
+
+  it('still renders all five KPIs when the targets fetch fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
+    render(<MonitorView metrics={metrics} trend={trend} funnel={funnel} />)
+    await waitFor(() => expect(screen.getByText('Cost / Lead')).toBeTruthy())
+    expect(screen.getByText('Spend · 7d')).toBeTruthy()
+    expect(screen.getByText('CTR')).toBeTruthy()
+  })
 })

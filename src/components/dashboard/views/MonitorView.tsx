@@ -31,12 +31,16 @@ export function MonitorView({ metrics, trend, funnel }: MonitorViewProps) {
 
   useEffect(() => {
     if (typeof fetch !== 'function') return
+    let cancelled = false
     void fetch('/api/targets')
       .then((response) => (response.ok ? response.json() : { targets: null }))
       .then((result: { targets?: Record<string, number | null> }) => {
-        setBudgetTarget(result.targets?.weeklyBudgetTargetUsd ?? null)
+        if (!cancelled) setBudgetTarget(result.targets?.weeklyBudgetTargetUsd ?? null)
       })
       .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const kpis = useMemo(
@@ -53,6 +57,7 @@ export function MonitorView({ metrics, trend, funnel }: MonitorViewProps) {
   const recentTrend = trend.slice(-14)
 
   // Collapsed by default on phones (spec §3.4); <details open> can't be CSS-driven.
+  // Intentionally static (read once at mount) — resize/rotation re-open is out of scope.
   const [chartsOpen] = useState(
     () => typeof window === 'undefined' || window.innerWidth > 768,
   )
@@ -76,9 +81,9 @@ export function MonitorView({ metrics, trend, funnel }: MonitorViewProps) {
           <ChartFrame summary="Daily spend and leads for the last 14 days">
             <LineChart data={recentTrend}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="spend" tickFormatter={formatAxisCurrency} tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="leads" orientation="right" tick={{ fontSize: 11 }} />
+              <XAxis dataKey="day" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(value: string) => value.slice(5)} />
+              <YAxis yAxisId="spend" tickFormatter={formatAxisCurrency} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+              <YAxis yAxisId="leads" orientation="right" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
               <Tooltip formatter={chartTooltipFormatter} />
               <Legend />
               <Line yAxisId="spend" type="monotone" dataKey="spend" stroke="var(--chart-1)" strokeWidth={2.5} dot={false} />
