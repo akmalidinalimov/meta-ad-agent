@@ -369,6 +369,8 @@ def _content_blocks_to_list(content: Any) -> list[Any]:
 async def agentic_reply(message: str, *, operator_key: str) -> str:
     """Run the Anthropic tool-use loop for one free-text operator message and return
     the model's final text. Degrades to a friendly string on any error."""
+    from .agent_activity import begin as agent_begin, end as agent_end
+
     model = config.anthropic_model()
     try:
         client = _build_client()
@@ -376,6 +378,8 @@ async def agentic_reply(message: str, *, operator_key: str) -> str:
         logger.exception("agentic_chat: failed to build Anthropic client")
         return "I hit an error reaching the model. Try again in a moment, or tap /menu."
 
+    agent_begin("analyst", "answering an operator question")
+    done_summary: str | None = None
     try:
         messages: list[dict[str, Any]] = [{"role": "user", "content": message}]
         final_text = ""
@@ -414,11 +418,13 @@ async def agentic_reply(message: str, *, operator_key: str) -> str:
                     }
                 )
             messages.append({"role": "user", "content": tool_results})
+        done_summary = "answered an operator question"
         return final_text or "Done."
     except Exception:  # noqa: BLE001 - any loop/API failure -> degrade
         logger.exception("agentic_chat: tool loop failed")
         return "I hit an error working on that. Try again, or tap /menu."
     finally:
+        agent_end("analyst", done_summary)
         try:
             await client.close()
         except Exception:  # noqa: BLE001 - best-effort close

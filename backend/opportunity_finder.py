@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .agent_activity import begin as agent_begin, end as agent_end
 from .analysis_engine import rank_audiences_for_next_campaign
 from .creative_recommender import build_recommended_creatives, generate_creative_angle_briefs
 from .draft_campaign_proposal import select_source_template
@@ -149,7 +150,13 @@ def build_autonomous_campaign(
     )
 
     segment_labels = [segment["name"] for segment in strategy.get("segments", [])]
-    creatives = build_recommended_creatives(analysis, segment_labels)
+    agent_begin("creative", "selecting creatives for the proposed campaign")
+    try:
+        creatives = build_recommended_creatives(analysis, segment_labels)
+    except Exception:
+        agent_end("creative")
+        raise
+    agent_end("creative", "creative recommendations prepared")
 
     # On-demand chat builds get a unique timestamped id so two requests the same day
     # don't collide (the daily path passes its own deterministic per-day id instead).

@@ -73,10 +73,12 @@ async def _monitoring_loop() -> None:
     from .telegram_outbound import send_approval_notification, send_telegram_message_sync
 
     from .telegram_digest import send_kpi_digest
+    from .agent_activity import begin as agent_begin, end as agent_end
 
     interval = int(os.getenv("MONITORING_INTERVAL_SECONDS", "3600"))
     while True:
         try:
+            agent_begin("monitor", "scanning campaigns and ad sets")
             monitoring_result = await asyncio.to_thread(
                 run_scheduled_monitoring,
                 build_dashboard,
@@ -85,19 +87,29 @@ async def _monitoring_loop() -> None:
             # Heartbeat: when monitoring actually runs (its own 4h debounce, not a
             # skipped poll), push the KPI digest so the operator always gets a
             # status table — not only when a rule trips. Read-only, no Meta writes.
-            if isinstance(monitoring_result, dict) and not monitoring_result.get("skipped"):
+            ran = isinstance(monitoring_result, dict) and not monitoring_result.get("skipped")
+            agent_end("monitor", "monitoring scan completed" if ran else None)
+            if ran:
+                agent_begin("analyst", "sending KPI digest to Telegram")
                 await asyncio.to_thread(send_kpi_digest)
+                agent_end("analyst", "KPI digest sent to Telegram")
         except Exception:
+            agent_end("monitor")
+            agent_end("analyst")
             logger.exception("Scheduled monitoring iteration failed")
         try:
+            agent_begin("planner", "daily opportunity review")
             config = get_meta_config()
-            await run_scheduled_opportunities(
+            opportunity_result = await run_scheduled_opportunities(
                 load_knowledge_base,
                 load_playbooks=load_playbooks,
                 account_id=config.ad_account_id or "unconfigured_ad_account",
                 send_alert=send_approval_notification,
             )
+            ran = isinstance(opportunity_result, dict) and not opportunity_result.get("skipped")
+            agent_end("planner", "opportunity review completed" if ran else None)
         except Exception:
+            agent_end("planner")
             logger.exception("Scheduled opportunity iteration failed")
         await asyncio.sleep(interval)
 
