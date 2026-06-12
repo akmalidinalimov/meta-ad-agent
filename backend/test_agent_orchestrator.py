@@ -1,9 +1,30 @@
+import pytest
+
+import backend.agent_orchestrator as agent_orchestrator
 from backend.agent_orchestrator import (
     agent_registry,
+    build_agent_decision,
+    format_autonomous_answer,
+    is_campaign_creation_request,
     orchestrate_agent_chat,
     route_question,
+    wants_autonomous_build,
 )
 from backend.test_strategy_generator import sample_knowledge, sample_playbook
+
+
+CAMPAIGN_NAME = "DA - SHAHLOAI - VSL 2 - 26.04.2026 Y"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_autonomous_side_effects(monkeypatch):
+    """Keep the autonomous build path off real storage/config in every test.
+
+    Persistence echoes the packet back (no disk write) and Meta config resolves to no
+    account/pixel, so the no-pixel LINK_CLICKS path is exercised deterministically.
+    """
+    monkeypatch.setattr(agent_orchestrator, "_persist_autonomous_approval", lambda approval: approval)
+    monkeypatch.setattr(agent_orchestrator, "_meta_account_and_pixel", lambda: (None, None))
 
 
 def test_agent_registry_contains_required_specialists_with_safe_permissions():
@@ -42,6 +63,66 @@ def test_route_question_selects_specialist_without_live_execution():
     assert route_question("Create a Meta AI strategy from the Analyze answers")["agentId"] == "meta_ai_strategist"
 
 
+@pytest.mark.parametrize(
+    "question, expected_agent",
+    [
+        # Analysis questions about a named campaign must hit the analysis specialists,
+        # even though the campaign name itself contains the token "VSL".
+        (f"Which audience should we scale from {CAMPAIGN_NAME} and why?", "audience"),
+        (f"Which creative worked best in {CAMPAIGN_NAME}?", "creative"),
+        (f"Rank the creatives by leads and CPL for {CAMPAIGN_NAME}", "creative"),
+        (f"Which placement performed best for {CAMPAIGN_NAME}?", "placement"),
+        ("Which interests and age range converted cheapest?", "audience"),
+        ("Should we trust Facebook placements or stay on Instagram Reels?", "placement"),
+        # Creation requests route to the campaign builder (orchestrator) ...
+        ("Create a campaign with $100 per segment optimized for Telegram START", "orchestrator"),
+        ("Build a new campaign plan from the VSL 2 winners", "orchestrator"),
+        ("Set up my next campaign", "orchestrator"),
+        # ... including paused-draft creation, which must NOT be read as a pause action.
+        ("Create a paused campaign plan - DO NOT PUBLISH - DRAFT", "orchestrator"),
+        ("Prepare a paused campaign and paused ad sets only", "orchestrator"),
+        # Object-level edits route to the approval-gated execution agent.
+        ("Rename campaign 120123 to Business Automation VSL", "execution"),
+        ("Pause ad set 987654321 now", "execution"),
+        ("Go to the browser and change the budget", "execution"),
+    ],
+)
+def test_route_question_distinguishes_analysis_creation_and_execution(question, expected_agent):
+    assert route_question(question)["agentId"] == expected_agent
+
+
+def test_campaign_name_token_vsl_is_not_treated_as_creation_intent():
+    assert is_campaign_creation_request(f"Which audience should we scale from {CAMPAIGN_NAME}?") is False
+    assert is_campaign_creation_request("Create a paused campaign plan - DO NOT PUBLISH") is True
+
+
+def test_named_campaign_audience_question_does_not_generate_plan_or_execution():
+    response = orchestrate_agent_chat(
+        f"Which audience should we scale from {CAMPAIGN_NAME} and why?",
+        knowledge=sample_knowledge(),
+        playbooks=[sample_playbook()],
+    )
+
+    # The analysis specialists are answered downstream (LLM/knowledge base), so the
+    # orchestrator must not hijack the turn with a planning or execution response.
+    assert response is None
+
+
+def test_paused_campaign_plan_request_builds_autonomous_paused_campaign():
+    # Underspecified creation (budget but no segments) is no longer a clarifying loop:
+    # the orchestrator autonomously builds a best-guess PAUSED campaign instead.
+    response = orchestrate_agent_chat(
+        "Create a paused campaign plan with $100 per segment - DO NOT PUBLISH - DRAFT",
+        knowledge=sample_knowledge(),
+        playbooks=[],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    assert response["autonomous"] is True
+    assert response["generatedApprovalRequest"]["status"] == "needs_review"
+    assert "PAUSED" in response["answer"]
+
 def test_route_question_keeps_campaign_specific_analysis_with_specialist():
     assert (
         route_question("Which audience should we scale from DA - SHAHLOAI - VSL 2 - 26.04.2026 Y and why?")["agentId"]
@@ -62,6 +143,37 @@ def test_route_question_does_not_match_age_inside_landing_page():
         route_question("Diagnose whether we lose people before landing page, Telegram START, form, or CRM purchase.")["agentId"]
         == "funnel"
     )
+
+
+def test_routes_to_new_specialist_agents():
+    assert route_question("Is our pixel/CAPI attribution healthy and are leads double-counted?")["agentId"] == "measurement"
+    assert route_question("Are we under-pacing budget and should this be CBO or ABO?")["agentId"] == "budget_pacing"
+    assert route_question("How do we fix the landing page message match and page speed?")["agentId"] == "landing_cro"
+
+
+def test_new_specialist_agents_registered_with_safe_permissions():
+    registry = agent_registry()
+    for agent_id in ["measurement", "budget_pacing", "landing_cro"]:
+        assert agent_id in registry
+        assert registry[agent_id]["canExecuteLiveChanges"] is False
+
+
+def test_confidence_is_evidence_derived_not_field_presence():
+    # A thin single-agent response (sources + next steps but no confident handoffs)
+    # should be moderate, NOT a 95 stamped purely for having non-empty fields.
+    thin = build_agent_decision(
+        {"agentId": "audit", "reason": "Default audit."},
+        {"sources": ["knowledge_base"], "suggestedQuestions": ["What next?"], "agentHandoffs": []},
+    )
+    assert thin["confidenceScore"] < 80
+    assert thin["confidenceBasis"]
+
+    # An execution path with no cited policy/sources should be penalized.
+    weak_exec = build_agent_decision(
+        {"agentId": "execution", "reason": "Execution intent."},
+        {"sources": [], "suggestedQuestions": [], "agentHandoffs": []},
+    )
+    assert weak_exec["confidenceScore"] <= thin["confidenceScore"]
 
 
 def test_orchestrator_handles_multi_specialist_strategy_questions_with_decision_trace():
@@ -110,7 +222,9 @@ def test_orchestrator_generates_campaign_plan_from_latest_playbook():
     }
 
 
-def test_orchestrator_asks_for_chat_variables_when_playbook_has_no_segments():
+def test_orchestrator_autonomously_builds_when_brief_is_thin():
+    # "Set up my next campaign" gives nothing to plan from, so the orchestrator builds a
+    # best-guess PAUSED campaign autonomously rather than asking for variables.
     response = orchestrate_agent_chat(
         "Set up my next campaign",
         knowledge=sample_knowledge(),
@@ -119,8 +233,23 @@ def test_orchestrator_asks_for_chat_variables_when_playbook_has_no_segments():
 
     assert response is not None
     assert response["activeAgent"] == "orchestrator"
-    assert "tell me the segments" in response["answer"].lower()
-    assert "budget" in response["answer"].lower()
+    assert response["autonomous"] is True
+    assert response["generatedApprovalRequest"]["status"] == "needs_review"
+
+
+def test_orchestrator_asks_once_when_no_knowledge_to_build_from():
+    # The ONLY clarifying ask: with no synced knowledge the autonomous build can't pick
+    # audiences, so it asks once (needsClarification) instead of looping.
+    response = orchestrate_agent_chat(
+        "Set up my next campaign",
+        knowledge=None,
+        playbooks=[],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    assert response["needsClarification"] is True
+    assert "generatedApprovalRequest" not in response
 
 
 def test_orchestrator_builds_campaign_plan_from_chat_brief_without_saved_playbook():
@@ -137,6 +266,82 @@ def test_orchestrator_builds_campaign_plan_from_chat_brief_without_saved_playboo
     assert "chat_campaign_planner" in response["sources"]
     assert "Earning Money" in response["answer"]
     assert "I will not execute" in response["answer"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "do it yourself",
+        "just create a test and optimize and run it",
+        "you decide, you know better",
+        "pick the top 3 audiences and top 5 creatives",
+        "i don't have answers, your call",
+        "whatever you think, best guess is fine",
+        "just do it",
+        "you choose the audiences",
+    ],
+)
+def test_wants_autonomous_build_true(message):
+    assert wants_autonomous_build(message.lower()) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "which audience is cheapest?",
+        "create a campaign with $100 per segment for income and business",
+        "rank the creatives by leads",
+        "pause ad set 123",
+    ],
+)
+def test_wants_autonomous_build_false(message):
+    assert wants_autonomous_build(message.lower()) is False
+
+
+def test_autonomous_request_builds_paused_campaign_without_clarifying_loop():
+    # No recent playbooks, so no audience interests are excluded and the build succeeds.
+    response = orchestrate_agent_chat(
+        "pick the top 3 audiences and top 5 creatives, do it yourself",
+        knowledge=sample_knowledge(),
+        playbooks=[],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    assert response["autonomous"] is True
+    assert "needsClarification" not in response
+    approval = response["generatedApprovalRequest"]
+    assert approval["status"] == "needs_review"
+    assert approval["source"] == "chat_autonomous"
+    assert approval["after"]["campaign"]["status"] == "PAUSED"
+    # Up to 5 creatives attached per ad set (knowledge here may carry fewer).
+    assert all(len(adset.get("ads", [])) <= 5 for adset in approval["after"]["adsets"])
+    assert "PAUSED" in response["answer"]
+
+
+def test_fully_specified_brief_still_uses_planner_path_not_autonomous():
+    response = orchestrate_agent_chat(
+        "Create a campaign with 3 VSLs: earning money, business automation, content creators. "
+        "Use $100 each and optimize for Telegram START.",
+        knowledge=sample_knowledge(),
+        playbooks=[{"id": "pb_empty", "name": "Empty", "segments": [], "rules": {}}],
+    )
+
+    assert response is not None
+    assert response["activeAgent"] == "orchestrator"
+    # Planner path: a generated playbook, NOT the autonomous approval path.
+    assert "autonomous" not in response
+    assert response["generatedPlaybook"]["id"].startswith("pb_chat_")
+
+
+def test_format_autonomous_answer_summarizes_paused_packet():
+    from backend.opportunity_finder import build_autonomous_campaign
+
+    approval = build_autonomous_campaign(sample_knowledge(), [], n_creatives=5)
+    text = format_autonomous_answer(approval)
+    assert "PAUSED" in text
+    assert "Total daily budget" in text
+    assert "Guardrails" in text
 
 
 def test_execution_agent_blocks_browser_fallback_until_specific_approval():
@@ -239,3 +444,79 @@ def test_agent_handoffs_are_structured_for_meta_ai_advisor():
     }
     assert response["quality"]["status"] == "usable"
     assert response["quality"]["score"] >= 95
+
+
+def _manage_campaigns():
+    return [
+        {"id": "cmp_idle", "name": "Idle Test - DRAFT", "effective_status": "PAUSED", "start_time": "2026-01-01T00:00:00+0000"},
+        {"id": "cmp_active", "name": "Running Promo", "effective_status": "ACTIVE", "start_time": "2026-01-01T00:00:00+0000"},
+    ]
+
+
+def test_orchestrate_pause_idle_you_created_returns_manage_approval(monkeypatch):
+    monkeypatch.setattr(agent_orchestrator, "_meta_account_and_pixel", lambda: ("act_999", None))
+    import backend.campaign_manage as campaign_manage
+
+    monkeypatch.setattr(campaign_manage, "agent_created_index", lambda: ({"cmp_idle"}, {}))
+
+    response = orchestrate_agent_chat(
+        "pause the idle campaigns you created",
+        knowledge=None,
+        playbooks=[],
+        campaigns=_manage_campaigns(),
+    )
+
+    assert response is not None
+    assert response["managePrepared"] is True
+    approval = response["generatedApprovalRequest"]
+    assert approval["actionType"] == "manage_campaigns"
+    assert approval["after"]["status"] == "PAUSED"
+    ids = {c["id"] for c in approval["after"]["campaigns"]}
+    assert ids == {"cmp_idle"}  # active campaign excluded by safety rule
+    assert "approve" in response["answer"].lower()
+
+
+def test_orchestrate_delete_over_a_week_returns_archive_approval(monkeypatch):
+    monkeypatch.setattr(agent_orchestrator, "_meta_account_and_pixel", lambda: ("act_999", None))
+    import backend.campaign_manage as campaign_manage
+
+    monkeypatch.setattr(campaign_manage, "agent_created_index", lambda: (set(), {}))
+
+    campaigns = [
+        {"id": "cmp_old", "name": "Old One", "effective_status": "PAUSED", "start_time": "2020-01-01T00:00:00+0000"},
+    ]
+    response = orchestrate_agent_chat(
+        "delete campaigns created over a week ago",
+        knowledge=None,
+        playbooks=[],
+        campaigns=campaigns,
+    )
+
+    assert response is not None
+    assert response["managePrepared"] is True
+    approval = response["generatedApprovalRequest"]
+    assert approval["actionType"] == "manage_campaigns"
+    assert approval["after"]["status"] == "ARCHIVED"
+    assert {c["id"] for c in approval["after"]["campaigns"]} == {"cmp_old"}
+
+
+def test_orchestrate_manage_no_match_returns_helpful_answer_no_approval(monkeypatch):
+    monkeypatch.setattr(agent_orchestrator, "_meta_account_and_pixel", lambda: ("act_999", None))
+    import backend.campaign_manage as campaign_manage
+
+    monkeypatch.setattr(campaign_manage, "agent_created_index", lambda: (set(), {}))
+
+    # Only an ACTIVE campaign exists; "idle you created" matches nothing -> helpful answer.
+    campaigns = [{"id": "cmp_active", "name": "Running", "effective_status": "ACTIVE"}]
+    response = orchestrate_agent_chat(
+        "pause the idle campaigns you created",
+        knowledge=None,
+        playbooks=[],
+        campaigns=campaigns,
+    )
+
+    assert response is not None
+    assert response.get("generatedApprovalRequest") is None
+    assert not response.get("managePrepared")
+    # NOT the old "Task captured" template; a helpful set-suggesting answer.
+    assert "couldn't find campaigns matching" in response["answer"].lower()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.routers.agents as agents_module
 from backend.app import app
 
 
@@ -90,11 +90,15 @@ def capability_knowledge() -> dict:
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(app_module, "load_knowledge_base", capability_knowledge)
-    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
-    monkeypatch.setattr(app_module, "save_playbook", lambda playbook: playbook)
+    import backend.dashboard_service as dashboard_service_module
+
+    monkeypatch.setattr(agents_module, "load_knowledge_base", capability_knowledge)
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agents_module, "save_playbook", lambda playbook: playbook)
+    monkeypatch.setattr(dashboard_service_module, "load_knowledge_base", capability_knowledge)
+    dashboard_service_module.DASHBOARD_CACHE.update({"key": None, "payload": None})
     monkeypatch.setattr(
-        app_module,
+        agents_module,
         "load_playbooks",
         lambda: [
             {

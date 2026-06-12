@@ -31,3 +31,5 @@ playwright-report/
 *.njsproj
 *.sln
 *.sw?
+backend/storage/members.json
+.superpowers/

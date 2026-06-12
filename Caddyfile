@@ -1,0 +1,14 @@
+# Reverse proxy in front of the agent. SITE_ADDRESS comes from docker-compose:
+#   unset            -> ":80"  (plain HTTP, Stage 1)
+#   yourname.duckdns.org -> auto-HTTPS via Let's Encrypt (Stage 2)
+{$SITE_ADDRESS} {
+	reverse_proxy app:8000
+	encode gzip
+
+	# Stage 2 — lock the console so only you can open it. Generate a hash with:
+	#   docker compose exec caddy caddy hash-password --plaintext 'your-password'
+	# then uncomment and paste it:
+	# basicauth {
+	#	youruser <PASTE_BCRYPT_HASH_HERE>
+	# }
+}

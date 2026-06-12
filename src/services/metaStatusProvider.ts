@@ -8,6 +8,7 @@ export interface MetaStatus {
   pixelConfigured: boolean
   tokenConfigured: boolean
   tokenPreview: string
+  liveWritesEnabled?: boolean
   account: {
     id?: string
     name?: string

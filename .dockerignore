@@ -1,0 +1,36 @@
+# Build artifacts & deps — rebuilt inside the image.
+node_modules
+dist
+dist-ssr
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Local state & secrets — never bake into the image.
+.env
+.env.*
+!.env.example
+storage/
+*.log
+logs
+
+# Tests & local tooling not needed at runtime.
+tests
+test-results
+playwright-report
+playwright.config.ts
+
+# VCS / editor / OS noise.
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+
+# Docs & planning.
+docs
+*.md
+!README.md

@@ -1,7 +1,43 @@
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.routers.agents as agents_module
 from backend.app import app
+from backend.meta_live import LiveAccount
+
+
+def test_agent_chat_roster_uses_live_meta_data(monkeypatch):
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        agents_module,
+        "load_knowledge_base",
+        lambda: {"raw": {"campaigns": [{"id": "stale", "name": "Stale Cached", "status": "ACTIVE"}]}},
+    )
+
+    live = LiveAccount(
+        campaigns=[
+            {"id": "live_1", "name": "Live Winner", "effective_status": "ACTIVE", "objective": "OUTCOME_LEADS"},
+            {"id": "live_2", "name": "Live Paused", "effective_status": "PAUSED"},
+        ],
+        adsets=[],
+        ads=[],
+        source="live",
+        fetched_at="now",
+    )
+
+    async def fake_live_account(**kwargs):
+        return live
+
+    monkeypatch.setattr(agents_module, "get_live_account", fake_live_account)
+    client = TestClient(app)
+
+    response = client.post("/api/agent/chat", json={"message": "what campaigns are active?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Live Winner" in payload["answer"]
+    assert "Stale Cached" not in payload["answer"]
+    assert "live Meta data was unavailable" not in payload["answer"]
+    assert "meta_live" in payload["sources"]
 
 
 def test_agent_chat_exposes_handoffs_and_quality_to_clients():
@@ -22,9 +58,9 @@ def test_agent_chat_exposes_handoffs_and_quality_to_clients():
 
 
 def test_agent_chat_answers_campaign_specific_audience_from_raw_knowledge(monkeypatch):
-    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        app_module,
+        agents_module,
         "load_knowledge_base",
         lambda: {
             "raw": {
@@ -85,9 +121,9 @@ def test_agent_chat_answers_campaign_specific_audience_from_raw_knowledge(monkey
 
 
 def test_agent_chat_uses_audience_specialist_ranking_from_knowledge_base(monkeypatch):
-    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        app_module,
+        agents_module,
         "load_knowledge_base",
         lambda: {
             "raw": {
@@ -159,9 +195,9 @@ def test_agent_chat_uses_audience_specialist_ranking_from_knowledge_base(monkeyp
 
 
 def test_agent_chat_answers_campaign_specific_creatives_with_quality_warning(monkeypatch):
-    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        app_module,
+        agents_module,
         "load_knowledge_base",
         lambda: {
             "raw": {
@@ -211,9 +247,9 @@ def test_agent_chat_answers_campaign_specific_creatives_with_quality_warning(mon
 
 
 def test_agent_chat_uses_creative_specialist_ranking_from_knowledge_base(monkeypatch):
-    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        app_module,
+        agents_module,
         "load_knowledge_base",
         lambda: {
             "raw": {
@@ -275,9 +311,9 @@ def test_agent_chat_uses_creative_specialist_ranking_from_knowledge_base(monkeyp
 
 
 def test_agent_chat_uses_placement_specialist_ranking_from_knowledge_base(monkeypatch):
-    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        app_module,
+        agents_module,
         "load_knowledge_base",
         lambda: {
             "analysis": {
@@ -324,9 +360,9 @@ def test_agent_chat_uses_placement_specialist_ranking_from_knowledge_base(monkey
 
 
 def test_agent_chat_uses_funnel_specialist_diagnosis_from_knowledge_base(monkeypatch):
-    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        app_module,
+        agents_module,
         "load_knowledge_base",
         lambda: {
             "raw": {
@@ -368,3 +404,298 @@ def test_agent_chat_uses_funnel_specialist_diagnosis_from_knowledge_base(monkeyp
     assert "landing lead rate 50.0%" in payload["answer"]
     assert "Telegram START rate" in payload["answer"]
     assert "CRM purchase data" in payload["answer"]
+
+
+def _live_with_config(monkeypatch):
+    """Stub get_live_account with a campaign that has full targeting + an A/B study."""
+    live = LiveAccount(
+        campaigns=[{"id": "cmp_1", "name": "Live VSL", "objective": "OUTCOME_LEADS", "buying_type": "AUCTION"}],
+        adsets=[
+            {
+                "id": "as_1",
+                "campaign_id": "cmp_1",
+                "name": "TOF - UZB - [AI]",
+                "optimization_goal": "OFFSITE_CONVERSIONS",
+                "targeting": {
+                    "age_min": 18,
+                    "age_max": 45,
+                    "geo_locations": {"cities": [{"name": "Tashkent"}]},
+                    "publisher_platforms": ["instagram"],
+                    "instagram_positions": ["reels"],
+                    "flexible_spec": [{"interests": [{"name": "Entrepreneurship"}]}],
+                },
+            }
+        ],
+        ads=[],
+        source="live",
+        fetched_at="now",
+        adstudies=[
+            {"id": "s1", "name": "VSL split test", "cells": {"data": [{"adsets": {"data": [{"id": "as_1"}]}}]}}
+        ],
+        saved_audiences=[],
+    )
+
+    async def fake_live_account(**kwargs):
+        return live
+
+    monkeypatch.setattr(agents_module, "get_live_account", fake_live_account)
+
+
+def test_agent_chat_config_question_returns_live_config_not_performance(monkeypatch):
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *a, **k: None)
+    monkeypatch.setattr(agents_module, "load_knowledge_base", lambda: {"raw": {"campaigns": []}, "analysis": {}})
+    _live_with_config(monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "what audience and interests did Live VSL use? was A/B enabled?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Configuration for Live VSL" in payload["answer"]
+    assert "Entrepreneurship" in payload["answer"]
+    assert "A/B test: enabled (VSL split test)" in payload["answer"]
+    assert "Tashkent" in payload["answer"]
+    # NOT the performance ranking.
+    assert "audience ranking" not in payload["answer"].lower()
+    assert "campaign_specific_analysis" in payload["sources"]
+    assert "meta_live" in payload["sources"]
+
+
+def test_agent_chat_performance_question_still_returns_ranking(monkeypatch):
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agents_module,
+        "load_knowledge_base",
+        lambda: {
+            "raw": {
+                "campaigns": [{"id": "cmp_1", "name": "Live VSL"}],
+                "insights": {
+                    "base": [
+                        {
+                            "campaign_id": "cmp_1",
+                            "adset_id": "as_ai",
+                            "adset_name": "TOF - UZB - [AI]",
+                            "spend": "100",
+                            "clicks": "2000",
+                            "actions": [{"action_type": "lead", "value": "1000"}],
+                        }
+                    ]
+                },
+            },
+            "analysis": {"summary": {"spend": 100, "clicks": 2000, "leads": 1000}},
+        },
+    )
+    _live_with_config(monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "Rank the creative videos from Live VSL by performance"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    # Performance path wins for a perf question even though config data exists.
+    assert "Configuration for" not in payload["answer"]
+    assert payload["activeAgent"] == "creative"
+
+
+def test_agent_chat_autonomous_autoexecute_appends_created_objects(monkeypatch):
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *a, **k: None)
+    monkeypatch.setattr(agents_module, "load_knowledge_base", lambda: {"analysis": {"summary": {}}})
+
+    live = LiveAccount(campaigns=[], adsets=[], ads=[], source="live", fetched_at="now")
+
+    async def fake_live_account(**kwargs):
+        return live
+
+    monkeypatch.setattr(agents_module, "get_live_account", fake_live_account)
+
+    saved_approval = {
+        "id": "autonomous_x",
+        "actionType": "create_paused_campaign_structure",
+        "status": "needs_review",
+        "guardrailResult": "pass",
+        "after": {"campaign": {"name": "Best Guess - DRAFT"}, "adsets": [{"name": "AI - DRAFT", "daily_budget": 10000}]},
+        "createdAt": "now",
+    }
+
+    def fake_orchestrate(question, **kwargs):
+        return {
+            "activeAgent": "orchestrator",
+            "routeReason": "autonomous",
+            "answer": "I built a best-guess paused campaign on my own.",
+            "sources": ["opportunity_finder"],
+            "suggestedQuestions": [],
+            "agentHandoffs": [],
+            "autonomous": True,
+            "generatedApprovalRequest": saved_approval,
+        }
+
+    monkeypatch.setattr(agents_module, "orchestrate_agent_chat", fake_orchestrate)
+    monkeypatch.setattr(agents_module, "get_pending", lambda op_key: None)
+    monkeypatch.setattr(agents_module, "set_pending", lambda *a, **k: None)
+    monkeypatch.setattr(agents_module, "clear_pending", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agents_module,
+        "auto_execute_paused",
+        lambda approval_id: {
+            "ok": True,
+            "created": [
+                {"level": "campaign", "id": "cmp_live", "name": "Best Guess - DRAFT"},
+                {"level": "adset", "id": "as_live", "name": "AI - DRAFT"},
+            ],
+            "blocked": None,
+        },
+    )
+    monkeypatch.setattr(agents_module, "_ad_account_id", lambda: "act_555")
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "just do it, you decide and create a test on your own"},
+    )
+
+    assert response.status_code == 200
+    answer = response.json()["answer"]
+    assert "Created in Meta as PAUSED" in answer
+    assert "1 campaign" in answer
+    assert "1 ad set" in answer
+    assert "adsmanager.facebook.com" in answer
+    assert "act=555" in answer
+
+
+def test_agent_chat_pending_refinement_updates_same_approval(monkeypatch):
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *a, **k: None)
+    monkeypatch.setattr(agents_module, "load_knowledge_base", lambda: {"analysis": {"summary": {}}})
+
+    # Operator has an in-flight autonomous draft; patch the names agents.py imported.
+    set_calls = []
+    clear_calls = []
+    monkeypatch.setattr(
+        agents_module, "get_pending", lambda op_key: {"approvalId": "autonomous_x", "budget": 100.0, "audiences": ["AI"]}
+    )
+    monkeypatch.setattr(agents_module, "set_pending", lambda op_key, pointer: set_calls.append((op_key, pointer)))
+    monkeypatch.setattr(agents_module, "clear_pending", lambda op_key: clear_calls.append(op_key))
+
+    rebuilt = {
+        "id": "autonomous_x",
+        "after": {"campaign": {"name": "Best Guess - DRAFT"}, "adsets": [{"name": "AI - DRAFT", "daily_budget": 15000}]},
+    }
+    captured = {}
+
+    def fake_build(knowledge, playbooks, **kwargs):
+        captured["budget"] = kwargs.get("budget")
+        captured["approval_id"] = kwargs.get("approval_id")
+        return rebuilt
+
+    updated = {}
+
+    def fake_update(approval_id, patch, **kwargs):
+        updated["approval_id"] = approval_id
+        return {**patch, "id": approval_id, "after": patch.get("after", rebuilt["after"])}
+
+    import backend.opportunity_finder as of_module
+
+    monkeypatch.setattr(of_module, "build_autonomous_campaign", fake_build)
+    monkeypatch.setattr(agents_module.approval_store, "update_approval_request", fake_update)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "make it $150/day in Tashkent"},
+    )
+
+    assert response.status_code == 200
+    answer = response.json()["answer"]
+    assert "refined your draft" in answer.lower()
+    # Same approvalId rebuilt in place with the new budget; pending refreshed (set), not cleared.
+    assert captured["approval_id"] == "autonomous_x"
+    assert captured["budget"] == 150.0
+    assert updated["approval_id"] == "autonomous_x"
+    assert set_calls and set_calls[0][1]["approvalId"] == "autonomous_x"
+
+
+def test_agent_chat_manage_lists_then_type_approve_executes(monkeypatch):
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *a, **k: None)
+    monkeypatch.setattr(agents_module, "load_knowledge_base", lambda: {"analysis": {"summary": {}}})
+
+    live = LiveAccount(
+        campaigns=[
+            {"id": "cmp_idle", "name": "Idle Test - DRAFT", "effective_status": "PAUSED"},
+            {"id": "cmp_active", "name": "Running", "effective_status": "ACTIVE"},
+        ],
+        adsets=[],
+        ads=[],
+        source="live",
+        fetched_at="now",
+    )
+
+    async def fake_live_account(**kwargs):
+        return live
+
+    monkeypatch.setattr(agents_module, "get_live_account", fake_live_account)
+
+    # In-memory pending store shared by the patched get/set/clear.
+    store = {}
+    monkeypatch.setattr(agents_module, "get_pending", lambda op_key: store.get(op_key))
+    monkeypatch.setattr(agents_module, "set_pending", lambda op_key, pointer: store.__setitem__(op_key, pointer))
+    monkeypatch.setattr(agents_module, "clear_pending", lambda op_key: store.pop(op_key, None))
+
+    saved_manage = {
+        "id": "manage_x",
+        "actionType": "manage_campaigns",
+        "status": "needs_review",
+        "guardrailResult": "pass",
+        "after": {"status": "ARCHIVED", "campaigns": [{"id": "cmp_idle", "name": "Idle Test - DRAFT", "effective_status": "PAUSED"}]},
+        "createdAt": "now",
+        "filterLabels": ["created by the agent"],
+    }
+
+    def fake_orchestrate(question, **kwargs):
+        return {
+            "activeAgent": "execution",
+            "routeReason": "manage",
+            "answer": "🗂 <b>Archive 1 campaign</b>\n• Idle Test - DRAFT — PAUSED\nReply approve to proceed.",
+            "sources": ["campaign_manage"],
+            "suggestedQuestions": [],
+            "agentHandoffs": [],
+            "managePrepared": True,
+            "generatedApprovalRequest": saved_manage,
+        }
+
+    monkeypatch.setattr(agents_module, "orchestrate_agent_chat", fake_orchestrate)
+
+    approve_calls = []
+    monkeypatch.setattr(
+        agents_module.approval_store, "approve_request", lambda approval_id, **k: approve_calls.append(approval_id)
+    )
+    monkeypatch.setattr(
+        agents_module,
+        "apply_live_sync",
+        lambda approval_id: {"ok": True, "result": {"ok": True, "changed": [{"id": "cmp_idle", "status": "ARCHIVED"}], "errors": []}},
+    )
+
+    client = TestClient(app)
+
+    # Turn 1: the manage instruction lists campaigns + records a pending pointer.
+    list_response = client.post(
+        "/api/agent/chat",
+        json={"message": "archive the idle test campaigns you created"},
+    )
+    assert list_response.status_code == 200
+    assert "Archive 1 campaign" in list_response.json()["answer"]
+    assert store["web:default"]["approvalId"] == "manage_x"
+    assert store["web:default"]["kind"] == "manage"
+    assert store["web:default"]["action"] == "archive"
+
+    # Turn 2: typing "approve" executes the archive and clears the pending pointer.
+    approve_response = client.post("/api/agent/chat", json={"message": "approve"})
+    assert approve_response.status_code == 200
+    answer = approve_response.json()["answer"]
+    assert "Archived 1 campaign" in answer
+    assert approve_calls == ["manage_x"]
+    assert "web:default" not in store

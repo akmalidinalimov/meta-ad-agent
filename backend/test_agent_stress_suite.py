@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.routers.agents as agents_module
 from backend.app import app
 
 
@@ -127,10 +127,16 @@ def stress_knowledge() -> dict:
 
 @pytest.fixture()
 def stress_client(monkeypatch):
-    monkeypatch.setattr(app_module, "load_knowledge_base", stress_knowledge)
-    monkeypatch.setattr(app_module, "generate_chat_answer", lambda *args, **kwargs: None)
-    monkeypatch.setattr(app_module, "save_playbook", lambda playbook: playbook)
-    monkeypatch.setattr(app_module, "load_playbooks", lambda: [])
+    import backend.dashboard_service as dashboard_service_module
+
+    monkeypatch.setattr(agents_module, "load_knowledge_base", stress_knowledge)
+    monkeypatch.setattr(agents_module, "generate_chat_answer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agents_module, "save_playbook", lambda playbook: playbook)
+    monkeypatch.setattr(agents_module, "load_playbooks", lambda: [])
+    # build_dashboard() reads load_knowledge_base from dashboard_service, so patch it
+    # there too and reset the module-level dashboard cache for test isolation.
+    monkeypatch.setattr(dashboard_service_module, "load_knowledge_base", stress_knowledge)
+    dashboard_service_module.DASHBOARD_CACHE.update({"key": None, "payload": None})
     return TestClient(app)
 
 

@@ -1,0 +1,60 @@
+# Render Blueprint — one-unit deploy of the Meta Ad Agent.
+# The same Dockerfile also works on Railway and Fly.io (they detect it directly).
+# Render injects $PORT; the Dockerfile's uvicorn CMD binds to it.
+# `sync: false` vars are NOT committed — Render prompts you for them on deploy.
+services:
+  - type: web
+    name: meta-ad-agent
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter            # Starter stays always-on, so the in-process scheduler runs.
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      # Safety: live Meta writes stay OFF until you flip this in the dashboard.
+      - key: META_LIVE_WRITES_ENABLED
+        value: "false"
+      # Proactive 4-hourly monitoring + daily opportunity loop (suggest-only).
+      - key: MONITORING_SCHEDULER_ENABLED
+        value: "true"
+      # Per-request auth for write routes. LEAVE BLANK: the web UI does not send an
+      # X-API-Key header yet, so setting this would 401 your own Approve/Execute
+      # buttons. Protect the browser app with platform access (Cloudflare Access /
+      # the host's password protection) instead.
+      - key: AGENT_API_KEY
+        sync: false
+      # Point this at your Render URL once known (same-origin needs only your own URL).
+      - key: FUNNEL_ALLOWED_ORIGINS
+        sync: false
+
+      # --- Reasoning brain: Claude (Opus 4.8) ---
+      - key: REASONING_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-4-8
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # --- Telegram (alerts + Approve/Reject buttons) ---
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ADMIN_CHAT_ID
+        sync: false
+      - key: TELEGRAM_COMMAND_SECRET
+        sync: false
+
+      # --- Meta (Graph API) ---
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_AD_ACCOUNT_ID
+        sync: false
+      - key: META_BUSINESS_ID
+        sync: false
+      - key: META_API_VERSION
+        value: v23.0
+      - key: META_PIXEL_ID
+        sync: false
+
+      # --- OpenAI (optional fallback brain) ---
+      - key: OPENAI_API_KEY
+        sync: false

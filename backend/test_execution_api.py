@@ -1,7 +1,10 @@
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.agent_task_store as agent_task_store
+import backend.approval_store as approval_store
 from backend.app import app
+import backend.routers.approvals as approvals_router_mod
+import backend.telegram_service as telegram_service_mod
 from backend.agent_task_store import create_agent_task, list_agent_tasks, update_agent_task_by_approval
 from backend.approval_store import (
     approve_request,
@@ -16,17 +19,14 @@ from backend.approval_store import (
 def bind_tmp_approval_store(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
     monkeypatch.setattr(
-        app_module,
+        approval_store,
         "create_approval_request",
         lambda request: create_approval_request(request, storage_dir=storage_dir),
     )
+    monkeypatch.setattr(approvals_router_mod, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
+    monkeypatch.setattr(telegram_service_mod, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
     monkeypatch.setattr(
-        app_module,
-        "list_approval_requests",
-        lambda: list_approval_requests(storage_dir=storage_dir),
-    )
-    monkeypatch.setattr(
-        app_module,
+        approval_store,
         "approve_request",
         lambda approval_id, *, approved_by: approve_request(
             approval_id,
@@ -35,7 +35,7 @@ def bind_tmp_approval_store(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        app_module,
+        approval_store,
         "update_approval_request",
         lambda approval_id, patch: update_approval_request(
             approval_id,
@@ -44,7 +44,7 @@ def bind_tmp_approval_store(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        app_module,
+        approval_store,
         "reject_request",
         lambda approval_id, *, rejected_by, reason: reject_request(
             approval_id,
@@ -54,7 +54,7 @@ def bind_tmp_approval_store(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        app_module,
+        approval_store,
         "request_changes",
         lambda approval_id, *, requested_by, note: request_changes(
             approval_id,
@@ -64,7 +64,7 @@ def bind_tmp_approval_store(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        app_module,
+        agent_task_store,
         "update_agent_task_by_approval",
         lambda approval_id, patch: update_agent_task_by_approval(approval_id, patch, storage_dir=storage_dir),
     )

@@ -8,7 +8,7 @@ import {
   getCampaignOptions,
   getDateWindow,
 } from './analytics'
-import type { AdSet, Campaign, Creative, CreativeAnalysis, DailyAdMetric } from '../types/marketing'
+import type { Ad, AdSet, Campaign, Creative, CreativeAnalysis, DailyAdMetric } from '../types/marketing'
 
 describe('getDateWindow', () => {
   it('builds an inclusive 30 day window anchored to the latest dashboard date', () => {
@@ -209,6 +209,57 @@ describe('deriveCreativeScores', () => {
     expect(scores[1].rank).toBe(2)
   })
 
+  it('computes spend, CPL, lead rate, confidence, and viral/intent mismatch', () => {
+    const scores = deriveCreativeScores(metrics, creatives, analyses)
+    const a = scores.find((score) => score.id === 'creative_a')!
+    const b = scores.find((score) => score.id === 'creative_b')!
+
+    expect(a.spendUsd).toBe(100)
+    expect(a.cpl).toBeCloseTo(100 / 120, 4)
+    expect(a.leadRate).toBeCloseTo(24, 1)
+    expect(a.spendConfidence).toBe('high')
+    expect(a.lowSample).toBe(false)
+    expect(a.mismatch).toBe(0) // viral 55 < intent 88
+    expect(b.mismatch).toBe(73) // viral 98 - intent 25
+  })
+
+  it('flags low-sample creatives and keeps them out of the top rank', () => {
+    const thin: Creative = {
+      id: 'creative_c',
+      adId: 'ad_c',
+      name: 'Thin test',
+      format: 'video',
+      theme: 'test',
+      hookType: 'x',
+      primaryPersona: 'y',
+      cta: 'z',
+    }
+    const thinMetric: DailyAdMetric = {
+      date: '2026-05-20',
+      campaignId: 'campaign_1',
+      adSetId: 'adset_3',
+      adId: 'ad_c',
+      creativeId: 'creative_c',
+      placement: 'instagram_reels',
+      spendUsd: 2,
+      impressions: 300,
+      clicks: 20,
+      landingPageViews: 15,
+      leads: 9,
+      telegramSubscribers: 3,
+      webinarAttendees: 1,
+      purchases: 0,
+      purchaseRevenueUsd: 0,
+    }
+
+    const scores = deriveCreativeScores([...metrics, thinMetric], [...creatives, thin], analyses)
+    const thinScore = scores.find((score) => score.id === 'creative_c')!
+
+    expect(thinScore.lowSample).toBe(true)
+    expect(thinScore.spendConfidence).toBe('low')
+    expect(thinScore.action).toBe('Gather data')
+    expect(scores[0].id).not.toBe('creative_c')
+  })
   it('preserves creative thumbnail and video metadata for the dashboard table', () => {
     const scores = deriveCreativeScores(metrics, creatives, analyses)
 
@@ -269,6 +320,12 @@ describe('deriveCreativeDecisionInsight', () => {
         clicks: 200,
         leads: 160,
         buyers: 0,
+        spendUsd: 0,
+        cpl: 0,
+        leadRate: 0,
+        spendConfidence: 'low',
+        lowSample: false,
+        mismatch: 0,
         viral: 100,
         intent: 80,
         courseFit: 55,
@@ -418,6 +475,7 @@ describe('dashboard filtering', () => {
       ],
       filters: {
         start: '2026-04-29',
+        end: '2026-05-28',
         campaignIds: ['recent'],
         creativeFormat: 'video',
         placement: 'instagram_reels',
@@ -427,5 +485,42 @@ describe('dashboard filtering', () => {
 
     expect(filtered).toHaveLength(1)
     expect(filtered[0].campaignId).toBe('recent')
+  })
+
+  it('excludes metrics after the date window end bound', () => {
+    const campaigns: Campaign[] = [
+      { id: 'c', platform: 'meta', name: 'C', objective: 'leads', status: 'active', dailyBudgetUsd: 10, startedAt: '2026-01-01' },
+    ]
+    const ads: Ad[] = [{ id: 'ad_1', adSetId: 'as', creativeId: 'cr', name: 'A', status: 'active' }]
+    const creatives: Creative[] = [
+      { id: 'cr', adId: 'ad_1', name: 'C', format: 'video', theme: 't', hookType: 'h', primaryPersona: 'p', cta: 'x' },
+    ]
+    const mk = (date: string): DailyAdMetric => ({
+      date,
+      campaignId: 'c',
+      adSetId: 'as',
+      adId: 'ad_1',
+      creativeId: 'cr',
+      placement: 'instagram_reels',
+      spendUsd: 1,
+      impressions: 10,
+      clicks: 1,
+      landingPageViews: 1,
+      leads: 0,
+      telegramSubscribers: 0,
+      webinarAttendees: 0,
+      purchases: 0,
+      purchaseRevenueUsd: 0,
+    })
+
+    const filtered = filterMetricsForDashboard({
+      metrics: [mk('2026-05-10'), mk('2026-05-28'), mk('2026-06-15')],
+      campaigns,
+      ads,
+      creatives,
+      filters: { start: '2026-04-29', end: '2026-05-28', campaignIds: ['all'], creativeFormat: 'all', placement: 'all', objective: 'all' },
+    })
+
+    expect(filtered.map((metric) => metric.date)).toEqual(['2026-05-10', '2026-05-28'])
   })
 })

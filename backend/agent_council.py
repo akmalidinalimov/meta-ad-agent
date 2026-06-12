@@ -5,6 +5,7 @@ from typing import Any
 
 from .agent_orchestrator import AGENT_SPECS
 from .chat_campaign_planner import build_playbook_from_chat, can_build_playbook_from_chat
+from .specialist_findings import collect_findings
 from .strategy_generator import generate_launch_strategy
 
 
@@ -54,18 +55,28 @@ def run_strategy_council(
     playbook = select_council_playbook(question, playbooks)
     strategy = generate_launch_strategy(playbook, knowledge)
     analysis = (knowledge or {}).get("analysis", {})
-    evidence = extract_council_evidence(analysis)
+    findings = collect_findings(knowledge)
+    evidence = extract_council_evidence(analysis, findings)
 
     agents = [build_council_agent(agent_id) for agent_id in COUNCIL_AGENT_IDS]
     rounds = [
         build_initial_round(question, evidence),
-        build_challenge_round(evidence),
+        build_challenge_round(evidence, findings),
         build_synthesis_round(strategy, evidence),
     ]
     events = [event for round_item in rounds for event in round_item["events"]]
-    scores = score_council_agents(events, strategy, evidence)
+    scores = score_council_agents(events, strategy, findings)
     average_score = round(sum(item["scoreOutOf10"] for item in scores) / len(scores), 2)
     final_plan = build_final_plan(strategy, evidence)
+    # When there is no synced evidence, the council must not present a confident,
+    # named plan as if it were proven — force a needs_refinement verdict.
+    has_evidence = bool(evidence.get("hasEvidence"))
+    if has_evidence:
+        quality_status = "usable" if average_score >= 7.0 else "needs_refinement"
+        quality_issues = [] if average_score >= 7.0 else ["Council evidence is thin; resync Meta data or narrow the brief for stronger conviction."]
+    else:
+        quality_status = "needs_refinement"
+        quality_issues = ["No synced Meta evidence: the council cannot name proven winners. Sync Meta data before treating this plan as evidence-backed."]
     session = {
         "id": f"council_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
         "status": "ready_for_review",
@@ -78,9 +89,10 @@ def run_strategy_council(
         "averageScoreOutOf10": average_score,
         "quality": {
             "score": int(round(average_score * 10)),
-            "status": "usable" if average_score >= 9.5 else "needs_refinement",
-            "issues": [] if average_score >= 9.5 else ["Council score is below the 9.5/10 strategy threshold."],
+            "status": quality_status,
+            "issues": quality_issues,
         },
+        "hasEvidence": has_evidence,
         "finalPlan": final_plan,
         "generatedPlaybook": playbook,
         "generatedStrategy": strategy,
@@ -118,15 +130,29 @@ def build_council_agent(agent_id: str) -> dict[str, Any]:
     }
 
 
-def extract_council_evidence(analysis: dict[str, Any]) -> dict[str, Any]:
+def extract_council_evidence(analysis: dict[str, Any], findings: dict[str, Any] | None = None) -> dict[str, Any]:
+    findings = findings or {}
     top_ads = analysis.get("topAds") or []
     audience = analysis.get("audience") or {}
     placements = analysis.get("placements") or []
     summary = analysis.get("summary") or {}
+    # Prefer the real specialist findings (ad-set / creative / placement winners)
+    # over raw analysis order when they are available.
+    creative_best = _finding_label(findings.get("creative", {}).get("best"))
+    audience_best = _finding_label(findings.get("audience", {}).get("best"))
+    placement_best = _finding_label(findings.get("placement", {}).get("best"))
+    # No hardcoded demo fallbacks: when there is no synced evidence the council must
+    # NOT name a specific (placeholder) winner as if it were proven. It says so instead.
+    no_evidence = "no synced evidence"
+    top_creative = creative_best or first_label(top_ads, None)
+    top_audience = audience_best or first_label(audience.get("interests") or [], None)
+    top_placement = placement_best or first_label(placements, None)
+    has_evidence = bool(top_creative or top_audience or top_placement or summary)
     return {
-        "topCreative": first_label(top_ads, "VID - 08"),
-        "topAudience": first_label(audience.get("interests") or [], "Artificial intelligence"),
-        "topPlacement": first_label(placements, "instagram / reels"),
+        "hasEvidence": has_evidence,
+        "topCreative": top_creative or no_evidence,
+        "topAudience": top_audience or no_evidence,
+        "topPlacement": top_placement or no_evidence,
         "leadCount": int(float(summary.get("leads") or 0)),
         "purchaseCount": int(float(summary.get("purchases") or 0)),
         "topAds": [item.get("label") for item in top_ads[:3] if item.get("label")],
@@ -136,7 +162,14 @@ def extract_council_evidence(analysis: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def first_label(rows: list[dict[str, Any]], fallback: str) -> str:
+def _finding_label(item: dict[str, Any] | None) -> str | None:
+    if not item:
+        return None
+    keys = item.get("keys", {}) or {}
+    return keys.get("ad_name") or item.get("label") or keys.get("ad_id")
+
+
+def first_label(rows: list[dict[str, Any]], fallback: str | None) -> str | None:
     if rows and rows[0].get("label"):
         return str(rows[0]["label"])
     return fallback
@@ -157,20 +190,62 @@ def build_initial_round(question: str, evidence: dict[str, Any]) -> dict[str, An
     }
 
 
-def build_challenge_round(evidence: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": "round_2_challenge",
-        "title": "Round 2 - Cross-agent challenge",
-        "purpose": "Agents challenge weak assumptions and force the strategy to improve.",
-        "events": [
+def build_challenge_round(evidence: dict[str, Any], findings: dict[str, Any] | None = None) -> dict[str, Any]:
+    findings = findings or {}
+    if not findings:
+        # No synced knowledge: fall back to the guardrail-only challenge script.
+        events = [
             council_event("creative", "audience", "If we reuse the highest-volume creative, will it attract buyers or only low-intent registrations?", "Do not scale curiosity or housewife-style traffic unless Telegram START and CRM quality hold."),
             council_event("audience", "creative", "Can the creative qualify employees, business owners, SMM agencies, and AI-income seekers in the first three seconds?", "Use proof, income path, and practical course value earlier than entertainment."),
             council_event("placement", "experiment", "Should Instagram Reels, Stories, and Feed be one ad set or separated?", "Separate Facebook tests; keep Instagram surfaces primary until downstream quality says otherwise."),
             council_event("funnel", "experiment", "What is the stop rule if leads are cheap but Telegram START is weak?", "Stop or isolate when landing lead rate is strong but Telegram START or CRM quality falls below benchmark."),
             council_event("meta_ai_strategist", "orchestrator", "Which Meta-side signals can be trusted and which must be challenged?", "Trust auction/creative-efficiency signals; challenge anything that ignores sales capacity and buyer quality."),
             council_event("monitoring", "execution", "What can be changed automatically after the campaign is created?", "Nothing live. Prepare paused drafts or approval requests only; monitor every four hours after launch."),
-        ],
+        ]
+    else:
+        # Real agent-to-agent challenge: each challenge is answered with the addressed
+        # agent's own computed finding (its headline + top risk), so agents respond with
+        # real evidence rather than scripted lines.
+        events = [
+            council_event(
+                "creative", "audience",
+                f"If we lead with {evidence['topCreative']}, does the audience evidence support buyers or only cheap registrations?",
+                _finding_reply(findings.get("audience", {})),
+            ),
+            council_event(
+                "audience", "creative",
+                f"Can {evidence['topCreative']} qualify higher-purchasing-power segments in the first three seconds?",
+                _finding_reply(findings.get("creative", {})),
+            ),
+            council_event(
+                "placement", "experiment",
+                f"Should we scale {evidence['topPlacement']} and isolate weaker placements?",
+                _finding_reply(findings.get("placement", {})),
+            ),
+            council_event(
+                "funnel", "experiment",
+                "What is the stop rule if leads are cheap but downstream quality is weak?",
+                _finding_reply(findings.get("funnel", {})),
+            ),
+            council_event(
+                "audit", "orchestrator",
+                "What does the historical account evidence say before we scale?",
+                _finding_reply(findings.get("audit", {})),
+            ),
+            council_event("monitoring", "execution", "What can be changed automatically after the campaign is created?", "Nothing live. Prepare paused drafts or approval requests only; monitor every four hours after launch."),
+        ]
+    return {
+        "id": "round_2_challenge",
+        "title": "Round 2 - Cross-agent challenge",
+        "purpose": "Agents challenge weak assumptions and answer with their own real findings.",
+        "events": events,
     }
+
+
+def _finding_reply(finding: dict[str, Any]) -> str:
+    headline = finding.get("headline", "Not enough evidence yet.")
+    risks = finding.get("risks", [])
+    return f"{headline} {risks[0]}" if risks else headline
 
 
 def build_synthesis_round(strategy: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
@@ -200,23 +275,33 @@ def council_event(from_agent: str, to_agent: str, question: str, answer: str) ->
     }
 
 
-def score_council_agents(events: list[dict[str, Any]], strategy: dict[str, Any], evidence: dict[str, Any]) -> list[dict[str, Any]]:
+def score_council_agents(events: list[dict[str, Any]], strategy: dict[str, Any], findings: dict[str, Any]) -> list[dict[str, Any]]:
+    """Score each council agent by the REAL strength of its evidence.
+
+    Specialist agents score on their finding's evidence score (which varies with
+    sample size and purchase proof); coordination agents score on plan
+    completeness and the average specialist evidence — so a thin knowledge base
+    yields honestly lower scores instead of a constant ~9.5.
+    """
+    specialist_scores = {agent_id: float(finding.get("evidenceScore", 5.0)) for agent_id, finding in findings.items()}
+    avg_specialist = round(sum(specialist_scores.values()) / len(specialist_scores), 1) if specialist_scores else 5.0
+    coordination_base = 6.0 + (0.8 if strategy.get("approvalActions") else 0.0) + (0.6 if strategy.get("segments") else 0.0)
+
     scores = []
     for agent_id in COUNCIL_AGENT_IDS:
-        agent_events = [event for event in events if event["fromAgent"] == agent_id or event["toAgent"] == agent_id]
-        score = 9.4
-        if len(agent_events) >= 2:
-            score += 0.2
-        if evidence.get("leadCount") >= 0:
-            score += 0.1
-        if strategy.get("approvalActions"):
-            score += 0.2
-        if agent_id in {"execution", "orchestrator"}:
-            score += 0.1
+        if agent_id in specialist_scores:
+            score = specialist_scores[agent_id]
+            reason = findings[agent_id].get("headline", "Contributed real evidence.")
+        elif agent_id == "orchestrator":
+            score = round((avg_specialist + coordination_base) / 2, 1)
+            reason = "Synthesized the specialist findings into one approval-safe plan."
+        else:
+            score = round(coordination_base, 1)
+            reason = "Provided coordination, Meta-side reads, and approval-safe guardrails."
         scores.append({
             "agentId": agent_id,
-            "scoreOutOf10": round(min(score, 10), 1),
-            "reason": "Contributed evidence, critique, and approval-safe guardrails to the final campaign plan.",
+            "scoreOutOf10": round(min(max(score, 0.0), 10.0), 1),
+            "reason": reason,
         })
     return scores
 

@@ -2,8 +2,11 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.approval_store as approval_store
+import backend.telegram_outbound as telegram_outbound
 from backend.app import app
+import backend.routers.approvals as approvals_router_mod
+import backend.telegram_service as telegram_service_mod
 from backend.approval_store import create_approval_request, list_approval_requests
 from backend.meta_execution import build_campaign_creation_approval
 from backend.telegram_outbound import build_approval_notification, send_telegram_message
@@ -73,9 +76,10 @@ def test_send_telegram_message_accepts_chat_id_override(monkeypatch):
 def test_prepare_campaign_execution_sends_telegram_notification(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
     sent = []
-    monkeypatch.setattr(app_module, "create_approval_request", lambda request: create_approval_request(request, storage_dir=storage_dir))
-    monkeypatch.setattr(app_module, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
-    monkeypatch.setattr(app_module, "send_approval_notification", lambda approval: sent.append(approval) or {"ok": True})
+    monkeypatch.setattr(approval_store, "create_approval_request", lambda request: create_approval_request(request, storage_dir=storage_dir))
+    monkeypatch.setattr(approvals_router_mod, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
+    monkeypatch.setattr(telegram_service_mod, "list_approval_requests", lambda: list_approval_requests(storage_dir=storage_dir))
+    monkeypatch.setattr(telegram_outbound, "send_approval_notification", lambda approval: sent.append(approval) or {"ok": True})
     client = TestClient(app)
 
     response = client.post(
@@ -96,7 +100,7 @@ def test_prepare_campaign_execution_sends_telegram_notification(monkeypatch, tmp
 
 def test_telegram_test_message_endpoint_uses_sender(monkeypatch):
     sent = []
-    monkeypatch.setattr(app_module, "send_telegram_message_sync", lambda text, **kwargs: sent.append((text, kwargs)) or {"ok": True})
+    monkeypatch.setattr(telegram_outbound, "send_telegram_message_sync", lambda text, **kwargs: sent.append((text, kwargs)) or {"ok": True})
     client = TestClient(app)
 
     response = client.post("/api/telegram/test-message", json={"message": "Agent approval test"})

@@ -1,5 +1,8 @@
+anthropic==0.105.2
+certifi==2026.5.20
 fastapi==0.125.0
 httpx==0.28.1
+mcp>=1.2.0
 python-dotenv==1.2.2
 truststore==0.10.4
 uvicorn[standard]==0.38.0

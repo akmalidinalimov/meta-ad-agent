@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.routers.crm as crm_module
 from backend.app import app
 from backend.crm_store import list_crm_leads
 
@@ -34,7 +34,7 @@ class FailingBitrixTransport:
 
 def bind_tmp_crm(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
-    monkeypatch.setattr(app_module, "CRM_STORAGE_DIR", storage_dir)
+    monkeypatch.setattr(crm_module, "CRM_STORAGE_DIR", storage_dir)
     return storage_dir
 
 
@@ -55,7 +55,7 @@ def test_bitrix_status_reports_missing_webhook(monkeypatch):
 def test_bitrix_import_saves_normalized_leads(monkeypatch, tmp_path):
     storage_dir = bind_tmp_crm(monkeypatch, tmp_path)
     monkeypatch.setenv("BITRIX24_WEBHOOK_URL", "https://example.bitrix24.com/rest/1/secret/")
-    monkeypatch.setattr(app_module, "build_bitrix_transport", lambda config: FakeBitrixTransport())
+    monkeypatch.setattr(crm_module, "build_bitrix_transport", lambda config: FakeBitrixTransport())
     client = TestClient(app)
 
     response = client.post("/api/crm/bitrix/import")
@@ -70,7 +70,7 @@ def test_bitrix_import_saves_normalized_leads(monkeypatch, tmp_path):
 def test_bitrix_import_returns_sanitized_upstream_error(monkeypatch, tmp_path):
     bind_tmp_crm(monkeypatch, tmp_path)
     monkeypatch.setenv("BITRIX24_WEBHOOK_URL", "https://example.bitrix24.com/rest/1/secret/")
-    monkeypatch.setattr(app_module, "build_bitrix_transport", lambda config: FailingBitrixTransport())
+    monkeypatch.setattr(crm_module, "build_bitrix_transport", lambda config: FailingBitrixTransport())
     client = TestClient(app)
 
     response = client.post("/api/crm/bitrix/import")
@@ -82,7 +82,7 @@ def test_bitrix_import_returns_sanitized_upstream_error(monkeypatch, tmp_path):
 def test_bitrix_stages_returns_normalized_statuses(monkeypatch, tmp_path):
     bind_tmp_crm(monkeypatch, tmp_path)
     monkeypatch.setenv("BITRIX24_WEBHOOK_URL", "https://example.bitrix24.com/rest/1/secret/")
-    monkeypatch.setattr(app_module, "build_bitrix_transport", lambda config: FakeBitrixTransport())
+    monkeypatch.setattr(crm_module, "build_bitrix_transport", lambda config: FakeBitrixTransport())
     client = TestClient(app)
 
     response = client.get("/api/crm/bitrix/stages")
@@ -101,7 +101,7 @@ def test_bitrix_stages_returns_normalized_statuses(monkeypatch, tmp_path):
 def test_bitrix_stages_returns_sanitized_upstream_error(monkeypatch, tmp_path):
     bind_tmp_crm(monkeypatch, tmp_path)
     monkeypatch.setenv("BITRIX24_WEBHOOK_URL", "https://example.bitrix24.com/rest/1/secret/")
-    monkeypatch.setattr(app_module, "build_bitrix_transport", lambda config: FailingBitrixTransport())
+    monkeypatch.setattr(crm_module, "build_bitrix_transport", lambda config: FailingBitrixTransport())
     client = TestClient(app)
 
     response = client.get("/api/crm/bitrix/stages")

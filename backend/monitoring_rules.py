@@ -4,6 +4,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+# Cost rules (CPC/CPM/frequency) only fire once the current window has enough volume,
+# so a single thin low-spend day cannot trip a noisy alarm.
+COST_RULE_MIN_SPEND = 20.0
+COST_RULE_MIN_CLICKS = 40
+# Cold-prospecting frequency above this band means the same people are over-exposed.
+FREQUENCY_FATIGUE_THRESHOLD = 2.8
+
+
 def evaluate_monitoring_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     current = snapshot.get("current", {})
     previous = snapshot.get("previous", {})
@@ -12,6 +20,9 @@ def evaluate_monitoring_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any
     previous_cpl = ratio(previous.get("spend", 0), previous.get("leads", 0))
     current_cpc = ratio(current.get("spend", 0), current.get("clicks", 0))
     previous_cpc = ratio(previous.get("spend", 0), previous.get("clicks", 0))
+    current_cpm = safe_float(current.get("cpm"))
+    previous_cpm = safe_float(previous.get("cpm"))
+    current_frequency = safe_float(current.get("frequency"))
     current_lead_rate = ratio(current.get("leads", 0), current.get("clicks", 0))
     previous_lead_rate = ratio(previous.get("leads", 0), previous.get("clicks", 0))
     current_start_rate = ratio(current.get("telegramStarts", 0), current.get("leads", 0))
@@ -39,7 +50,48 @@ def evaluate_monitoring_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any
             )
         )
 
-    if previous_cpc and current_cpc > previous_cpc * 1.75:
+    # Fallback quality alarm for the (current) reality where Telegram START tracking is
+    # not connected, so telegramStarts is structurally 0 and the primary high-severity
+    # rule above can never fire. CPL-rise + lead-rate-drop are signals that DO exist today.
+    # Gated on the absence of any START signal so it never double-fires with the rule above.
+    has_start_signal = bool(current.get("telegramStarts", 0) or previous.get("telegramStarts", 0))
+    if (
+        not has_start_signal
+        and previous_cpl
+        and current_cpl > previous_cpl * 1.35
+        and previous_lead_rate
+        and current_lead_rate < previous_lead_rate * 0.75
+    ):
+        alerts.append(
+            build_alert(
+                snapshot,
+                severity="high",
+                title=f"CPL rose while lead quality fell for {campaign_name}",
+                why_it_matters="Cost per lead is climbing while the click-to-lead rate is dropping — the cheap-click-but-low-quality pattern. (Telegram START tracking is not connected, so this is judged on CPL and lead rate alone.)",
+                metric_deltas={
+                    "currentCpl": current_cpl,
+                    "previousCpl": previous_cpl,
+                    "currentLeadRate": current_lead_rate,
+                    "previousLeadRate": previous_lead_rate,
+                },
+                recommended_actions=[
+                    "Inspect the weakest ad set/placement driving the cheaper, lower-converting clicks.",
+                    "Hold budget increases until the click-to-lead rate recovers.",
+                    "Connect Telegram START tracking so buyer-quality, not just lead rate, can gate scaling.",
+                ],
+            )
+        )
+
+    # Cost rules require a minimum spend/clicks floor on the current window so a single
+    # low-volume day (a few dollars, a handful of clicks) cannot trip a noisy cost alarm.
+    cost_volume_ok = (
+        safe_float(current.get("spend")) >= COST_RULE_MIN_SPEND
+        and safe_float(current.get("clicks")) >= COST_RULE_MIN_CLICKS
+    )
+
+    # CPC trigger tightened from +75% to the +35-50% band so meaningful cost rises are
+    # caught earlier, but only once the volume floor is met.
+    if cost_volume_ok and previous_cpc and current_cpc > previous_cpc * 1.4:
         alerts.append(
             build_alert(
                 snapshot,
@@ -56,6 +108,54 @@ def evaluate_monitoring_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any
                     "Check whether frequency or creative fatigue is increasing.",
                     "Compare Instagram Reels, Stories, and Feed before changing budget.",
                     "Prepare a creative refresh test before scaling spend.",
+                ],
+            )
+        )
+
+    # CPM-rise companion to the CPC rule. Rising CPM at flat targeting is the auction-side
+    # signal of audience saturation / fatigue, often before CPC moves. Only fires when both
+    # windows report CPM and the volume floor is met.
+    if cost_volume_ok and previous_cpm and current_cpm > previous_cpm * 1.4:
+        alerts.append(
+            build_alert(
+                snapshot,
+                severity="medium",
+                title=f"CPM rose sharply for {campaign_name}",
+                why_it_matters="Delivery is getting more expensive per impression, which usually means the auction is heating up from audience saturation or fatigue rather than a creative problem alone.",
+                metric_deltas={
+                    "currentCpm": current_cpm,
+                    "previousCpm": previous_cpm,
+                    "currentSpend": current.get("spend", 0),
+                    "currentImpressions": current.get("impressions", 0),
+                },
+                recommended_actions=[
+                    "Check audience overlap and frequency before adding budget.",
+                    "Refresh or broaden the audience if CPM keeps climbing at the same targeting.",
+                    "Rotate creative to reset auction relevance before scaling spend.",
+                ],
+            )
+        )
+
+    # Frequency-fatigue rule for cold prospecting: a frequency above ~2.5-3 on a prospecting
+    # campaign means the same people are seeing the ads repeatedly, which drives CPM/CPC up
+    # and quality down. Only fires when frequency is reported and the volume floor is met.
+    if cost_volume_ok and current_frequency >= FREQUENCY_FATIGUE_THRESHOLD:
+        alerts.append(
+            build_alert(
+                snapshot,
+                severity="medium",
+                title=f"Frequency fatigue building on {campaign_name}",
+                why_it_matters="The same cold audience is seeing the ads too often, which inflates CPM/CPC and erodes response. This is the classic prospecting-fatigue pattern that precedes a CPL rise.",
+                metric_deltas={
+                    "currentFrequency": current_frequency,
+                    "frequencyThreshold": FREQUENCY_FATIGUE_THRESHOLD,
+                    "currentCpm": current_cpm,
+                    "currentSpend": current.get("spend", 0),
+                },
+                recommended_actions=[
+                    "Refresh creative or expand the cold audience to lower frequency.",
+                    "Check whether CPM/CPC rose alongside the frequency climb.",
+                    "Avoid budget increases until frequency comes back down.",
                 ],
             )
         )

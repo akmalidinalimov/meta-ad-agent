@@ -1,6 +1,6 @@
 from datetime import date
 
-from backend.app import build_sync_windows
+from backend.meta_sync import build_sync_windows
 
 
 def test_build_sync_windows_creates_inclusive_90_day_chunks():

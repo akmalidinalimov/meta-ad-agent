@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-import backend.app as app_module
+import backend.routers.monitoring as monitoring_module
 from backend.app import app
 from backend.monitoring_runner import list_monitoring_alerts, run_monitoring_check
 from backend.monitoring_scheduler import list_monitoring_runs, run_scheduled_monitoring
@@ -23,9 +23,9 @@ def sample_monitoring_dashboard() -> dict:
 
 def bind_tmp_monitoring(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
-    monkeypatch.setattr(app_module, "dashboard", sample_monitoring_dashboard)
+    monkeypatch.setattr(monitoring_module, "build_dashboard", sample_monitoring_dashboard)
     monkeypatch.setattr(
-        app_module,
+        monitoring_module,
         "run_monitoring_check",
         lambda dashboard_data, send_alert: run_monitoring_check(
             dashboard_data,
@@ -34,7 +34,7 @@ def bind_tmp_monitoring(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        app_module,
+        monitoring_module,
         "list_monitoring_alerts",
         lambda: list_monitoring_alerts(storage_dir=storage_dir),
     )
@@ -44,7 +44,7 @@ def bind_tmp_monitoring(monkeypatch, tmp_path):
 def test_manual_monitoring_run_stores_alert_and_sends_telegram(monkeypatch, tmp_path):
     bind_tmp_monitoring(monkeypatch, tmp_path)
     sent = []
-    monkeypatch.setattr(app_module, "send_telegram_message_sync", lambda text: sent.append(text) or {"ok": True})
+    monkeypatch.setattr(monitoring_module, "send_telegram_message_sync", lambda text: sent.append(text) or {"ok": True})
     client = TestClient(app)
 
     response = client.post("/api/monitoring/run")
@@ -154,9 +154,9 @@ def test_scheduled_monitoring_runs_once_per_interval_and_logs_results(tmp_path):
 
 def test_scheduled_monitoring_endpoint_exposes_safe_run_log(monkeypatch, tmp_path):
     storage_dir = tmp_path / "storage"
-    monkeypatch.setattr(app_module, "dashboard", sample_monitoring_dashboard)
+    monkeypatch.setattr(monitoring_module, "build_dashboard", sample_monitoring_dashboard)
     monkeypatch.setattr(
-        app_module,
+        monitoring_module,
         "run_scheduled_monitoring",
         lambda dashboard_factory, send_alert, force=False: run_scheduled_monitoring(
             dashboard_factory,
@@ -165,8 +165,8 @@ def test_scheduled_monitoring_endpoint_exposes_safe_run_log(monkeypatch, tmp_pat
             force=force,
         ),
     )
-    monkeypatch.setattr(app_module, "list_monitoring_runs", lambda: list_monitoring_runs(storage_dir=storage_dir))
-    monkeypatch.setattr(app_module, "send_telegram_message_sync", lambda text: {"ok": True})
+    monkeypatch.setattr(monitoring_module, "list_monitoring_runs", lambda: list_monitoring_runs(storage_dir=storage_dir))
+    monkeypatch.setattr(monitoring_module, "send_telegram_message_sync", lambda text: {"ok": True})
     client = TestClient(app)
 
     run_response = client.post("/api/monitoring/scheduled", json={"force": True})
