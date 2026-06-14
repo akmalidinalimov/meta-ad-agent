@@ -34,7 +34,9 @@ def _bind(monkeypatch, tmp_path, members):
 
     monkeypatch.setenv("MEMBERS_STORE_PATH", str(members_path))
     monkeypatch.setenv("PENDING_CONTEXT_STORE_PATH", str(storage / "pending_context.json"))
-    monkeypatch.delenv("TELEGRAM_COMMAND_SECRET", raising=False)
+    # "" (not delenv): load_dotenv(override=False) won't overwrite a present-but-empty
+    # value, so the secret gate stays open no matter the test collection order.
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "")
     monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
     monkeypatch.delenv("TELEGRAM_ALLOWED_CHAT_IDS", raising=False)
     monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)

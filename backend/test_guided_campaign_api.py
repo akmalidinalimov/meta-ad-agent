@@ -38,7 +38,11 @@ def _bind(monkeypatch, tmp_path, members):
     members_path.write_text(json.dumps(members), encoding="utf-8")
 
     monkeypatch.setenv("MEMBERS_STORE_PATH", str(members_path))
-    monkeypatch.delenv("TELEGRAM_COMMAND_SECRET", raising=False)
+    # Set to "" (not delenv): config/telegram_outbound call load_dotenv() lazily at
+    # import; with override=False it won't overwrite an already-present empty value,
+    # so the secret gate stays open regardless of test collection order. delenv would
+    # be silently re-populated from the repo .env on a later first-time import → 401.
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "")
     monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
     monkeypatch.delenv("TELEGRAM_ALLOWED_CHAT_IDS", raising=False)
     monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
