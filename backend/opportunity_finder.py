@@ -99,6 +99,9 @@ def build_autonomous_campaign(
     today: date | datetime | None = None,
     approval_id: str | None = None,
     source: str = "chat_autonomous",
+    audience_override: list[dict[str, Any]] | None = None,
+    creative_ids: list[str] | None = None,
+    exclude_recent: bool = True,
 ) -> dict[str, Any] | None:
     """Build ONE best-guess PAUSED campaign autonomously, reusing the proactive chain.
 
@@ -120,12 +123,16 @@ def build_autonomous_campaign(
     spend = float(budget or DEFAULT_PER_SEGMENT_BUDGET_USD)
     day = _as_date(today)
 
-    # Exclude interests already used by recent playbooks so we keep suggesting NEW
-    # audiences rather than re-proposing what was just tested.
-    exclude_labels = _recent_labels(playbooks)
-    audiences = rank_audiences_for_next_campaign(
-        analysis, exclude_labels=exclude_labels, n=n_audiences
-    )
+    if audience_override:
+        audiences = audience_override
+        exclude_labels: list[str] = []
+    else:
+        # Exclude interests already used by recent playbooks so we keep suggesting NEW
+        # audiences rather than re-proposing what was just tested.
+        exclude_labels = _recent_labels(playbooks) if exclude_recent else []
+        audiences = rank_audiences_for_next_campaign(
+            analysis, exclude_labels=exclude_labels, n=n_audiences
+        )
     if not audiences:
         return None
 
@@ -147,6 +154,7 @@ def build_autonomous_campaign(
         pixel_id=pixel_id,
         template=template_config,
         creatives_limit=n_creatives,
+        creative_ids=creative_ids,
     )
 
     segment_labels = [segment["name"] for segment in strategy.get("segments", [])]
