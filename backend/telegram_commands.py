@@ -6,7 +6,13 @@ from typing import Any
 def normalize_telegram_command(payload: dict[str, Any]) -> dict[str, Any]:
     callback = payload.get("callback_query") or {}
     message = payload.get("message") or callback.get("message") or {}
-    sender = payload.get("from") or message.get("from") or callback.get("from") or {}
+    # On a callback_query, callback.from is the human who tapped the button, while
+    # message.from is the BOT that authored the proposal message. The clicker must
+    # win, or every inline button (Approve/Reject, drill-downs) is attributed to
+    # the bot and the RBAC gate denies even the owner. callback.from therefore
+    # precedes message.from; for a plain text message callback is empty and
+    # message.from (the human) is used as before.
+    sender = payload.get("from") or callback.get("from") or message.get("from") or {}
     chat = message.get("chat") or {}
     data = str(callback.get("data") or "").strip()
     text = str(message.get("text") or payload.get("text") or "").strip()
