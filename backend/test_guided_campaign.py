@@ -87,3 +87,52 @@ def test_default_path_unchanged_when_no_overrides():
     approval = build_autonomous_campaign(_knowledge_full(), [], account_id="act_1", n_creatives=5)
     assert approval is not None
     assert (approval.get("after") or {}).get("adsets")
+
+
+# ---------------------------------------------------------------------------
+# Pending store: guided blob persistence
+# ---------------------------------------------------------------------------
+
+
+def test_pending_persists_guided_blob(tmp_path):
+    from backend.pending_context_store import set_pending, get_pending
+    set_pending("tg:1", {"kind": "guided_create", "guided": {"step": "audience", "selectedCreatives": ["cr_1"]}}, storage_dir=tmp_path)
+    got = get_pending("tg:1", storage_dir=tmp_path)
+    assert got["kind"] == "guided_create"
+    assert got["guided"]["selectedCreatives"] == ["cr_1"]
+
+
+# ---------------------------------------------------------------------------
+# Guided campaign state machine
+# ---------------------------------------------------------------------------
+
+from backend import guided_campaign
+
+
+def test_start_sets_audience_step_and_returns_question(tmp_path):
+    out = guided_campaign.start("tg:1", storage_dir=tmp_path)
+    from backend.pending_context_store import get_pending
+    p = get_pending("tg:1", storage_dir=tmp_path)
+    assert p["kind"] == "guided_create"
+    assert p["guided"]["step"] == "audience"
+    assert "audience" in out["text"].lower()
+    cbs = [b["callback_data"] for row in out["reply_markup"]["inline_keyboard"] for b in row]
+    assert {"gcreate:aud:proven", "gcreate:aud:new", "gcreate:aud:input"} <= set(cbs)
+
+
+def test_audience_choice_input_prompts_for_text(tmp_path):
+    guided_campaign.start("tg:1", storage_dir=tmp_path)
+    out = guided_campaign.handle_audience_choice("tg:1", "input", storage_dir=tmp_path)
+    from backend.pending_context_store import get_pending
+    assert get_pending("tg:1", storage_dir=tmp_path)["guided"]["step"] == "audience_text"
+    assert "audience" in out["text"].lower()
+
+
+def test_audience_choice_proven_advances_to_creatives(tmp_path):
+    guided_campaign.start("tg:1", storage_dir=tmp_path)
+    out = guided_campaign.handle_audience_choice("tg:1", "proven", storage_dir=tmp_path)
+    from backend.pending_context_store import get_pending
+    p = get_pending("tg:1", storage_dir=tmp_path)
+    assert p["guided"]["step"] == "creatives"
+    assert p["guided"]["audienceChoice"] == "proven"
+    assert out["next"] == "render_creatives"

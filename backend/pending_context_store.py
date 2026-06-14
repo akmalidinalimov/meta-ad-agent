@@ -79,6 +79,8 @@ def set_pending(operator_key: str, pointer: dict[str, Any], *, storage_dir: Path
         saved["kind"] = pointer["kind"]
     if pointer.get("action"):
         saved["action"] = pointer["action"]
+    if pointer.get("guided") is not None:
+        saved["guided"] = pointer["guided"]
 
     def mutate(rows: dict[str, Any]) -> dict[str, Any]:
         rows[operator_key] = saved
