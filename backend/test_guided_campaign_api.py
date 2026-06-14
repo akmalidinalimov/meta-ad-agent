@@ -205,6 +205,67 @@ def test_creative_toggle_callback_edits_keyboard(monkeypatch, tmp_path):
     assert edits, "expected edit_message_reply_markup to be called"
 
 
+def test_audience_input_text_starting_with_shortcut_word_is_captured(monkeypatch, tmp_path):
+    """I-1 regression: when parked on the audience_text step, an audience
+    description whose FIRST word collides with a shortcut keyword (e.g. 'agents')
+    must be captured as the audience, not hijacked by handle_telegram_shortcut."""
+    client, sent, media, edits, storage = _bind(monkeypatch, tmp_path, _owner())
+    _seed_guided(storage)
+
+    import backend.guided_campaign as gc
+    monkeypatch.setattr(gc, "_load_knowledge", lambda: _knowledge_with_creatives(), raising=False)
+    import backend.knowledge_base as kb
+    monkeypatch.setattr(kb, "load_knowledge_base", lambda: _knowledge_with_creatives())
+
+    # Move to the audience_text step via the "I'll specify" choice.
+    client.post("/api/telegram/command", json=_callback("gcreate:aud:input"))
+
+    # First token is exactly "agents" (space-separated) — the shortcut handler
+    # would hijack it (split(maxsplit=1)[0] == "agents") if the guided interception
+    # didn't run first.
+    resp = client.post(
+        "/api/telegram/command",
+        json={"message": {"chat": {"id": 42}, "from": {"id": 42, "username": "owner"},
+                          "text": "agents in real estate, 30-45, Tashkent"}},
+    )
+    assert resp.status_code == 200
+    # Captured by the guided flow (→ creatives), not the 'agents' shortcut.
+    assert resp.json().get("guided") == "creatives"
+    assert any(kind in ("photo", "video") for kind, _chat, _url in media)
+
+
+def test_creative_done_callback_produces_proposal(monkeypatch, tmp_path):
+    """cre:done seam: confirming the selection finalizes into the proposal with
+    agap Approve/Reject buttons and an agentic create pending."""
+    client, sent, media, edits, storage = _bind(monkeypatch, tmp_path, _owner())
+    op_key = _seed_guided(storage)
+
+    import backend.guided_campaign as gc
+    gc.handle_audience_choice(op_key, "new", storage_dir=storage)
+    gc.handle_creative_toggle(op_key, "cr_1", storage_dir=storage)
+
+    def fake_build(knowledge, playbooks, **kw):
+        return {"id": "appr_done", "after": {"campaign": {"name": "VSL Test"}, "adsets": [
+            {"name": "Aud - DRAFT", "daily_budget": 10000, "ads": [{"creativeId": "cr_1"}]}]}}
+
+    monkeypatch.setattr(gc, "build_autonomous_campaign", fake_build, raising=False)
+    monkeypatch.setattr(gc, "_load_knowledge", lambda: {"analysis": {}}, raising=False)
+    monkeypatch.setattr(gc, "_load_playbooks", lambda: [], raising=False)
+    monkeypatch.setattr(gc, "_account_and_pixel", lambda: ("act_1", None), raising=False)
+    monkeypatch.setattr(gc, "_create_approval", lambda a: a, raising=False)
+
+    resp = client.post("/api/telegram/command", json=_callback("gcreate:cre:done"))
+    assert resp.status_code == 200
+    cbs = []
+    for _t, kw in sent:
+        for row in (kw.get("reply_markup") or {}).get("inline_keyboard", []):
+            cbs += [b.get("callback_data") for b in row]
+    assert {"agap:approve", "agap:reject"} <= set(cbs)
+    from backend.pending_context_store import get_pending
+    p = get_pending(op_key, storage_dir=storage)
+    assert p["kind"] == "agentic" and p["action"] == "create" and p["approvalId"] == "appr_done"
+
+
 def test_guided_callback_blocked_for_viewer(monkeypatch, tmp_path):
     members = _owner() + [{"userId": "7", "username": "vicky", "role": "viewer",
                            "addedBy": "42", "addedAt": "2026-01-02T00:00:00+00:00"}]

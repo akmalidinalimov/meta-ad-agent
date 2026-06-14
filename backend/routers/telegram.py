@@ -961,6 +961,29 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         _send_pending_suggestions(command)
         return {"ok": True, "telegram": command, "menu": "suggestions"}
 
+    # --- Guided campaign: free-text audience answer ----------------------------
+    # MUST run before the shortcut/attention handlers: when the operator chose
+    # "✍️ I'll specify", the guided flow is parked on the audience_text step and
+    # the next free-text message IS the audience description. If its first word
+    # happens to be a shortcut keyword ("agents brokers …", "status of …") the
+    # shortcut handler would otherwise hijack it and stall the flow.
+    from ..pending_context_store import get_pending as _gp_aud, operator_key as _ok_aud
+
+    _aud_opk = _ok_aud(telegram_chat_id=command.get("chatId"))
+    _aud_pend = _gp_aud(_aud_opk)
+    if (
+        _aud_pend
+        and _aud_pend.get("kind") == "guided_create"
+        and (_aud_pend.get("guided") or {}).get("step") == "audience_text"
+    ):
+        from .. import guided_campaign
+
+        out = guided_campaign.handle_audience_text(_aud_opk, text)
+        _send(command, out["text"], parse_mode="HTML")
+        if out.get("next") == "render_creatives":
+            return _render_guided_creatives(command, _aud_opk)
+        return {"ok": True, "telegram": command, "guided": "audience_text"}
+
     # Deterministic slash-command shortcuts (/status, /tasks, /approvals, /agents,
     # /help) and the "what needs attention" shortcut stay as-is — they are fast,
     # fixed commands, not the free-text the agentic brain owns.
@@ -1011,20 +1034,9 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
 
     op_key = operator_key(telegram_chat_id=command.get("chatId"))
 
-    # --- Guided campaign: free-text audience answer ---------------------------
-    # When the operator chose "✍️ I'll specify" the guided flow is parked on the
-    # audience_text step; this next free-text message IS the audience description.
-    # Intercept it here (deterministic parse) so it never reaches the model.
+    # The guided audience_text turn is intercepted earlier (before the shortcut
+    # handler); here we only need the pending for the agentic affirmation check.
     pending = get_pending(op_key)
-    if pending and pending.get("kind") == "guided_create" and (pending.get("guided") or {}).get("step") == "audience_text":
-        from .. import guided_campaign
-
-        out = guided_campaign.handle_audience_text(op_key, text)
-        _send(command, out["text"], parse_mode="HTML")
-        if out.get("next") == "render_creatives":
-            return _render_guided_creatives(command, op_key)
-        return {"ok": True, "telegram": command, "guided": "audience_text"}
-
     if pending and pending.get("kind") == "agentic":
         from ..routers.agents import _is_affirmation, _is_negation
 
