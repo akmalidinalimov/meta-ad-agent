@@ -15,6 +15,7 @@ def build_campaign_creation_approval(
     pixel_id: str | None = None,
     template: dict[str, Any] | None = None,
     creatives_limit: int = 3,
+    creative_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     campaign = build_campaign_payload(playbook, template=template)
     # Reuse the account's best historical creatives (from synced knowledge) as paused
@@ -23,6 +24,10 @@ def build_campaign_creation_approval(
     # several winners per audience. Empty when no knowledge is synced, so the packet
     # degrades to campaign + ad sets only (the prior behavior).
     creatives_pool = extract_top_creatives(knowledge, limit=creatives_limit)
+    if creative_ids:
+        wanted = {str(cid) for cid in creative_ids}
+        filtered = [c for c in creatives_pool if str(c.get("creativeId")) in wanted]
+        creatives_pool = filtered or creatives_pool  # never build an ad-less campaign
     segments = playbook.get("segments", [])
     adsets = []
     for index, segment in enumerate(segments):

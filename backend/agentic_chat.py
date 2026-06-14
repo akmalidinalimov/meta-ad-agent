@@ -157,10 +157,26 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "create_test_campaign",
-        "description": "Build a brand-new PAUSED test campaign for the top untested audiences. Always returns needsApproval — nothing is created until the operator approves.",
+        "description": (
+            "Create a brand-new PAUSED test campaign. By DEFAULT this opens a GUIDED "
+            "flow: the operator is walked through picking the audience and creatives "
+            "step by step before anything is proposed. Only set autonomous=true when "
+            "the operator EXPLICITLY says to build it 'on your own' / 'autonomously' / "
+            "'without asking me' — then it builds the top untested audiences hands-off "
+            "and returns needsApproval. Nothing is created until the operator approves."
+        ),
         "input_schema": {
             "type": "object",
-            "properties": {"note": {"type": "string"}},
+            "properties": {
+                "note": {"type": "string"},
+                "autonomous": {
+                    "type": "boolean",
+                    "description": (
+                        "Set true ONLY on explicit 'on your own / autonomously / "
+                        "without asking' phrasing. Defaults to false (guided flow)."
+                    ),
+                },
+            },
         },
     },
 ]
@@ -211,7 +227,7 @@ async def _run_tool(name: str, args: dict[str, Any], *, operator_key: str) -> An
             operator_key=operator_key,
         )
     if name == "create_test_campaign":
-        return _create_test_campaign(operator_key=operator_key)
+        return _create_test_campaign(operator_key=operator_key, autonomous=bool(args.get("autonomous")))
     return {"ok": False, "error": f"Unknown tool: {name}"}
 
 
@@ -285,7 +301,16 @@ async def _set_budget(adset_id: str, daily_budget_usd: float, *, operator_key: s
     return {"ok": True, "id": adset_id, "daily_budget_usd": new, "name": name}
 
 
-def _create_test_campaign(*, operator_key: str) -> dict[str, Any]:
+def _create_test_campaign(*, operator_key: str, autonomous: bool = False) -> dict[str, Any]:
+    # Default: open the guided step-by-step flow (audience -> creatives -> propose).
+    # The model only sets autonomous=true on explicit "on your own" phrasing, in
+    # which case we keep the original hands-off build below.
+    if not autonomous:
+        from .guided_campaign import start
+
+        out = start(operator_key)
+        return {"guided": True, "message": out["text"], "reply_markup": out["reply_markup"]}
+
     from .approval_store import create_approval_request
     from .knowledge_base import load_knowledge_base
     from .meta_client import get_meta_config

@@ -149,12 +149,34 @@ def test_create_test_campaign_needs_approval_with_pending(monkeypatch):
     pendings = []
     monkeypatch.setattr(pending_context_store, "set_pending", lambda op_key, pointer, **kw: pendings.append((op_key, pointer)))
 
-    result = _run(agentic_chat._run_tool("create_test_campaign", {}, operator_key="tg:1"))
+    # autonomous=true => hands-off build that returns needsApproval (unchanged body).
+    result = _run(agentic_chat._run_tool("create_test_campaign", {"autonomous": True}, operator_key="tg:1"))
 
     assert result["needsApproval"] is True
     assert "reply approve" in result["proposal"].lower()
     assert pendings and pendings[0][1]["action"] == "create"
     assert pendings[0][1]["approvalId"] == "appr_99"
+
+
+def test_create_test_campaign_defaults_to_guided_flow(monkeypatch):
+    """Without autonomous=true the tool opens the GUIDED flow (audience question)
+    instead of the hands-off build."""
+    from backend import guided_campaign
+
+    captured = {}
+
+    def fake_start(operator_key, **kw):
+        captured["op"] = operator_key
+        return {"text": "How should I pick the audience?", "reply_markup": {"inline_keyboard": []}}
+
+    monkeypatch.setattr(guided_campaign, "start", fake_start)
+
+    result = _run(agentic_chat._run_tool("create_test_campaign", {}, operator_key="tg:1"))
+
+    assert result["guided"] is True
+    assert "audience" in result["message"].lower()
+    assert "reply_markup" in result
+    assert captured["op"] == "tg:1"
 
 
 def test_create_test_campaign_no_audiences_returns_error(monkeypatch):
@@ -165,7 +187,7 @@ def test_create_test_campaign_no_audiences_returns_error(monkeypatch):
     monkeypatch.setattr(meta_client, "get_meta_config", lambda: type("Cfg", (), {"ad_account_id": "", "pixel_id": ""})())
     monkeypatch.setattr(opportunity_finder, "build_autonomous_campaign", lambda *a, **k: None)
 
-    result = _run(agentic_chat._run_tool("create_test_campaign", {}, operator_key="tg:1"))
+    result = _run(agentic_chat._run_tool("create_test_campaign", {"autonomous": True}, operator_key="tg:1"))
 
     assert result["ok"] is False
     assert result["error"] == "no usable audience data"

@@ -34,7 +34,9 @@ def _bind(monkeypatch, tmp_path, members):
 
     monkeypatch.setenv("MEMBERS_STORE_PATH", str(members_path))
     monkeypatch.setenv("PENDING_CONTEXT_STORE_PATH", str(storage / "pending_context.json"))
-    monkeypatch.delenv("TELEGRAM_COMMAND_SECRET", raising=False)
+    # "" (not delenv): load_dotenv(override=False) won't overwrite a present-but-empty
+    # value, so the secret gate stays open no matter the test collection order.
+    monkeypatch.setenv("TELEGRAM_COMMAND_SECRET", "")
     monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
     monkeypatch.delenv("TELEGRAM_ALLOWED_CHAT_IDS", raising=False)
     monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
@@ -122,6 +124,57 @@ def test_viewer_write_callback_is_blocked(monkeypatch, tmp_path):
     assert resp.status_code == 200
     assert resp.json()["denied"] == "viewer_action"
     assert any("viewer" in text.lower() for text, _ in sent)
+
+
+def test_normalize_uses_callback_clicker_not_message_author():
+    """Root cause: in a real Telegram callback_query, the clicker is in
+    callback_query.from while callback_query.message.from is the BOT that
+    authored the message. normalize must attribute the action to the clicker."""
+    from backend.telegram_commands import normalize_telegram_command
+
+    cmd = normalize_telegram_command(
+        {
+            "callback_query": {
+                "from": {"id": 42, "username": "owner"},
+                "message": {
+                    "chat": {"id": 42},
+                    "from": {"id": 999999, "is_bot": True, "username": "the_bot"},
+                },
+                "data": "agap:approve",
+            }
+        }
+    )
+    assert cmd["userId"] == "42"
+    assert cmd["username"] == "owner"
+
+
+def test_owner_button_press_is_authorized(monkeypatch, tmp_path):
+    """Regression: a real Telegram callback_query carries the clicker in
+    callback_query.from, while callback_query.message.from is the BOT that
+    authored the proposal message. The identity gate must use the clicker, not
+    the bot — otherwise every inline button (Approve/Reject, drill-downs) denies
+    even the owner with 'no access'. (The earlier callback test omitted
+    message.from, so it never exercised this real-world shape.)"""
+    client, sent = _bind(monkeypatch, tmp_path, _owner())
+    resp = client.post(
+        "/api/telegram/command",
+        json={
+            "callback_query": {
+                "id": "cb1",
+                "from": {"id": 42, "username": "owner"},  # the human who tapped
+                "message": {
+                    "chat": {"id": 42},
+                    "message_id": 5,
+                    "from": {"id": 999999, "is_bot": True, "username": "the_bot"},  # bot authored it
+                },
+                "data": "agap:approve",
+            }
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("denied") != "no_access"
+    assert not any("access to this bot" in text.lower() for text, _ in sent)
 
 
 def test_owner_free_text_reaches_agentic(monkeypatch, tmp_path):
