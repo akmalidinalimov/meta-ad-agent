@@ -136,3 +136,37 @@ def test_audience_choice_proven_advances_to_creatives(tmp_path):
     assert p["guided"]["step"] == "creatives"
     assert p["guided"]["audienceChoice"] == "proven"
     assert out["next"] == "render_creatives"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: creative pool + tap-to-toggle selection
+# ---------------------------------------------------------------------------
+
+
+def test_creative_toggle_adds_then_removes(tmp_path):
+    guided_campaign.start("tg:1", storage_dir=tmp_path)
+    guided_campaign.handle_audience_choice("tg:1", "proven", storage_dir=tmp_path)
+    sel1 = guided_campaign.handle_creative_toggle("tg:1", "cr_1", storage_dir=tmp_path)
+    assert sel1 == ["cr_1"]
+    sel2 = guided_campaign.handle_creative_toggle("tg:1", "cr_2", storage_dir=tmp_path)
+    assert set(sel2) == {"cr_1", "cr_2"}
+    sel3 = guided_campaign.handle_creative_toggle("tg:1", "cr_1", storage_dir=tmp_path)
+    assert sel3 == ["cr_2"]
+
+
+def test_top_creatives_for_selection_reads_creative_id():
+    knowledge = {"analysis": {"topAds": [
+        {"name": "Ad A", "creative": {"id": "cr_1", "thumbnail_url": "t1", "video_id": "v1"}},
+        {"name": "Ad B", "creative": {"id": "cr_2", "image_url": "i2"}},
+    ]}}
+    rows = guided_campaign.top_creatives_for_selection(knowledge, limit=5)
+    # The selection id MUST be the creative id (matches the creative_ids filter), not an ad id.
+    assert [r["id"] for r in rows] == ["cr_1", "cr_2"]
+    assert rows[0]["videoId"] == "v1"
+    assert rows[1]["thumb"] == "i2"
+    assert {"id", "name", "thumb", "videoId"} <= set(rows[0].keys())
+
+
+def test_creative_toggle_label_flips():
+    assert guided_campaign.creative_toggle_label("cr_1", []) == "➕ Select"
+    assert guided_campaign.creative_toggle_label("cr_1", ["cr_1"]) == "✅ Selected"
