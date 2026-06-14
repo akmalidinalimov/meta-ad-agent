@@ -50,7 +50,7 @@ router = APIRouter()
 # requests; users with no role have no access at all.
 _VIEWER_BLOCKED_ACTIONS = {
     "approve", "dryrun", "applylive", "cancel", "reject", "changes",
-    "needs_changes", "agap", "manage", "view",
+    "needs_changes", "agap", "manage", "view", "gcreate",
 }
 _NO_ACCESS = "🚫 You don't have access to this bot. You can leave."
 _VIEWER_NOTICE = (
@@ -364,6 +364,146 @@ def _send_creative_media(command: dict[str, Any], adset_id: str) -> dict[str, An
     if not sent:
         _send(command, "⚠️ Couldn't load the creative media. Open <b>View creatives</b> for the full gallery.", parse_mode="HTML")
     return {"ok": True, "telegram": command, "media": sent}
+
+
+# --- Task 5: guided campaign creation (audience -> creatives -> propose) ------
+
+
+def _guided_creative_keyboard(creative_id: str, selected: list[str]) -> dict[str, Any]:
+    """The single tap-to-toggle button shown under each creative in the picker."""
+    from .. import guided_campaign
+
+    return {
+        "inline_keyboard": [[
+            {
+                "text": guided_campaign.creative_toggle_label(creative_id, selected),
+                "callback_data": f"gcreate:cre:toggle:{creative_id}",
+            }
+        ]]
+    }
+
+
+def _render_guided_creatives(command: dict[str, Any], op_key: str) -> dict[str, Any]:
+    """Render the account's top creatives as inline media, each with a SELECT
+    toggle, then a control message to confirm. Reuses the same video/photo
+    fallback ladder as ``_send_creative_media``. If nothing is synced, skip to
+    finalize (the builder falls back to the account defaults)."""
+    from .. import guided_campaign
+    from ..knowledge_base import load_knowledge_base
+    from ..pending_context_store import get_pending
+
+    chat_id = command.get("chatId")
+    rows = guided_campaign.top_creatives_for_selection(load_knowledge_base(), limit=8)
+    if not rows:
+        _send(command, "No creatives synced yet — I'll use the account's defaults.")
+        out = guided_campaign.finalize(op_key)
+        _send(command, out["text"], parse_mode="HTML", reply_markup=out.get("reply_markup"))
+        return {"ok": True, "telegram": command, "guided": "finalize_no_creatives"}
+
+    pending = get_pending(op_key) or {}
+    selected = list((pending.get("guided") or {}).get("selectedCreatives") or [])
+
+    sent = 0
+    for row in rows[:8]:
+        cid = row["id"]
+        caption = row.get("name") or "Creative"
+        toggle = _guided_creative_keyboard(cid, selected)
+        video_id = row.get("videoId")
+        thumb = row.get("thumb")
+        delivered = False
+        if video_id:
+            src = _video_source_sync(str(video_id))
+            video_url = src.get("source")
+            watch = str(src.get("permalink_url") or "").strip()
+            if watch.startswith("/"):
+                watch = "https://www.facebook.com" + watch
+            if not watch.startswith("http"):
+                watch = f"https://www.facebook.com/watch/?v={video_id}"
+            if video_url and chat_id:
+                resp = telegram_outbound.send_video(chat_id, video_url, caption=caption, reply_markup=toggle)
+                delivered = bool(resp.get("ok"))
+            if not delivered and chat_id and thumb:
+                resp = telegram_outbound.send_photo(chat_id, thumb, caption=caption, reply_markup=toggle)
+                if resp.get("ok"):
+                    delivered = True
+                    telegram_outbound.send_telegram_message_sync(
+                        f"▶️ Watch: {watch}", chat_id=chat_id,
+                    )
+        elif thumb and chat_id:
+            resp = telegram_outbound.send_photo(chat_id, thumb, caption=caption, reply_markup=toggle)
+            delivered = bool(resp.get("ok"))
+        else:
+            _send(command, caption + " (no preview)", reply_markup=toggle)
+            delivered = True
+        if delivered:
+            sent += 1
+
+    _send(
+        command,
+        "Tap ➕ on the creatives you want, then confirm.",
+        reply_markup={"inline_keyboard": [
+            [{"text": "✅ Use selected", "callback_data": "gcreate:cre:done"}],
+            [{"text": "⚡ Use top 5", "callback_data": "gcreate:cre:auto"}],
+        ]},
+    )
+    return {"ok": True, "telegram": command, "guided": "creatives", "rendered": sent}
+
+
+def _handle_guided(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
+    """Transport handler for the guided-creation inline callbacks. Parses the tail
+    after ``gcreate:`` and dispatches to the guided_campaign state machine; the
+    state logic lives there, this only moves messages/keyboards."""
+    from .. import guided_campaign
+    from ..knowledge_base import load_knowledge_base
+    from ..pending_context_store import get_pending, operator_key
+
+    op_key = operator_key(telegram_chat_id=command.get("chatId"))
+    raw = str(command.get("callbackData") or "")
+    tail = raw.split(":", 1)[1] if ":" in raw else ""  # strip leading "gcreate:"
+
+    # --- audience step -------------------------------------------------------
+    if tail in ("aud:proven", "aud:new"):
+        choice = tail.split(":", 1)[1]
+        out = guided_campaign.handle_audience_choice(op_key, choice)
+        if out.get("next") == "render_creatives":
+            return _render_guided_creatives(command, op_key)
+        _send(command, out["text"], parse_mode="HTML")
+        return {"ok": True, "telegram": command, "guided": "audience"}
+
+    if tail == "aud:input":
+        out = guided_campaign.handle_audience_choice(op_key, "input")
+        _send(command, out["text"])
+        return {"ok": True, "telegram": command, "guided": "audience_input"}
+
+    # --- creative step -------------------------------------------------------
+    if tail.startswith("cre:toggle:"):
+        cid = tail[len("cre:toggle:"):]
+        selected = guided_campaign.handle_creative_toggle(op_key, cid)
+        message = callback.get("message") or {}
+        telegram_outbound.edit_message_reply_markup(
+            (message.get("chat") or {}).get("id"),
+            message.get("message_id"),
+            _guided_creative_keyboard(cid, selected),
+        )
+        return {"ok": True, "telegram": command, "guided": "toggle", "selected": selected}
+
+    if tail == "cre:auto":
+        # Select the account's top 5 creatives, then finalize as if "done".
+        for row in guided_campaign.top_creatives_for_selection(load_knowledge_base(), limit=5):
+            current = (get_pending(op_key) or {}).get("guided") or {}
+            if row["id"] not in (current.get("selectedCreatives") or []):
+                guided_campaign.handle_creative_toggle(op_key, row["id"])
+        out = guided_campaign.finalize(op_key)
+        _send(command, out["text"], parse_mode="HTML", reply_markup=out.get("reply_markup"))
+        return {"ok": True, "telegram": command, "guided": "auto"}
+
+    if tail == "cre:done":
+        out = guided_campaign.finalize(op_key)
+        _send(command, out["text"], parse_mode="HTML", reply_markup=out.get("reply_markup"))
+        return {"ok": True, "telegram": command, "guided": "done"}
+
+    _send(command, "That step expired. Say \"create a campaign\" to start over.")
+    return {"ok": False, "telegram": command, "guided": "unknown"}
 
 
 def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
@@ -788,6 +928,10 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         _send(command, "Cancelled.")
         return {"ok": True, "telegram": command, "agenticRejected": True}
 
+    # Guided campaign creation callbacks (gcreate:aud:* / gcreate:cre:*).
+    if action == "gcreate":
+        return _handle_guided(command, callback)
+
     if action == "view" and approval_id:
         approval = next((a for a in list_approval_requests() if a.get("id") == approval_id), None)
         if not approval:
@@ -867,7 +1011,20 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
 
     op_key = operator_key(telegram_chat_id=command.get("chatId"))
 
+    # --- Guided campaign: free-text audience answer ---------------------------
+    # When the operator chose "✍️ I'll specify" the guided flow is parked on the
+    # audience_text step; this next free-text message IS the audience description.
+    # Intercept it here (deterministic parse) so it never reaches the model.
     pending = get_pending(op_key)
+    if pending and pending.get("kind") == "guided_create" and (pending.get("guided") or {}).get("step") == "audience_text":
+        from .. import guided_campaign
+
+        out = guided_campaign.handle_audience_text(op_key, text)
+        _send(command, out["text"], parse_mode="HTML")
+        if out.get("next") == "render_creatives":
+            return _render_guided_creatives(command, op_key)
+        return {"ok": True, "telegram": command, "guided": "audience_text"}
+
     if pending and pending.get("kind") == "agentic":
         from ..routers.agents import _is_affirmation, _is_negation
 

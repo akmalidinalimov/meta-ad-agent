@@ -206,3 +206,29 @@ def test_finalize_builds_approval_with_selection(tmp_path, monkeypatch):
     assert "approve" in out["text"].lower()
     cbs = [b["callback_data"] for row in out["reply_markup"]["inline_keyboard"] for b in row]
     assert {"agap:approve", "agap:reject"} <= set(cbs)
+
+
+# ---------------------------------------------------------------------------
+# Task 5: free-text audience parsing + advance to creatives
+# ---------------------------------------------------------------------------
+
+
+def test_parse_audience_text_extracts_age_location_interests():
+    from backend.guided_campaign import _parse_audience_text
+    spec = _parse_audience_text("business owners, 25-34, Tashkent")
+    assert spec["label"]
+    assert spec["ageRange"] == "25-34"
+    assert "Tashkent" in (spec.get("locations") or [])
+    assert any("business" in i.lower() for i in spec["interests"])
+
+
+def test_handle_audience_text_advances_to_creatives(tmp_path):
+    from backend import guided_campaign as gc
+    gc.start("tg:9", storage_dir=tmp_path)
+    gc.handle_audience_choice("tg:9", "input", storage_dir=tmp_path)
+    out = gc.handle_audience_text("tg:9", "crypto traders, 25-34, Tashkent", storage_dir=tmp_path)
+    from backend.pending_context_store import get_pending
+    g = get_pending("tg:9", storage_dir=tmp_path)["guided"]
+    assert g["step"] == "creatives" and g["audienceChoice"] == "input"
+    assert g["audienceSpec"][0]["label"]
+    assert out["next"] == "render_creatives"

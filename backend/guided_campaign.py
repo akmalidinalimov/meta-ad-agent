@@ -5,6 +5,7 @@ message + buttons and advances the stored step."""
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,64 @@ def handle_audience_choice(operator_key: str, choice: str, *, storage_dir: Path 
         _save(operator_key, guided, storage_dir)
         return {"next": "render_creatives", "text": "Great — now pick the creatives."}
     return {"text": "Unknown choice."}
+
+
+# Known Uzbek cities — tokens that should be read as LOCATIONS rather than interests.
+_UZ_CITIES = {
+    "tashkent", "samarkand", "bukhara", "andijan", "namangan", "fergana",
+    "nukus", "qarshi", "karshi", "kokand", "margilan", "jizzakh", "navoi",
+    "termez", "urgench", "gulistan", "uzbekistan",
+}
+
+
+def _parse_audience_text(text: str) -> dict[str, Any]:
+    """Deterministic (no-LLM) parse of a free-text audience description into a
+    targeting spec the builder understands. Returns a dict keyed by ``label``
+    (the builder reads ``label``, not ``name``) plus interests / ageRange /
+    locations / gender."""
+    raw = (text or "").strip()
+    tokens = [t.strip() for t in raw.split(",") if t.strip()]
+
+    age_range: str | None = None
+    locations: list[str] = []
+    interests: list[str] = []
+    for token in tokens:
+        age_match = re.search(r"(\d{1,2})\s*-\s*(\d{1,2})", token)
+        # Pure age token (e.g. "25-34") -> ageRange; don't also treat it as an interest.
+        if age_match and re.fullmatch(r"\d{1,2}\s*-\s*\d{1,2}", token):
+            age_range = f"{age_match.group(1)}-{age_match.group(2)}"
+            continue
+        if token.lower() in _UZ_CITIES:
+            locations.append(token)
+            continue
+        interests.append(token)
+
+    label = raw or (interests[0] if interests else "Custom audience")
+    return {
+        "label": label,
+        "interests": interests,
+        "ageRange": age_range,
+        "locations": locations,
+        "gender": "all",
+    }
+
+
+def handle_audience_text(operator_key: str, text: str, *, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
+    """Consume the operator's free-text audience answer (the ``audience_text``
+    step), store the parsed spec, advance to the creatives step, and signal the
+    transport to render the creative picker."""
+    guided = _guided(operator_key, storage_dir)
+    if guided is None:
+        return {"text": "That setup expired. Say \"create a campaign\" to start over.", "expired": True}
+    spec = _parse_audience_text(text)
+    guided["audienceSpec"] = [spec]
+    guided["audienceChoice"] = "input"
+    guided["step"] = "creatives"
+    _save(operator_key, guided, storage_dir)
+    return {
+        "text": f"Got it — targeting: <b>{spec['label']}</b>. Now pick the creatives.",
+        "next": "render_creatives",
+    }
 
 
 def top_creatives_for_selection(knowledge: dict[str, Any] | None, *, limit: int = 8) -> list[dict[str, Any]]:
@@ -158,7 +217,7 @@ def finalize(operator_key: str, *, storage_dir: Path = STORAGE_DIR) -> dict[str,
 
     saved = _create_approval(approval)
     after = saved.get("after") or {}
-    name = after.get("name") or "Test campaign"
+    name = after.get("name") or (after.get("campaign") or {}).get("name") or saved.get("title") or "Test campaign"
     set_pending(
         operator_key,
         {"kind": "agentic", "action": "create", "approvalId": saved["id"], "label": name},
