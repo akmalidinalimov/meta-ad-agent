@@ -170,3 +170,39 @@ def test_top_creatives_for_selection_reads_creative_id():
 def test_creative_toggle_label_flips():
     assert guided_campaign.creative_toggle_label("cr_1", []) == "➕ Select"
     assert guided_campaign.creative_toggle_label("cr_1", ["cr_1"]) == "✅ Selected"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: finalize → build approval → hand off to agap approve path
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_builds_approval_with_selection(tmp_path, monkeypatch):
+    import backend.guided_campaign as gc
+
+    captured = {}
+
+    def fake_build(knowledge, playbooks, **kw):
+        captured.update(kw)
+        return {"id": "appr_x", "after": {"name": "VSL Test", "adsets": [
+            {"name": "Business education - DRAFT", "daily_budget": 10000, "ads": [{"creativeId": "cr_1"}]}]}}
+
+    monkeypatch.setattr(gc, "build_autonomous_campaign", fake_build, raising=False)
+    monkeypatch.setattr(gc, "_load_knowledge", lambda: {"analysis": {}})
+    monkeypatch.setattr(gc, "_load_playbooks", lambda: [])
+    monkeypatch.setattr(gc, "_account_and_pixel", lambda: ("act_1", None))
+    monkeypatch.setattr(gc, "_create_approval", lambda approval: approval)
+
+    gc.start("tg:1", storage_dir=tmp_path)
+    gc.handle_audience_choice("tg:1", "proven", storage_dir=tmp_path)
+    gc.handle_creative_toggle("tg:1", "cr_1", storage_dir=tmp_path)
+    out = gc.finalize("tg:1", storage_dir=tmp_path)
+
+    assert captured.get("creative_ids") == ["cr_1"]
+    assert captured.get("exclude_recent") is False  # 'proven' = include proven/recent
+    from backend.pending_context_store import get_pending
+    p = get_pending("tg:1", storage_dir=tmp_path)
+    assert p["kind"] == "agentic" and p["action"] == "create" and p["approvalId"] == "appr_x"
+    assert "approve" in out["text"].lower()
+    cbs = [b["callback_data"] for row in out["reply_markup"]["inline_keyboard"] for b in row]
+    assert {"agap:approve", "agap:reject"} <= set(cbs)

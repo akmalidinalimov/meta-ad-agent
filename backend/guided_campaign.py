@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .opportunity_finder import build_autonomous_campaign  # module-level so tests can monkeypatch
 from .pending_context_store import STORAGE_DIR, get_pending, set_pending
 
 GUIDED_KIND = "guided_create"
@@ -97,3 +98,85 @@ def handle_creative_toggle(operator_key: str, creative_id: str, *, storage_dir: 
 
 def creative_toggle_label(creative_id: str, selected: list[str]) -> str:
     return "✅ Selected" if creative_id in selected else "➕ Select"
+
+
+# ---------------------------------------------------------------------------
+# Seams — monkeypatchable in tests; do lazy imports to avoid side-effects at
+# module import time.
+# ---------------------------------------------------------------------------
+
+
+def _load_knowledge() -> dict[str, Any]:
+    from .knowledge_base import load_knowledge_base
+    return load_knowledge_base()
+
+
+def _load_playbooks() -> list[dict[str, Any]]:
+    from .playbook_store import load_playbooks
+    return load_playbooks()
+
+
+def _account_and_pixel() -> tuple[str | None, str | None]:
+    from .meta_client import get_meta_config
+    c = get_meta_config()
+    return (c.ad_account_id or None), (c.pixel_id or None)
+
+
+def _create_approval(approval: dict[str, Any]) -> dict[str, Any]:
+    from .approval_store import create_approval_request
+    return create_approval_request(approval)
+
+
+# ---------------------------------------------------------------------------
+# finalize — build approval + hand off to the existing agap approve path
+# ---------------------------------------------------------------------------
+
+
+def finalize(operator_key: str, *, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
+    """Build the campaign approval from the guided state and store a pending
+    pointer so the existing ``agap:approve`` / ``agap:reject`` callback path
+    in routers/telegram.py can execute it via ``execute_pending``."""
+    guided = _guided(operator_key, storage_dir)
+    if guided is None:
+        return {"text": "That setup expired. Say \"create a campaign\" to start over.", "expired": True}
+
+    choice = guided.get("audienceChoice")
+    account_id, pixel_id = _account_and_pixel()
+    approval = build_autonomous_campaign(
+        _load_knowledge(),
+        _load_playbooks(),
+        account_id=account_id,
+        n_audiences=3,
+        n_creatives=5,
+        pixel_id=pixel_id,
+        audience_override=guided.get("audienceSpec"),
+        creative_ids=list(guided.get("selectedCreatives") or []) or None,
+        exclude_recent=(choice != "proven"),
+    )
+    if approval is None:
+        return {"text": "I couldn't find usable audience data yet — try the autonomous build later."}
+
+    saved = _create_approval(approval)
+    after = saved.get("after") or {}
+    name = after.get("name") or "Test campaign"
+    set_pending(
+        operator_key,
+        {"kind": "agentic", "action": "create", "approvalId": saved["id"], "label": name},
+        storage_dir=storage_dir,
+    )
+    adsets = after.get("adsets") or []
+    audiences = ", ".join(
+        str(a.get("name", "")).replace(" - DRAFT", "") for a in adsets if a.get("name")
+    )
+    total = sum((float(a.get("daily_budget") or 0) / 100) for a in adsets)
+    return {
+        "text": (
+            f"Here's the proposed PAUSED campaign — <b>{name}</b>\n"
+            f"Audiences: {audiences or 'top picks'}\nBudget: ${total:,.0f}/day total\n\n"
+            "Nothing is created until you approve."
+        ),
+        "reply_markup": {"inline_keyboard": [[
+            {"text": "✅ Approve", "callback_data": "agap:approve"},
+            {"text": "✖️ Reject", "callback_data": "agap:reject"},
+        ]]},
+    }
