@@ -31,8 +31,10 @@ def _save(operator_key: str, guided: dict[str, Any], storage_dir: Path) -> None:
     set_pending(operator_key, {"kind": GUIDED_KIND, "guided": guided}, storage_dir=storage_dir)
 
 
-def start(operator_key: str, *, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
-    _save(operator_key, {"step": "audience", "selectedCreatives": [], "startedAt": _now_iso()}, storage_dir)
+def audience_question() -> dict[str, Any]:
+    """The static audience step-1 message + its three buttons. Separated from
+    start() so the router can re-surface it after the create-campaign tool opens
+    the flow (the model's text answer doesn't carry the keyboard)."""
     return {
         "text": "Let's build a PAUSED test campaign. How should I pick the <b>audience</b>?",
         "reply_markup": {"inline_keyboard": [
@@ -41,6 +43,11 @@ def start(operator_key: str, *, storage_dir: Path = STORAGE_DIR) -> dict[str, An
             [{"text": "✍️ I'll specify", "callback_data": "gcreate:aud:input"}],
         ]},
     }
+
+
+def start(operator_key: str, *, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
+    _save(operator_key, {"step": "audience", "selectedCreatives": [], "startedAt": _now_iso()}, storage_dir)
+    return audience_question()
 
 
 def handle_audience_choice(operator_key: str, choice: str, *, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:

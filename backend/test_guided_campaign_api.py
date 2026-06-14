@@ -139,6 +139,35 @@ def _callback(data, *, chat=42, user=42, username="owner"):
     }}
 
 
+def test_create_campaign_freetext_shows_audience_buttons(monkeypatch, tmp_path):
+    """Entry seam: typing 'create a campaign' makes the model call the tool, which
+    opens the guided flow (guided_create pending). The router must surface the
+    audience question WITH its three gcreate buttons — the model's text answer does
+    not carry the keyboard."""
+    client, sent, media, edits, storage = _bind(monkeypatch, tmp_path, _owner())
+
+    import backend.agentic_chat as agentic_chat
+    from backend import guided_campaign
+
+    async def fake_reply(message, *, operator_key):
+        guided_campaign.start(operator_key)  # what the create_test_campaign tool does
+        return "Let's set that up."
+
+    monkeypatch.setattr(agentic_chat, "agentic_reply", fake_reply, raising=False)
+
+    resp = client.post(
+        "/api/telegram/command",
+        json={"message": {"chat": {"id": 42}, "from": {"id": 42, "username": "owner"},
+                          "text": "create a test campaign"}},
+    )
+    assert resp.status_code == 200
+    cbs = []
+    for _text, kw in sent:
+        for row in (kw.get("reply_markup") or {}).get("inline_keyboard", []):
+            cbs += [b.get("callback_data") for b in row]
+    assert {"gcreate:aud:proven", "gcreate:aud:new", "gcreate:aud:input"} <= set(cbs)
+
+
 def test_audience_new_callback_renders_creatives(monkeypatch, tmp_path):
     client, sent, media, edits, storage = _bind(monkeypatch, tmp_path, _owner())
     _seed_guided(storage)

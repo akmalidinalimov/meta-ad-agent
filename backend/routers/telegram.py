@@ -1045,10 +1045,20 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         _send(command, "I hit an error answering that. Try again, or tap /menu.")
         return {"ok": False, "telegram": command, "message": "agentic error"}
 
-    # If the loop stashed a fresh agentic proposal (activate / big budget raise /
-    # create-test-campaign), attach inline Approve/Reject buttons so the operator can
-    # tap to approve — typing "approve" works too (handled on the next turn above).
+    # If the create-test-campaign tool opened the GUIDED flow, the model's text
+    # answer doesn't carry the audience keyboard — surface the audience question +
+    # buttons ourselves and stop (the model's generic answer would just duplicate).
     stashed = get_pending(op_key)
+    if stashed and stashed.get("kind") == "guided_create" and (stashed.get("guided") or {}).get("step") == "audience":
+        from .. import guided_campaign
+
+        question = guided_campaign.audience_question()
+        _send(command, question["text"], parse_mode="HTML", reply_markup=question["reply_markup"])
+        return {"ok": True, "telegram": command, "guided": "started"}
+
+    # If the loop stashed a fresh agentic proposal (activate / big budget raise /
+    # create-test-campaign autonomous), attach inline Approve/Reject buttons so the
+    # operator can tap to approve — typing "approve" works too (handled above).
     reply_markup = None
     if stashed and stashed.get("kind") == "agentic":
         reply_markup = {
