@@ -7,6 +7,7 @@ import { chartTooltipFormatter, formatAxisCurrency } from '../../../lib/chartCon
 import type { DailyAdMetric, FunnelSummary, TrendPoint } from '../../../types/marketing'
 import { ChartFrame } from '../shared/ChartFrame'
 import { AgentOffice } from './AgentOffice'
+import { LiveFunnelRates } from './LiveFunnelRates'
 
 // Spec §3.2: five stages; landing visits and buyers are intentionally omitted
 // (buyers return when purchase tracking is activated).
@@ -74,6 +75,8 @@ export function MonitorView({ metrics, trend, funnel }: MonitorViewProps) {
 
   return (
     <section className="monitor-screen">
+      <LiveFunnelRates />
+
       <div className="monitor-kpis" aria-label="Key metrics">
         {kpis.map((kpi) => (
           <div key={kpi.id} className="monitor-kpi">

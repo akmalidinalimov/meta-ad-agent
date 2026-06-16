@@ -432,3 +432,91 @@ def test_rank_audiences_prefers_live_telegram_start_signal():
 def test_rank_audiences_is_defensive_on_empty_analysis():
     assert rank_audiences_for_next_campaign({}, n=3) == []
     assert rank_audiences_for_next_campaign(None, exclude_labels=None, n=3) == []
+
+
+# --- Dashboard funnel rates (visit / lead / START) -------------------------
+
+def _funnel_row(clicks, link_clicks, lpv, leads, subs, campaign_id="campaign_1"):
+    return {
+        "campaign_id": campaign_id,
+        "spend": "10",
+        "impressions": "1000",
+        "reach": "900",
+        "clicks": str(clicks),
+        "actions": [
+            {"action_type": "link_click", "value": str(link_clicks)},
+            {"action_type": "landing_page_view", "value": str(lpv)},
+            {"action_type": "lead", "value": str(leads)},
+            {"action_type": "subscribe", "value": str(subs)},
+        ],
+    }
+
+
+def test_funnel_rates_clean_path():
+    totals = summarize_overall([_funnel_row(120, 100, 80, 20, 12)])
+    assert totals["linkClicks"] == 100
+    assert totals["landingPageViews"] == 80
+    assert totals["leads"] == 20
+    assert totals["subscribes"] == 12
+    assert round(totals["visitRate"], 1) == 80.0   # 80 / 100
+    assert round(totals["leadRate"], 1) == 25.0     # 20 / 80
+    assert round(totals["startRate"], 1) == 60.0    # 12 / 20
+
+
+def test_funnel_rates_cap_at_100_on_attribution_overshoot():
+    # Landing views can exceed link clicks across attribution windows; never > 100%.
+    totals = summarize_overall([_funnel_row(50, 40, 60, 10, 5)])
+    assert totals["visitRate"] == 100.0
+
+
+def test_funnel_rates_aggregate_across_days():
+    totals = summarize_overall([_funnel_row(60, 50, 40, 10, 6), _funnel_row(60, 50, 40, 10, 4)])
+    assert totals["landingPageViews"] == 80
+    assert totals["subscribes"] == 10
+    assert round(totals["leadRate"], 1) == 25.0
+    assert round(totals["startRate"], 1) == 50.0
+
+
+def test_funnel_rates_zero_division_is_safe():
+    empty = summarize_overall([])
+    assert empty["visitRate"] == 0 and empty["leadRate"] == 0 and empty["startRate"] == 0
+    no_lpv = summarize_overall([_funnel_row(10, 10, 0, 5, 0)])
+    assert no_lpv["leadRate"] == 0
+
+
+def test_funnel_rates_resolve_pixel_and_capi_aliases():
+    row = {
+        "clicks": "10",
+        "actions": [
+            {"action_type": "link_click", "value": "10"},
+            {"action_type": "landing_page_view", "value": "8"},
+            {"action_type": "offsite_conversion.fb_pixel_lead", "value": "4"},
+            {"action_type": "onsite_conversion.subscribe_total", "value": "3"},
+        ],
+    }
+    totals = summarize_overall([row])
+    assert totals["leads"] == 4
+    assert totals["subscribes"] == 3
+    assert round(totals["startRate"], 1) == 75.0
+
+
+def test_map_metric_row_does_not_double_count_meta_lead_aliases():
+    row = {
+        "date_start": "2026-05-20",
+        "campaign_id": "campaign_1",
+        "adset_id": "adset_1",
+        "ad_id": "ad_1",
+        "publisher_platform": "instagram",
+        "platform_position": "reels",
+        "spend": "9",
+        "impressions": "1000",
+        "clicks": "100",
+        "actions": [
+            {"action_type": "onsite_web_lead", "value": "4442"},
+            {"action_type": "lead", "value": "4442"},
+            {"action_type": "offsite_conversion.fb_pixel_lead", "value": "4442"},
+            {"action_type": "offsite_lead_add_20_s_calls", "value": "4442"},
+        ],
+    }
+    metric = map_metric_row(row, 0)
+    assert metric["leads"] == 4442
