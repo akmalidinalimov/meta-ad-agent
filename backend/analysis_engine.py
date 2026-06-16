@@ -22,6 +22,15 @@ ACTION_ALIASES = {
     "registration": {"complete_registration", "offsite_conversion.fb_pixel_complete_registration"},
     "link_click": {"link_click"},
     "landing_visit": {"landing_page_view", "omni_landing_page_view"},
+    # Telegram bot start / subscribe conversion. Like leads, Meta reports the same
+    # number under several overlapping pixel + CAPI action types, so action_count
+    # takes the max within the group rather than summing.
+    "subscribe": {
+        "subscribe",
+        "onsite_conversion.subscribe_total",
+        "offsite_conversion.fb_pixel_subscribe",
+        "offsite_conversion.subscribe",
+    },
     # Video attention action types (present only for video ads when requested by meta_client).
     "video_thruplay": {"video_thruplay_watched_actions", "thruplay"},
     "video_3s": {"video_view", "video_3_sec_watched_actions"},
@@ -513,6 +522,8 @@ def merge_metrics(target: dict[str, Any], row: dict[str, Any]) -> None:
     target["leads"] = target.get("leads", 0) + action_count(row, "lead") + action_count(row, "registration")
     target["purchases"] = target.get("purchases", 0) + action_count(row, "purchase")
     target["linkClicks"] = target.get("linkClicks", 0) + action_count(row, "link_click")
+    target["landingPageViews"] = target.get("landingPageViews", 0) + action_count(row, "landing_visit")
+    target["subscribes"] = target.get("subscribes", 0) + action_count(row, "subscribe")
     target["revenue"] = target.get("revenue", 0) + action_value(row, "purchase")
     # Video attention inputs. Read defensively — Meta only returns these when a video
     # ad exists and the fields were requested. Summed so hook/hold rates can be computed
@@ -538,6 +549,14 @@ def finalize_metrics(item: dict[str, Any]) -> None:
     item["aov"] = ratio(item.get("revenue", 0), item.get("purchases", 0))
     item["leadRateFromClick"] = ratio(item.get("leads", 0), item.get("clicks", 0)) * 100
     item["purchaseRateFromClick"] = ratio(item.get("purchases", 0), item.get("clicks", 0)) * 100
+    # Funnel rates surfaced on the dashboard. Capped at 100% so Meta's cross-window
+    # attribution overshoot (e.g. landing views > link clicks) can't render an
+    # impossible >100% rate. Visit rate measures against link clicks, falling back
+    # to all clicks only when link clicks are absent.
+    visit_base = item.get("linkClicks", 0) or item.get("clicks", 0)
+    item["visitRate"] = min(100.0, ratio(item.get("landingPageViews", 0), visit_base) * 100)
+    item["leadRate"] = min(100.0, ratio(item.get("leads", 0), item.get("landingPageViews", 0)) * 100)
+    item["startRate"] = min(100.0, ratio(item.get("subscribes", 0), item.get("leads", 0)) * 100)
     finalize_buyer_economics(item)
     # A lead rate above 100% is a structural double-count signal, not a great segment.
     item["leadDoubleCountRisk"] = item["leadRateFromClick"] > 100
@@ -609,6 +628,8 @@ def empty_metrics() -> dict[str, float]:
         "leads": 0,
         "purchases": 0,
         "linkClicks": 0,
+        "landingPageViews": 0,
+        "subscribes": 0,
         "revenue": 0,
     }
 

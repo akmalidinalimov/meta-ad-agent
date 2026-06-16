@@ -2659,6 +2659,42 @@
   align-items: start;
 }
 
+/* Live funnel rates — full-width strip across the top of the Monitor screen. */
+.monitor-funnel-rates { grid-column: 1 / -1; }
+.monitor-funnel-rates > h5 {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+.funnel-rate-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.funnel-rate-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.funnel-rate-card.live { border-color: var(--accent-drift); }
+.funnel-rate-card .frc-icon { color: var(--text-muted); margin-top: 2px; flex-shrink: 0; }
+.funnel-rate-card.live .frc-icon { color: var(--accent); }
+.funnel-rate-card p {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0;
+}
+.funnel-rate-card strong { display: block; font-size: 20px; font-weight: var(--weight-strong); margin: 2px 0; }
+.funnel-rate-card small { font-size: 11px; color: var(--text-muted); }
+
 .monitor-kpis { display: flex; flex-direction: column; gap: 14px; }
 .monitor-kpi {
   background: var(--surface);

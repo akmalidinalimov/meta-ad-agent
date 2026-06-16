@@ -176,6 +176,14 @@ _AUTH_PUBLIC_PATHS = {
     "/api/auth/session",
     "/api/telegram/webapp-auth",
     "/api/telegram/command",
+    # ChatPlace bot webhook — authenticated by CHATPLACE_WEBHOOK_SECRET
+    # (x-chatplace-secret header / `secret` body field), not a dashboard session.
+    "/api/chatplace/events",
+    # Landing-page funnel beacon — posted from end-user browsers, so it cannot
+    # carry a dashboard session. It only appends anonymous funnel analytics events.
+    # NOTE: GET /api/funnel/rates is deliberately NOT here — it reads Meta data for
+    # the authenticated dashboard and stays behind the session guard.
+    "/api/funnel/events",
 }
 
 
