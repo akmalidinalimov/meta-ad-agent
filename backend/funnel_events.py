@@ -105,17 +105,16 @@ def load_funnel_events(*, storage_dir: Path = STORAGE_DIR) -> list[dict[str, Any
     return events
 
 
-def count_bot_starts(*, since_iso: str | None = None, storage_dir: Path = STORAGE_DIR) -> int:
-    """Unique Telegram bot starts (deduplicated by Telegram user, falling back to
-    visitor id). Optionally limited to events received on/after ``since_iso``.
+def count_event_users(event_name: str, *, since_iso: str | None = None, storage_dir: Path = STORAGE_DIR) -> int:
+    """Unique users who fired ``event_name``, deduplicated by Telegram user (falling
+    back to visitor id). Optionally limited to events received on/after ``since_iso``.
 
-    This is the numerator for the dashboard START rate. Deduplicating by user means
-    a person who triggers the START automation more than once is counted once, so the
-    START rate can never be inflated by repeat starts.
+    Deduplicating by user means a person who repeats the same event is counted once,
+    so any rate built on these counts can't be inflated by repeats.
     """
     users: set[str] = set()
     for event in load_funnel_events(storage_dir=storage_dir):
-        if event.get("eventName") != "bot_start":
+        if event.get("eventName") != event_name:
             continue
         if since_iso and str(event.get("receivedAt") or "") < since_iso:
             continue
@@ -123,6 +122,42 @@ def count_bot_starts(*, since_iso: str | None = None, storage_dir: Path = STORAG
         if identity:
             users.add(str(identity))
     return len(users)
+
+
+def count_bot_starts(*, since_iso: str | None = None, storage_dir: Path = STORAGE_DIR) -> int:
+    """Unique Telegram bot starts — the START-rate numerator. See count_event_users."""
+    return count_event_users("bot_start", since_iso=since_iso, storage_dir=storage_dir)
+
+
+def select_start_rate(*, bot_starts: int, subscribes: int, link_clicks: int, leads: int) -> dict[str, Any]:
+    """Compute the dashboard START rate from the cleanest available signals, capped 100%.
+
+    Numerator: first-party deduped bot starts; falls back to Meta 'subscribe'
+    conversions only when there are no relay events.
+    Denominator: first-party Telegram-button clicks (``telegram_link_click``) when
+    available — the operator's true "of those who clicked to Telegram, how many
+    started" — falling back to Meta 'leads' while the landing-page tracker isn't
+    firing yet. This keeps START rate independent of lead rate whenever the
+    first-party signal exists, and degrades honestly otherwise.
+
+    Returns {rate, numerator, denominator, numeratorSource, denominatorSource}.
+    """
+    numerator = bot_starts if bot_starts else subscribes
+    numerator_source = "telegram_relay" if bot_starts else ("meta_subscribe" if subscribes else "none")
+    if link_clicks:
+        denominator, denominator_source = link_clicks, "telegram_link_click"
+    elif leads:
+        denominator, denominator_source = leads, "meta_leads"
+    else:
+        denominator, denominator_source = 0, "none"
+    rate = min(100.0, (numerator / denominator * 100) if denominator else 0.0)
+    return {
+        "rate": round(rate, 1),
+        "numerator": numerator,
+        "denominator": denominator,
+        "numeratorSource": numerator_source,
+        "denominatorSource": denominator_source,
+    }
 
 
 def telegram_starts_by_campaign_date(*, storage_dir: Path = STORAGE_DIR) -> dict[tuple[str, str], int]:

@@ -10,9 +10,17 @@ interface FunnelRatesPayload {
   ok: boolean
   hasData?: boolean
   days?: number
-  counts?: { linkClicks: number; landingPageViews: number; leads: number; botStarts: number; subscribes: number }
+  counts?: {
+    linkClicks: number
+    landingPageViews: number
+    leads: number
+    botStarts: number
+    telegramLinkClicks?: number
+    subscribes: number
+  }
   rates?: { visitRate: number; leadRate: number; startRate: number }
   startSource?: string
+  startDenominatorSource?: string
   error?: string
 }
 
@@ -69,9 +77,11 @@ export function LiveFunnelRates() {
       label: 'START rate',
       Icon: Bot,
       value: rates ? formatRate(rates.startRate) : loading ? '…' : '—',
-      helper: live
-        ? `${num.format(counts?.botStarts ?? 0)} bot starts / ${num.format(counts?.leads ?? 0)} leads`
-        : 'Telegram bot starts ÷ leads',
+      helper: !live
+        ? 'Telegram bot starts ÷ button clicks'
+        : payload?.startDenominatorSource === 'telegram_link_click'
+          ? `${num.format(counts?.botStarts ?? 0)} bot starts / ${num.format(counts?.telegramLinkClicks ?? 0)} button clicks`
+          : `${num.format(counts?.botStarts ?? 0)} bot starts / ${num.format(counts?.leads ?? 0)} leads · add landing tracker for exact rate`,
     },
   ]
 

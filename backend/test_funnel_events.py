@@ -2,10 +2,55 @@ from datetime import datetime, timezone
 
 from backend.funnel_events import (
     build_funnel_summary,
+    count_bot_starts,
+    count_event_users,
     normalize_funnel_event,
     save_funnel_event,
+    select_start_rate,
     telegram_starts_by_campaign_date,
 )
+
+
+def test_select_start_rate_prefers_first_party_button_clicks():
+    # telegram_link_click present -> denominator is the first-party button clicks,
+    # NOT Meta leads, and the rate is bot_starts / link_clicks.
+    out = select_start_rate(bot_starts=12, subscribes=0, link_clicks=40, leads=100)
+    assert out["denominatorSource"] == "telegram_link_click"
+    assert out["denominator"] == 40
+    assert out["numeratorSource"] == "telegram_relay"
+    assert out["rate"] == 30.0  # 12 / 40
+
+
+def test_select_start_rate_falls_back_to_leads_without_tracker():
+    # No telegram_link_click yet -> fall back to Meta leads, clearly labelled.
+    out = select_start_rate(bot_starts=12, subscribes=0, link_clicks=0, leads=20)
+    assert out["denominatorSource"] == "meta_leads"
+    assert out["rate"] == 60.0  # 12 / 20
+
+
+def test_select_start_rate_subscribe_numerator_fallback_and_caps():
+    # No relay bot starts -> Meta subscribe numerator; ratio over 100 is capped.
+    out = select_start_rate(bot_starts=0, subscribes=50, link_clicks=10, leads=0)
+    assert out["numeratorSource"] == "meta_subscribe"
+    assert out["rate"] == 100.0  # 50/10 -> capped
+
+
+def test_select_start_rate_zero_denominator_is_safe():
+    out = select_start_rate(bot_starts=5, subscribes=0, link_clicks=0, leads=0)
+    assert out["rate"] == 0.0 and out["denominatorSource"] == "none"
+
+
+def test_count_event_users_dedupes_by_identity(tmp_path):
+    storage = tmp_path / "storage"
+    for ev in [
+        {"event_name": "telegram_link_click", "visitor_id": "v_1"},
+        {"event_name": "telegram_link_click", "visitor_id": "v_1"},  # repeat -> once
+        {"event_name": "telegram_link_click", "visitor_id": "v_2"},
+        {"event_name": "bot_start", "telegram_user_id": "tg_1"},
+    ]:
+        save_funnel_event(ev, storage_dir=storage)
+    assert count_event_users("telegram_link_click", storage_dir=storage) == 2
+    assert count_bot_starts(storage_dir=storage) == 1
 
 
 def test_normalize_funnel_event_preserves_attribution_fields():
