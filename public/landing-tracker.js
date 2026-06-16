@@ -88,8 +88,15 @@
     if (!href) return
     try {
       var url = new URL(href, window.location.href)
-      url.searchParams.set('start', visitorId.slice(0, 64))
-      anchor.setAttribute('href', url.toString())
+      // Preserve an existing ?start payload — it is used for bot/audience routing
+      // (e.g. ChatPlace ?start=vsl_ai picks the VSL funnel). Only inject the
+      // visitor token when the link carries NO start of its own, and never when
+      // preserveTelegramStart is set. The telegram_link_click count (the START-rate
+      // denominator) does not depend on the token, so routing is never sacrificed.
+      if (!config.preserveTelegramStart && !url.searchParams.get('start')) {
+        url.searchParams.set('start', visitorId.slice(0, 64))
+        anchor.setAttribute('href', url.toString())
+      }
     } catch (_) {}
   }
 
