@@ -11,7 +11,13 @@ from fastapi import APIRouter, HTTPException, Request
 from ..analysis_engine import summarize_overall, valid_rows
 from ..api_models import FunnelEventRequest
 from ..chatplace_events import normalize_chatplace_event
-from ..funnel_events import build_funnel_summary, count_bot_starts, save_funnel_event
+from ..funnel_events import (
+    build_funnel_summary,
+    count_bot_starts,
+    count_event_users,
+    save_funnel_event,
+    select_start_rate,
+)
 from ..meta_client import get_meta_config
 from ..meta_sync import safe_chunked_insights
 
@@ -50,18 +56,21 @@ def funnel_event_summary() -> dict[str, Any]:
 
 @router.get("/api/funnel/rates")
 async def funnel_rates(campaign_id: str | None = None, days: int = 30) -> dict[str, Any]:
-    """Live ad-funnel rates straight from Meta insights.
+    """Live ad-funnel rates.
 
-    visitRate = landing page views / link clicks
-    leadRate  = leads / landing page views
-    startRate = bot starts (Telegram relay) or Subscribe / leads
+    visitRate = landing page views / link clicks            (Meta; capped 100%)
+    leadRate  = leads / landing page views                  (Meta; capped 100%)
+    startRate = bot starts / Telegram-button clicks         (first-party; see below)
 
-    All three are capped at 100% in analysis_engine.finalize_metrics so Meta's
-    cross-window attribution can never produce an impossible >100% rate. The START
-    numerator prefers the first-party Telegram bot-start relay (deduplicated by
-    Telegram user); Meta CAPI Subscribe is a fallback only when the relay has no
-    data yet, so a visitor is never double-counted between the pixel Lead and the
-    bot start. Behind the normal dashboard auth (NOT in the public ingest set).
+    visitRate and leadRate come straight from analysis_engine (Meta data, capped
+    in finalize_metrics). startRate is computed here by select_start_rate and is
+    INDEPENDENT of leadRate: its numerator is the deduped first-party Telegram
+    bot-start relay (Meta 'subscribe' only as a fallback), and its denominator
+    prefers the deduped first-party telegram_link_click ("clicked the button to
+    Telegram") — falling back to Meta 'leads' only while the landing-page tracker
+    isn't firing. ``startDenominatorSource`` tells the UI which one was used so a
+    proxy denominator is never mistaken for the exact button-click rate. Behind
+    the normal dashboard auth (NOT in the public ingest set).
     """
     config = get_meta_config()
     if not config.is_configured:
@@ -81,10 +90,11 @@ async def funnel_rates(campaign_id: str | None = None, days: int = 30) -> dict[s
 
     since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     bot_starts = count_bot_starts(since_iso=since_iso)
+    link_clicks = count_event_users("telegram_link_click", since_iso=since_iso)
     subscribes = totals.get("subscribes", 0)
-    start_numerator = bot_starts if bot_starts else subscribes
-    start_source = "telegram_relay" if bot_starts else ("meta_capi" if subscribes else "none")
-    start_rate = min(100.0, (start_numerator / leads * 100) if leads else 0.0)
+    start = select_start_rate(
+        bot_starts=bot_starts, subscribes=subscribes, link_clicks=link_clicks, leads=leads
+    )
 
     return {
         "ok": True,
@@ -95,14 +105,16 @@ async def funnel_rates(campaign_id: str | None = None, days: int = 30) -> dict[s
             "landingPageViews": totals.get("landingPageViews", 0),
             "leads": leads,
             "botStarts": bot_starts,
+            "telegramLinkClicks": link_clicks,
             "subscribes": subscribes,
         },
         "rates": {
             "visitRate": round(totals.get("visitRate", 0), 1),
             "leadRate": round(totals.get("leadRate", 0), 1),
-            "startRate": round(start_rate, 1),
+            "startRate": start["rate"],
         },
-        "startSource": start_source,
+        "startSource": start["numeratorSource"],
+        "startDenominatorSource": start["denominatorSource"],
         "hasData": bool(rows),
         "syncErrors": sync_errors,
     }
