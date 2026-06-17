@@ -87,3 +87,22 @@ def test_chatplace_event_can_be_saved_as_canonical_funnel_event(tmp_path):
     assert summary["eventsByName"]["bot_start"] == 1
     assert summary["uniqueVisitors"] == 1
     assert summary["uniqueTelegramUsers"] == 1
+
+
+def test_chatplace_event_captures_aud_and_phone(tmp_path):
+    event = normalize_chatplace_event({
+        "event_name": "bot_start",
+        "telegram_user_id": "tg_99",
+        "aud": "business",
+        "username": "buyer_uz",
+        "phone": "+998901112233",
+    })
+
+    assert event["aud"] == "business"
+    assert event["phone"] == "+998901112233"
+
+    saved = save_funnel_event(event, storage_dir=tmp_path / "storage")
+
+    assert saved["aud"] == "business"
+    assert saved["phone"] == "+998901112233"
+    assert saved["telegramUsername"] == "buyer_uz"

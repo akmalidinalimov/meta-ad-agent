@@ -47,6 +47,8 @@ FIELD_MAP = {
     "fbclid": "fbclid",
     "value_usd": "valueUsd",
     "valueUsd": "valueUsd",
+    "aud": "aud",
+    "phone": "phone",
 }
 
 CANONICAL_EVENTS = {

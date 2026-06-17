@@ -61,6 +61,8 @@ FIELD_PATHS = {
     "utm_content": ["utm_content", "utmContent", "variables.utm_content", "variables.utmContent"],
     "utm_term": ["utm_term", "utmTerm", "variables.utm_term", "variables.utmTerm"],
     "fbclid": ["fbclid", "variables.fbclid"],
+    "aud": ["aud", "audience", "variables.aud", "variables.audience"],
+    "phone": ["phone", "Phone", "client.phone", "variables.phone", "variables.Phone"],
 }
 
 
