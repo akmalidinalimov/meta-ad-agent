@@ -23,13 +23,21 @@ from .approval_store import (
     request_changes,
     update_approval_request,
 )
-from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, fetch_bitrix_statuses, get_bitrix_config
+from .bitrix_client import (
+    HttpBitrixTransport,
+    fetch_bitrix_deals,
+    fetch_bitrix_leads,
+    fetch_bitrix_statuses,
+    get_bitrix_config,
+)
+from .crm_funnel import build_crm_funnel
 from .campaign_watch import build_campaign_watch
 from .campaign_specific_analysis import campaign_specific_answer
 from .chatplace_events import normalize_chatplace_event
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
 from .draft_campaign_proposal import build_draft_campaign_proposal
-from .funnel_events import build_funnel_summary, count_bot_starts, save_funnel_event
+from .funnel_events import STORAGE_DIR as FUNNEL_EVENTS_STORAGE_DIR
+from .funnel_events import build_funnel_summary, count_bot_starts, load_funnel_events, save_funnel_event
 from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
 from .meta_execution import (
@@ -823,6 +831,60 @@ def crm_leads() -> dict[str, Any]:
 
 def build_bitrix_transport(config: Any) -> Any:
     return HttpBitrixTransport(config)
+
+
+_CRM_FUNNEL_CACHE: dict[str, Any] = {}
+_CRM_FUNNEL_TTL_SECONDS = 90
+
+
+@app.get("/api/crm/funnel")
+async def crm_funnel(days: int = 30, entity: str = "lead") -> dict[str, Any]:
+    """Per-audience x per-CRM-stage funnel, read-only from Bitrix24, joined to bot
+    starts by phone. Additive sibling of /api/crm/bitrix/*; never writes to Bitrix."""
+    config = get_bitrix_config()
+    if not config.is_configured:
+        return {
+            "ok": False,
+            "error": "Bitrix24 webhook URL is not configured.",
+            "audiences": {},
+            "stages": [],
+            "stageLabels": {},
+            "paidStageIds": [],
+            "matchRate": 0.0,
+        }
+
+    cache_key = f"{entity}:{days}"
+    now = datetime.now(timezone.utc)
+    cached = _CRM_FUNNEL_CACHE.get(cache_key)
+    if cached and (now - cached["at"]).total_seconds() < _CRM_FUNNEL_TTL_SECONDS:
+        return cached["payload"]
+
+    transport = build_bitrix_transport(config)
+    try:
+        if entity == "deal":
+            records = await fetch_bitrix_deals(transport=transport, days=days, limit=None)
+            stages_raw = await fetch_bitrix_statuses(transport=transport, entity_id="DEAL_STAGE")
+        else:
+            records = await fetch_bitrix_leads(transport=transport, days=days, limit=None)
+            stages_raw = await fetch_bitrix_statuses(transport=transport, entity_id="STATUS")
+    except Exception as exc:  # noqa: BLE001 - surface a sanitized 502, never leak internals
+        raise HTTPException(status_code=502, detail=f"Bitrix24 funnel read failed: {exc}") from exc
+
+    stages = [{"id": row["statusId"], "name": row["name"]} for row in stages_raw]
+    events = load_funnel_events(storage_dir=FUNNEL_EVENTS_STORAGE_DIR)
+    paid_ids = [item.strip() for item in os.getenv("BITRIX_PAID_STATUS_IDS", "").split(",") if item.strip()]
+    payload = build_crm_funnel(
+        records,
+        stages=stages,
+        events=events,
+        paid_status_ids=paid_ids or None,
+        days=days,
+        refreshed_at=now.isoformat(),
+    )
+    payload["ok"] = True
+    payload["entity"] = entity
+    _CRM_FUNNEL_CACHE[cache_key] = {"at": now, "payload": payload}
+    return payload
 
 
 @app.get("/api/tasks")
