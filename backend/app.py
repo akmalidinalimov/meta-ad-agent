@@ -182,8 +182,6 @@ _AUTH_PUBLIC_PATHS = {
     "/api/chatplace/events",
     # Landing-page funnel beacon — posted from end-user browsers, so it cannot
     # carry a dashboard session. It only appends anonymous funnel analytics events.
-    # NOTE: GET /api/funnel/rates is deliberately NOT here — it reads Meta data for
-    # the authenticated dashboard and stays behind the session guard.
     "/api/funnel/events",
 }
 
