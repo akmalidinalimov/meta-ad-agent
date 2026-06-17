@@ -5,8 +5,9 @@ just-created / just-running campaign shows up immediately and selecting it retur
 fresh KPIs + funnel rates. Both routes sit behind the dashboard session guard (they
 are deliberately NOT in app._AUTH_PUBLIC_PATHS).
 
-- GET /api/campaigns/live   — live campaigns, optionally limited to those CREATED in
-  the last N days; `force=true` bypasses the 60s live cache (the Refresh button).
+- GET /api/campaigns/live   — live campaigns (fetched fresh each call), optionally
+  limited to those CREATED in the last N days. `force` is accepted (the Refresh button
+  sends it) but the list is always fetched live, so it is effectively a no-op.
 - GET /api/campaigns/kpis   — live KPI bundle (spend/leads/CPL/CTR + Visit/Lead/START
   rates) for one campaign, or the whole account when campaignId is omitted/"all".
 """

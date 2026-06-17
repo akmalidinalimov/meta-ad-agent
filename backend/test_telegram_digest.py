@@ -87,7 +87,7 @@ def test_campaign_funnel_uses_subscribes_over_leads_and_caps():
     assert _campaign_funnel({"subscribes": 30, "leads": 10})["rates"]["telegramStartRate"] == 100.0
 
 
-def _patch_digest_sources(monkeypatch, *, selection, live_summary, has_rows=True):
+def _patch_digest_sources(monkeypatch, *, selection, live_summary, has_rows=True, available=True):
     """Patch the digest's data sources. _live_meta_summary is patched directly so the
     tests assert the compose WIRING (scope label + which summary feeds the table) without
     hitting Meta."""
@@ -97,7 +97,7 @@ def _patch_digest_sources(monkeypatch, *, selection, live_summary, has_rows=True
     import backend.targets_store as targets_store
 
     monkeypatch.setattr(kpi_store, "load_kpi_digest_campaign", lambda **kw: selection)
-    monkeypatch.setattr(telegram_digest, "_live_meta_summary", lambda campaign_id, days=90: (live_summary, has_rows))
+    monkeypatch.setattr(telegram_digest, "_live_meta_summary", lambda campaign_id, days=90: (live_summary, has_rows, available))
     monkeypatch.setattr(funnel_events, "build_funnel_summary", lambda **kw: {"uniqueTelegramUsers": 999, "rates": {"telegramStartRate": 99}})
     monkeypatch.setattr(targets_store, "load_targets", lambda **kw: {})
     monkeypatch.setattr(approval_store, "list_approval_requests", lambda **kw: [])
@@ -139,3 +139,18 @@ def test_compose_pinned_campaign_with_no_delivery_notes_it(monkeypatch):
     assert "no delivery in this window yet" in text
     assert "DA - SHAHLOAI - VSL - 16.06.2026" in text
     assert "$0.00" in text
+
+
+def test_compose_flags_unavailable_when_live_fetch_fails(monkeypatch):
+    # A Meta fetch failure must NOT be mislabelled as "no delivery" — it says so.
+    _patch_digest_sources(
+        monkeypatch,
+        selection={"campaignId": "c1", "campaignName": "DA - SHAHLOAI - VSL - 16.06.2026"},
+        live_summary={},
+        has_rows=False,
+        available=False,
+    )
+    text = compose_kpi_digest_text()
+    assert "live data unavailable" in text
+    assert "no delivery in this window yet" not in text
+    assert "DA - SHAHLOAI - VSL - 16.06.2026" in text

@@ -122,16 +122,17 @@ def format_kpi_digest(
 DIGEST_WINDOW_DAYS = 90
 
 
-def _live_meta_summary(campaign_id: str | None, days: int = DIGEST_WINDOW_DAYS) -> tuple[dict[str, Any], bool]:
+def _live_meta_summary(campaign_id: str | None, days: int = DIGEST_WINDOW_DAYS) -> tuple[dict[str, Any], bool, bool]:
     """LIVE Meta KPI summary (summarize_overall shape) for one campaign or the whole
     account, fetched fresh from Meta — NOT the stale synced knowledge base. Returns
-    (summary, hasData).
+    (summary, hasData, available). ``available`` is False when Meta is not configured or
+    the live fetch failed, so the digest can say "live data unavailable" instead of
+    mislabelling a fetch failure as "no delivery yet".
 
     Runs the async insight fetch via asyncio.run, which is SAFE here because the digest
     is composed either from a sync Telegram handler (no running event loop) or from the
-    monitoring loop's ``asyncio.to_thread`` worker (a thread with no running loop) —
-    mirroring meta_live._live_account_sync. A live-fetch failure degrades to an empty
-    summary rather than breaking the digest.
+    monitoring loop's ``asyncio.to_thread`` worker (a thread with no running loop) — the
+    same pattern routers/telegram._live_account_sync uses.
     """
     import asyncio
 
@@ -141,15 +142,21 @@ def _live_meta_summary(campaign_id: str | None, days: int = DIGEST_WINDOW_DAYS) 
 
     config = get_meta_config()
     if not config.is_configured:
-        return {}, False
+        return {}, False, False
     try:
         raw = asyncio.run(safe_chunked_insights(config, "kpi_digest", None, days=days))
     except Exception:  # noqa: BLE001 - never let a live-fetch failure break the digest
-        return {}, False
-    rows = valid_rows(raw)
-    if campaign_id:
-        rows = [row for row in rows if str(row.get("campaign_id")) == str(campaign_id)]
-    return summarize_overall(rows), bool(rows)
+        return {}, False, False
+    account_rows = valid_rows(raw)
+    had_errors = any(isinstance(row, dict) and row.get("sync_error") for row in raw)
+    if not account_rows and had_errors:
+        return {}, False, False  # Meta reachable but every window errored — not "no delivery"
+    rows = (
+        [row for row in account_rows if str(row.get("campaign_id")) == str(campaign_id)]
+        if campaign_id
+        else account_rows
+    )
+    return summarize_overall(rows), bool(rows), True
 
 
 def _campaign_funnel(summary: dict[str, Any]) -> dict[str, Any]:
@@ -187,17 +194,23 @@ def compose_kpi_digest_text() -> str:
     selection = load_kpi_digest_campaign()
 
     if selection:
-        summary, has_rows = _live_meta_summary(selection["campaignId"])
+        summary, has_rows, available = _live_meta_summary(selection["campaignId"])
         funnel = _campaign_funnel(summary)
         name = selection.get("campaignName") or selection["campaignId"]
-        note = "" if has_rows else " · no delivery in this window yet"
-        scope_label = f"campaign: {name}{note}"
+        scope_label = f"campaign: {name}"
+        if not available:
+            state = "⚠️ live data unavailable (Meta fetch failed)"
+        elif not has_rows:
+            state = "no delivery in this window yet"
+        else:
+            state = "live"
     else:
-        summary, _ = _live_meta_summary(None)
+        summary, _has_rows, available = _live_meta_summary(None)
         funnel = build_funnel_summary()
         scope_label = "account-wide"
+        state = "live" if available else "⚠️ live data unavailable (Meta fetch failed)"
 
-    subtitle = f"{scope_label} · live · last {DIGEST_WINDOW_DAYS} days"
+    subtitle = f"{scope_label} · {state} · last {DIGEST_WINDOW_DAYS} days"
     return format_kpi_digest(summary, funnel, pending_approvals=pending, subtitle=subtitle, targets=targets)
 
 

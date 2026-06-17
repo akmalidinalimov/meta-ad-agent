@@ -11,8 +11,6 @@ from typing import Any
 
 from .meta_client import MetaApiError, get_insights
 
-SYNC_END_DATE = date.today()
-
 
 def normalize_sync_days(days: int) -> int:
     if days <= 0:
@@ -45,11 +43,17 @@ async def safe_chunked_insights(
     breakdowns: list[str] | None,
     *,
     days: int = 90,
+    end_date: date | None = None,
 ) -> list[dict[str, Any]]:
+    # Resolve "today" per call (NOT once at import) so a long-lived server's "last N days"
+    # window keeps advancing. Return rows AND any per-chunk error records together, so a
+    # PARTIAL failure (some windows fetched, some failed) still surfaces its sync_error
+    # rows to callers — which valid_rows() out of the metrics but report as warnings —
+    # instead of silently under-counting whole weeks.
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
-    for current, chunk_end in build_sync_windows(days=days, end_date=SYNC_END_DATE):
+    for current, chunk_end in build_sync_windows(days=days, end_date=end_date or date.today()):
         try:
             rows.extend(await get_insights(config, breakdowns=breakdowns, since=current.isoformat(), until=chunk_end.isoformat()))
         except MetaApiError as error:
@@ -60,7 +64,7 @@ async def safe_chunked_insights(
                 "until": chunk_end.isoformat(),
             })
 
-    return rows or errors
+    return rows + errors
 
 
 async def safe_list(name: str, awaitable: Any) -> list[dict[str, Any]]:
