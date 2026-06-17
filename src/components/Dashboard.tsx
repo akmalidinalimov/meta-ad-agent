@@ -22,12 +22,7 @@ import {
   getCampaignOptions,
   getDateWindow,
 } from '../lib/analytics'
-import {
-  getDashboardAnchorDate,
-  labelPlacement,
-  labelRawSetting,
-  shortCampaignLabel,
-} from '../lib/format'
+import { getDashboardAnchorDate, labelRawSetting } from '../lib/format'
 import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
 import type { DashboardData, DashboardFilters } from '../types/marketing'
 
@@ -71,13 +66,18 @@ interface DashboardProps {
 }
 
 const defaultFilters: DashboardFilters = {
-  dateRange: '90d',
+  dateRange: '30d',
   campaignIds: ['all'],
   creativeFormat: 'all',
-  placement: 'all',
   audience: 'all',
   funnelStage: 'all',
-  objective: 'all',
+}
+
+// Map the selected range to a day count for the live funnel-rate cards, which query
+// Meta directly — so the date control drives those headline rates too, not just the
+// synced KPI rail/trend below them.
+function rangeToDays(range: DashboardFilters['dateRange']): number {
+  return range === '7d' ? 7 : range === '14d' ? 14 : 30
 }
 
 export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }: DashboardProps) {
@@ -101,8 +101,6 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
         end: window.end,
         campaignIds: filters.campaignIds,
         creativeFormat: filters.creativeFormat,
-        placement: filters.placement,
-        objective: filters.objective,
       },
     })
   }, [data, filters])
@@ -189,7 +187,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
           filter never hides Settings (reconnect) or Rankings. */}
       {activeView === 'overview' &&
         (hasData ? (
-          <MonitorView metrics={filteredMetrics} trend={trend} funnel={funnel} />
+          <MonitorView metrics={filteredMetrics} trend={trend} funnel={funnel} days={rangeToDays(filters.dateRange)} />
         ) : (
           <EmptyState onReset={() => setFilters(defaultFilters)} />
         ))}
@@ -210,13 +208,12 @@ function Filters({
 }) {
   const update = <K extends keyof DashboardFilters>(key: K, value: DashboardFilters[K]) => {
     const nextFilters = { ...filters, [key]: value }
-    if (key === 'dateRange' || key === 'objective') {
+    if (key === 'dateRange') {
       const dateWindow = getDateWindow(nextFilters.dateRange, getDashboardAnchorDate(data))
       const validCampaignIds = new Set(
         getCampaignOptions({
           campaigns: data.campaigns,
           window: dateWindow,
-          objective: nextFilters.objective,
         }).map((campaign) => campaign.id),
       )
       const selectedCampaignIds = nextFilters.campaignIds.filter((campaignId) => campaignId !== 'all' && validCampaignIds.has(campaignId))
@@ -261,32 +258,9 @@ function Filters({
   }
 
   const optionWindow = getDateWindow(filters.dateRange, getDashboardAnchorDate(data))
-  // Placement options reflect the active date/campaign/objective context, but NOT the
-  // placement selection itself (otherwise picking one placement would hide the others).
-  const placementScopedMetrics = filterMetricsForDashboard({
-    metrics: data.metrics,
-    campaigns: data.campaigns,
-    ads: data.ads,
-    creatives: data.creatives,
-    filters: {
-      start: optionWindow.start,
-      end: optionWindow.end,
-      campaignIds: filters.campaignIds,
-      creativeFormat: 'all',
-      placement: 'all',
-      objective: filters.objective,
-    },
-  })
-  const placements = Array.from(
-    new Set([
-      ...placementScopedMetrics.map((metric) => metric.placement),
-      ...(filters.placement !== 'all' ? [filters.placement] : []),
-    ]),
-  )
   const campaignOptions = getCampaignOptions({
     campaigns: data.campaigns,
     window: optionWindow,
-    objective: filters.objective,
   })
 
   return (
@@ -301,8 +275,18 @@ function Filters({
           Date range
           <select value={filters.dateRange} onChange={(event) => update('dateRange', event.target.value as DashboardFilters['dateRange'])}>
             <option value="7d">Last 7 days</option>
+            <option value="14d">Last 14 days</option>
             <option value="30d">Last 30 days</option>
-            <option value="90d">Last 90 days</option>
+          </select>
+        </label>
+        <label>
+          Creative type
+          <select value={filters.creativeFormat} onChange={(event) => update('creativeFormat', event.target.value as DashboardFilters['creativeFormat'])}>
+            <option value="all">All types</option>
+            <option value="video">Video</option>
+            <option value="image">Image</option>
+            <option value="gif">GIF</option>
+            <option value="carousel">Carousel</option>
           </select>
         </label>
         <label className="campaign-filter-field">
@@ -317,13 +301,13 @@ function Filters({
           </div>
           <div className="campaign-chip-list">
             <button
-            type="button"
-            className={isCampaignSelected('all') ? 'active' : ''}
-            onClick={() => toggleCampaign('all')}
+              type="button"
+              className={isCampaignSelected('all') ? 'active' : ''}
+              onClick={() => toggleCampaign('all')}
             >
-              All
+              All campaigns
             </button>
-            {campaignOptions.slice(0, 8).map((campaign) => (
+            {campaignOptions.slice(0, 12).map((campaign) => (
               <button
                 type="button"
                 className={isCampaignSelected(campaign.id) ? 'active' : ''}
@@ -331,7 +315,7 @@ function Filters({
                 key={campaign.id}
                 title={campaign.name}
               >
-                {shortCampaignLabel(campaign.name)}
+                {campaign.name}
               </button>
             ))}
           </div>
@@ -339,7 +323,7 @@ function Filters({
             className="campaign-multi-select"
             value={filters.campaignIds}
             multiple
-            size={Math.min(4, campaignOptions.length + 1)}
+            size={Math.min(10, campaignOptions.length + 1)}
             onChange={handleCampaignSelectChange}
           >
             <option value="all">All campaigns</option>
@@ -348,38 +332,6 @@ function Filters({
                 {campaign.name}
               </option>
             ))}
-          </select>
-        </label>
-        <label>
-          Creative type
-          <select value={filters.creativeFormat} onChange={(event) => update('creativeFormat', event.target.value as DashboardFilters['creativeFormat'])}>
-            <option value="all">All types</option>
-            <option value="video">Video</option>
-            <option value="image">Image</option>
-            <option value="gif">GIF</option>
-            <option value="carousel">Carousel</option>
-          </select>
-        </label>
-        <label>
-          Placement
-          <select value={filters.placement} onChange={(event) => update('placement', event.target.value as DashboardFilters['placement'])}>
-            <option value="all">All placements</option>
-            {placements.map((placement) => (
-              <option value={placement} key={placement}>
-                {labelPlacement(placement)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Objective
-          <select value={filters.objective} onChange={(event) => update('objective', event.target.value as DashboardFilters['objective'])}>
-            <option value="all">All objectives</option>
-            <option value="sales">Sales</option>
-            <option value="leads">Leads</option>
-            <option value="traffic">Traffic</option>
-            <option value="engagement">Engagement</option>
-            <option value="awareness">Awareness</option>
           </select>
         </label>
       </div>

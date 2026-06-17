@@ -25,9 +25,10 @@ interface MonitorViewProps {
   metrics: DailyAdMetric[]
   trend: TrendPoint[]
   funnel: FunnelSummary[]
+  days?: number
 }
 
-export function MonitorView({ metrics, trend, funnel }: MonitorViewProps) {
+export function MonitorView({ metrics, trend, funnel, days = 30 }: MonitorViewProps) {
   const [budgetTarget, setBudgetTarget] = useState<number | null>(null)
 
   useEffect(() => {
@@ -75,7 +76,7 @@ export function MonitorView({ metrics, trend, funnel }: MonitorViewProps) {
 
   return (
     <section className="monitor-screen">
-      <LiveFunnelRates />
+      <LiveFunnelRates days={days} />
 
       <div className="monitor-kpis" aria-label="Key metrics">
         {kpis.map((kpi) => (

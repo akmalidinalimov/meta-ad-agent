@@ -18,6 +18,7 @@ from ..telegram_commands import normalize_telegram_command
 from ..telegram_digest import compose_kpi_digest_text
 from ..telegram_menus import (
     REPLY_BUTTON_ACTIONS,
+    kpi_panel_keyboard,
     adset_ads_keyboard,
     approval_adset_detail_keyboard,
     approval_adsets_keyboard,
@@ -555,6 +556,101 @@ def _handle_campaigns(command: dict[str, Any], callback: dict[str, Any]) -> dict
     return {"ok": True, "telegram": command, "campaigns": "list"}
 
 
+# --- KPI digest scope picker (callback namespace `kpi`) ----------------------
+# Lets the operator pick which campaign the 4-hourly KPI digest reports on, or reset
+# to the account-wide digest. The selection is global (the digest has one destination,
+# the admin chat) and is read by telegram_digest.compose_kpi_digest_text.
+
+
+def _kpi_panel_text(selection: dict[str, Any] | None) -> str:
+    if selection and selection.get("campaignId"):
+        name = html.escape(str(selection.get("campaignName") or selection["campaignId"]))
+        scope = f"📌 Now watching: <b>{name}</b>"
+    else:
+        scope = "📌 Now watching: <b>account-wide (all campaigns)</b>"
+    return (
+        "<b>📊 KPI digest scope</b>\n\n"
+        f"{scope}\n\n"
+        "Pick a campaign below to get the 4-hourly KPI digest for just that campaign, "
+        "tap <b>Reset</b> for the whole account, or <b>Show KPIs now</b> for the current digest."
+    )
+
+
+def _open_kpi_panel(command: dict[str, Any]) -> dict[str, Any]:
+    """Send the KPI scope picker as a new message (from the KPI menu / reply button)."""
+    from ..kpi_digest_campaign_store import load_kpi_digest_campaign
+
+    account = _live_account_sync()
+    campaigns = account.get("campaigns", [])
+    selection = load_kpi_digest_campaign()
+    selected_id = selection["campaignId"] if selection else None
+    _send(
+        command,
+        _kpi_panel_text(selection),
+        parse_mode="HTML",
+        reply_markup=kpi_panel_keyboard(campaigns, selected_id),
+    )
+    return {"ok": True, "telegram": command, "kpi": "panel"}
+
+
+def _handle_kpi(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
+    """kpi: callbacks — show the digest now, pin a campaign, or reset to account-wide."""
+    from ..kpi_digest_campaign_store import (
+        clear_kpi_digest_campaign,
+        load_kpi_digest_campaign,
+        set_kpi_digest_campaign,
+    )
+
+    raw = str(command.get("callbackData") or "")
+    tail = raw.split(":", 1)[1] if ":" in raw else ""
+
+    # "Show KPIs now" is read-only — any role may use it.
+    if tail == "show":
+        _send(command, compose_kpi_digest_text(), parse_mode="HTML")
+        return {"ok": True, "telegram": command, "kpi": "show"}
+
+    # Pinning / resetting the digest scope is a config write — managers only.
+    role = access_control.role_for(command.get("userId") or command.get("chatId"), command.get("username"))
+    if (tail.startswith("c:") or tail == "reset") and not access_control.is_manager(role):
+        _send(command, _VIEWER_NOTICE, parse_mode="HTML", reply_markup=viewer_reply_keyboard())
+        return {"ok": False, "telegram": command, "denied": "viewer_action"}
+
+    actor = f"telegram:{command.get('username') or command.get('userId') or 'unknown'}"
+    account = _live_account_sync()
+    campaigns = account.get("campaigns", [])
+
+    if tail == "reset":
+        clear_kpi_digest_campaign()
+        _edit(callback, _kpi_panel_text(None), kpi_panel_keyboard(campaigns, None))
+        return {"ok": True, "telegram": command, "kpi": "reset"}
+
+    if tail.startswith("c:"):
+        cid = tail[2:]
+        campaign = next((c for c in campaigns if str(c.get("id")) == cid), None)
+        if not campaign:
+            selection = load_kpi_digest_campaign()
+            selected_id = selection["campaignId"] if selection else None
+            _edit(
+                callback,
+                "⚠️ That campaign is no longer available.\n\n" + _kpi_panel_text(selection),
+                kpi_panel_keyboard(campaigns, selected_id),
+            )
+            return {"ok": False, "telegram": command, "message": "campaign not found"}
+        set_kpi_digest_campaign(cid, str(campaign.get("name") or cid), selected_by=actor)
+        selection = load_kpi_digest_campaign()
+        _edit(callback, _kpi_panel_text(selection), kpi_panel_keyboard(campaigns, cid))
+        return {"ok": True, "telegram": command, "kpi": "set", "campaign": cid}
+
+    # Default: (re)render the panel.
+    selection = load_kpi_digest_campaign()
+    selected_id = selection["campaignId"] if selection else None
+    if callback.get("message"):
+        _edit(callback, _kpi_panel_text(selection), kpi_panel_keyboard(campaigns, selected_id))
+    else:
+        _send(command, _kpi_panel_text(selection), parse_mode="HTML", reply_markup=kpi_panel_keyboard(campaigns, selected_id))
+    return {"ok": True, "telegram": command, "kpi": "panel"}
+
+
 # --- Task 4: Pending Approvals drill-down ------------------------------------
 
 def _pending_approvals() -> list[dict[str, Any]]:
@@ -729,7 +825,7 @@ def _handle_team(command: dict[str, Any], callback: dict[str, Any]) -> dict[str,
 
 def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
     if target == "kpis":
-        _send(command, compose_kpi_digest_text(), parse_mode="HTML")
+        return _open_kpi_panel(command)
     elif target == "suggestions":
         _send_pending_suggestions(command)
     elif target == "status":
@@ -896,6 +992,9 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     if action == "cmp":
         return _handle_campaigns(command, callback)
 
+    if action == "kpi":
+        return _handle_kpi(command, callback)
+
     if action == "apv":
         return _handle_pending(command, callback)
 
@@ -955,8 +1054,7 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
         _send(command, welcome_text(), parse_mode="HTML", reply_markup=main_reply_keyboard())
         return {"ok": True, "telegram": command, "menu": "main"}
     if lowered == "kpis":
-        _send(command, compose_kpi_digest_text(), parse_mode="HTML")
-        return {"ok": True, "telegram": command, "menu": "kpis"}
+        return _open_kpi_panel(command)
     if lowered == "suggestions":
         _send_pending_suggestions(command)
         return {"ok": True, "telegram": command, "menu": "suggestions"}

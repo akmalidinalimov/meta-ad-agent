@@ -279,13 +279,11 @@ export interface MetricGlossaryItem {
 }
 
 export interface DashboardFilters {
-  dateRange: '7d' | '30d' | '90d'
+  dateRange: '7d' | '14d' | '30d'
   campaignIds: string[]
   creativeFormat: 'all' | Creative['format']
-  placement: 'all' | Placement
   audience: 'all' | string
   funnelStage: 'all' | FunnelStage
-  objective: 'all' | Campaign['objective']
 }
 
 export interface DashboardData {

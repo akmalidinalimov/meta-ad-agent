@@ -26,35 +26,40 @@ interface FunnelRatesPayload {
 
 const num = new Intl.NumberFormat('en')
 
-export function LiveFunnelRates() {
+export function LiveFunnelRates({ days = 30 }: { days?: number }) {
   const [payload, setPayload] = useState<FunnelRatesPayload | null>(null)
-  const [loading, setLoading] = useState(() => typeof fetch === 'function')
+  // Which day-range the loaded payload reflects. When it doesn't match the requested
+  // `days` (first load, or a range change still in flight) we show the loading state
+  // instead of the previous window's numbers — derived, not a setState-in-effect, so a
+  // range switch never flashes stale rates.
+  const [loadedDays, setLoadedDays] = useState<number | null>(() => (typeof fetch === 'function' ? null : days))
 
   useEffect(() => {
     if (typeof fetch !== 'function') return
     let active = true
-    void fetch('/api/funnel/rates?days=30')
+    void fetch(`/api/funnel/rates?days=${days}`)
       .then((response) => (response.ok ? response.json() : null))
       .then((data: FunnelRatesPayload | null) => {
         if (active) {
           setPayload(data)
-          setLoading(false)
+          setLoadedDays(days)
         }
       })
       .catch(() => {
         if (active) {
           setPayload(null)
-          setLoading(false)
+          setLoadedDays(days)
         }
       })
     return () => {
       active = false
     }
-  }, [])
+  }, [days])
 
-  const rates = payload?.rates
+  const loading = loadedDays !== days
+  const rates = loading ? undefined : payload?.rates
   const counts = payload?.counts
-  const live = Boolean(payload?.ok && payload?.hasData)
+  const live = !loading && Boolean(payload?.ok && payload?.hasData)
 
   const cards = [
     {

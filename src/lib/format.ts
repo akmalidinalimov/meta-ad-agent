@@ -29,6 +29,15 @@ export function labelEventName(value: string): string {
 }
 
 export function getDashboardAnchorDate(data: DashboardData): string {
+  // Anchor the date-range window to the most recent day that actually has metric
+  // data, so "last N days" always ends on a day with real numbers. A sync time
+  // (generatedAt) that runs ahead of the data — or a brand-new campaign whose data
+  // only just landed — no longer pushes the window past the latest results.
+  const metricDates = data.metrics.map((metric) => metric.date).filter(Boolean)
+  if (metricDates.length > 0) {
+    return metricDates.reduce((max, value) => (value > max ? value : max))
+  }
+
   const generatedAt = data.dataSource?.generatedAt?.slice(0, 10)
   if (generatedAt) {
     return generatedAt
@@ -37,9 +46,11 @@ export function getDashboardAnchorDate(data: DashboardData): string {
   const campaignDates = data.campaigns.flatMap((campaign) =>
     [campaign.startedAt, campaign.endedAt].filter((value): value is string => Boolean(value)),
   )
-  const metricDates = data.metrics.map((metric) => metric.date)
-  const dates: string[] = [...campaignDates, ...metricDates]
-  return dates.reduce((max, value) => (value > max ? value : max), '2026-05-21')
+  if (campaignDates.length > 0) {
+    return campaignDates.reduce((max, value) => (value > max ? value : max))
+  }
+
+  return new Date().toISOString().slice(0, 10)
 }
 
 export function labelPlacement(placement: Placement): string {
@@ -54,11 +65,6 @@ export function labelRawSetting(value: string): string {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
-}
-
-export function shortCampaignLabel(name: string): string {
-  const cleanName = name.replace(/^DA\s*-\s*/i, '').trim()
-  return cleanName.length <= 28 ? cleanName : `${cleanName.slice(0, 27)}...`
 }
 
 export function shortText(value: string, limit: number): string {
