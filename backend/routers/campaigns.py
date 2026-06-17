@@ -20,6 +20,12 @@ from typing import Any
 from fastapi import APIRouter
 
 from ..analysis_engine import summarize_overall, valid_rows
+from ..funnel_events import (
+    count_bot_starts,
+    count_event_users,
+    select_start_rate,
+    telegram_starts_by_campaign_date,
+)
 from ..meta_client import get_meta_config
 from ..meta_sync import safe_chunked_insights
 
@@ -132,6 +138,29 @@ async def campaign_kpis(campaignId: str | None = None, days: int = 30, force: bo
     leads = totals.get("leads", 0) or 0
     subscribes = totals.get("subscribes", 0) or 0
 
+    # START rate from FIRST-PARTY Telegram bot-starts (funnel_events), NOT Meta's
+    # `subscribe` action: a lead-optimized account reports 0 subscribes even while real
+    # bot-starts flow, so subscribes/leads would always read 0%. bot_start events are not
+    # yet tagged with a campaign_id, so they can only be attributed ACCOUNT-WIDE — when a
+    # specific campaign is selected we use its attributed starts if any exist, else fall
+    # back to the account-wide count (startScope tells the UI which). select_start_rate
+    # prefers the first-party relay over Meta subscribe and the first-party click
+    # denominator over Meta leads, capped at 100%.
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    account_starts = count_bot_starts(since_iso=since_iso)
+    link_clicks = count_event_users("telegram_link_click", since_iso=since_iso)
+    bot_starts, start_scope = account_starts, "account"
+    if scoped:
+        since_date = since_iso[:10]
+        campaign_starts = sum(
+            count
+            for (cid, date), count in telegram_starts_by_campaign_date().items()
+            if str(cid) == str(campaignId) and date >= since_date
+        )
+        if campaign_starts:
+            bot_starts, start_scope = campaign_starts, "campaign"
+    start = select_start_rate(bot_starts=bot_starts, subscribes=subscribes, link_clicks=link_clicks, leads=leads)
+
     return {
         "ok": True,
         "source": "live",
@@ -149,18 +178,23 @@ async def campaign_kpis(campaignId: str | None = None, days: int = 30, force: bo
             "subscribes": int(subscribes),
             "clicks": int(totals.get("clicks", 0) or 0),
             "impressions": int(totals.get("impressions", 0) or 0),
-            "costPerStart": round(spend / subscribes, 2) if subscribes else None,
+            "costPerStart": round(spend / bot_starts, 2) if bot_starts else None,
         },
         "rates": {
             "visitRate": round(totals.get("visitRate", 0) or 0, 1),
             "leadRate": round(totals.get("leadRate", 0) or 0, 1),
-            "startRate": round(totals.get("startRate", 0) or 0, 1),
+            "startRate": start["rate"],
         },
         "counts": {
             "linkClicks": int(totals.get("linkClicks", 0) or 0),
             "landingPageViews": int(totals.get("landingPageViews", 0) or 0),
             "leads": int(leads),
             "subscribes": int(subscribes),
+            "botStarts": int(bot_starts),
+            "telegramLinkClicks": int(link_clicks),
         },
+        "startSource": start["numeratorSource"],
+        "startDenominatorSource": start["denominatorSource"],
+        "startScope": start_scope,
         "syncErrors": sync_errors,
     }

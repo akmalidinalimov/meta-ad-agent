@@ -92,8 +92,12 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
       Icon: Bot,
       value: rateValue(rates?.startRate),
       helper: live
-        ? `${formatNumber(counts?.subscribes ?? 0)} Telegram starts / ${formatNumber(counts?.leads ?? 0)} leads`
-        : 'Telegram bot starts ÷ leads',
+        ? `${formatNumber(counts?.botStarts ?? 0)} bot starts / ${
+            payload?.startDenominatorSource === 'telegram_link_click'
+              ? `${formatNumber(counts?.telegramLinkClicks ?? 0)} button clicks`
+              : `${formatNumber(counts?.leads ?? 0)} leads`
+          }${payload?.startScope === 'account' && campaignId !== 'all' ? ' · account-wide' : ''}`
+        : 'Telegram bot starts ÷ button clicks',
     },
   ]
 

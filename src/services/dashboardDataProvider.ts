@@ -121,7 +121,12 @@ export type CampaignKpis = {
     landingPageViews: number
     leads: number
     subscribes: number
+    botStarts?: number
+    telegramLinkClicks?: number
   }
+  startSource?: string
+  startDenominatorSource?: string
+  startScope?: string
   syncErrors?: string[]
   error?: string
 }

@@ -72,8 +72,20 @@ _INSIGHT_ROWS = [
 ]
 
 
+def _patch_funnel(monkeypatch, *, bot_starts=0, link_clicks=0, by_campaign=None):
+    """Stub the first-party funnel-event helpers so the START-rate path is deterministic
+    (campaign_kpis reads bot-starts / link-clicks from funnel_events, not Meta subscribe)."""
+    monkeypatch.setattr(campaigns_router, "count_bot_starts", lambda **kw: bot_starts)
+    monkeypatch.setattr(
+        campaigns_router, "count_event_users",
+        lambda name, **kw: link_clicks if name == "telegram_link_click" else 0,
+    )
+    monkeypatch.setattr(campaigns_router, "telegram_starts_by_campaign_date", lambda **kw: by_campaign or {})
+
+
 def test_campaign_kpis_scopes_live_to_one_campaign(monkeypatch):
     monkeypatch.setattr(campaigns_router, "get_meta_config", _cfg)
+    _patch_funnel(monkeypatch)  # no first-party starts -> START falls back to Meta subscribe/leads
 
     async def fake_insights(config, name, breakdowns, *, days=90):
         return _INSIGHT_ROWS
@@ -87,7 +99,7 @@ def test_campaign_kpis_scopes_live_to_one_campaign(monkeypatch):
     assert body["kpis"]["spend"] == 100.0
     assert body["kpis"]["leads"] == 20
     assert body["kpis"]["subscribes"] == 8
-    assert body["rates"]["startRate"] == 40.0  # 8 subscribes / 20 leads
+    assert body["rates"]["startRate"] == 40.0  # 8 Meta subscribes / 20 leads (no first-party starts)
 
     allbody = client.get("/api/campaigns/kpis?days=30").json()
     assert allbody["campaignId"] == "all"
@@ -95,8 +107,28 @@ def test_campaign_kpis_scopes_live_to_one_campaign(monkeypatch):
     assert allbody["kpis"]["leads"] == 25
 
 
+def test_campaign_kpis_uses_first_party_bot_starts_for_start_rate(monkeypatch):
+    # The fix: START rate comes from first-party bot-starts (funnel_events), NOT the Meta
+    # `subscribe` action, which is 0 for a lead-optimized account.
+    monkeypatch.setattr(campaigns_router, "get_meta_config", _cfg)
+    _patch_funnel(monkeypatch, bot_starts=1630, link_clicks=1710)
+
+    async def fake_insights(config, name, breakdowns, *, days=90):
+        return [{"campaign_id": "c1", "campaign_name": "Alpha", "spend": "100",
+                 "impressions": "1000", "clicks": "100", "actions": [{"action_type": "lead", "value": "1434"}]}]
+
+    monkeypatch.setattr(campaigns_router, "safe_chunked_insights", fake_insights)
+    body = TestClient(app).get("/api/campaigns/kpis?days=30").json()
+    assert body["kpis"]["subscribes"] == 0                 # Meta reports no subscribe conversion
+    assert body["rates"]["startRate"] == 95.3              # 1630 bot starts / 1710 button clicks
+    assert body["startSource"] == "telegram_relay"
+    assert body["startDenominatorSource"] == "telegram_link_click"
+    assert body["counts"]["botStarts"] == 1630 and body["counts"]["telegramLinkClicks"] == 1710
+
+
 def test_campaign_kpis_zero_delivery_is_honest_zeros(monkeypatch):
     monkeypatch.setattr(campaigns_router, "get_meta_config", _cfg)
+    _patch_funnel(monkeypatch)
 
     async def fake_insights(config, name, breakdowns, *, days=90):
         return _INSIGHT_ROWS  # neither row matches the requested campaign
