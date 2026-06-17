@@ -156,6 +156,26 @@ def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
     }
 
 
+def count_bot_starts(*, since_iso: str | None = None, storage_dir: Path = STORAGE_DIR) -> int:
+    """Unique Telegram bot starts (deduplicated by Telegram user, falling back to
+    visitor id). Optionally limited to events received on/after ``since_iso``.
+
+    This is the numerator for the dashboard START rate. Deduplicating by user means
+    a person who triggers the START automation more than once is counted once, so the
+    START rate can never be inflated by repeat starts.
+    """
+    users: set[str] = set()
+    for event in load_funnel_events(storage_dir=storage_dir):
+        if event.get("eventName") != "bot_start":
+            continue
+        if since_iso and str(event.get("receivedAt") or "") < since_iso:
+            continue
+        identity = event.get("telegramUserId") or event.get("visitorId")
+        if identity:
+            users.add(str(identity))
+    return len(users)
+
+
 def build_crm_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
     leads = list_crm_leads(storage_dir=storage_dir)
     events = load_funnel_events(storage_dir=storage_dir)

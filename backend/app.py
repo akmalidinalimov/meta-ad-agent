@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import os
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, valid_rows
+from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, summarize_overall, valid_rows
 from .agent_council import run_strategy_council, should_run_strategy_council
 from .agent_orchestrator import agent_registry, build_agent_decision, build_agent_handoffs, orchestrate_agent_chat, route_question
 from .agent_quality import evaluate_agent_response
@@ -29,7 +29,7 @@ from .campaign_specific_analysis import campaign_specific_answer
 from .chatplace_events import normalize_chatplace_event
 from .crm_store import STORAGE_DIR as CRM_STORAGE_DIR, list_crm_leads, save_crm_leads
 from .draft_campaign_proposal import build_draft_campaign_proposal
-from .funnel_events import build_funnel_summary, save_funnel_event
+from .funnel_events import build_funnel_summary, count_bot_starts, save_funnel_event
 from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base, save_knowledge_base
 from .llm_reasoner import generate_chat_answer, generate_llm_summary
 from .meta_execution import (
@@ -1332,6 +1332,68 @@ async def ingest_chatplace_event(payload: dict[str, Any], request: Request) -> d
 @app.get("/api/funnel/summary")
 def funnel_event_summary() -> dict[str, Any]:
     return build_funnel_summary()
+
+
+@app.get("/api/funnel/rates")
+async def funnel_rates(campaign_id: str | None = None, days: int = 30) -> dict[str, Any]:
+    """Live ad-funnel rates straight from Meta insights.
+
+    visitRate = landing page views / link clicks
+    leadRate  = leads / landing page views
+    startRate = Subscribe (bot start) / leads
+
+    All three are capped at 100% in analysis_engine.finalize_metrics so Meta's
+    cross-window attribution can never produce an impossible >100% rate, and the
+    Subscribe count is the deduplicated server-side bot-start event (CAPI), so a
+    visitor is never double-counted between the pixel Lead and the bot Subscribe.
+    """
+    config = get_meta_config()
+    if not config.is_configured:
+        return {
+            "ok": False,
+            "error": "Meta is not connected. Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to backend/.env.",
+        }
+
+    raw = await safe_chunked_insights(config, "funnel_rates", None, days=days)
+    sync_errors = [row["sync_error"] for row in raw if row.get("sync_error")]
+    rows = valid_rows(raw)
+    if campaign_id:
+        rows = [row for row in rows if str(row.get("campaign_id")) == str(campaign_id)]
+
+    totals = summarize_overall(rows)
+    leads = totals.get("leads", 0)
+
+    # START rate uses the first-party Telegram bot-start relay (Chatplace ->
+    # /api/chatplace/events), deduplicated by Telegram user over the same window.
+    # Meta CAPI subscribes are a fallback only if the relay has no data yet, so the
+    # card lights up the moment either source is live and never double-counts a user.
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    bot_starts = count_bot_starts(since_iso=since_iso)
+    subscribes = totals.get("subscribes", 0)
+    start_numerator = bot_starts if bot_starts else subscribes
+    start_source = "telegram_relay" if bot_starts else ("meta_capi" if subscribes else "none")
+    start_rate = min(100.0, (start_numerator / leads * 100) if leads else 0.0)
+
+    return {
+        "ok": True,
+        "days": days,
+        "campaignId": campaign_id,
+        "counts": {
+            "linkClicks": totals.get("linkClicks", 0),
+            "landingPageViews": totals.get("landingPageViews", 0),
+            "leads": leads,
+            "botStarts": bot_starts,
+            "subscribes": subscribes,
+        },
+        "rates": {
+            "visitRate": round(totals.get("visitRate", 0), 1),
+            "leadRate": round(totals.get("leadRate", 0), 1),
+            "startRate": round(start_rate, 1),
+        },
+        "startSource": start_source,
+        "hasData": bool(rows),
+        "syncErrors": sync_errors,
+    }
 
 
 @app.get("/api/dashboard")

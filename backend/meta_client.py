@@ -192,7 +192,7 @@ async def get_insights(
             "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
             "date_start,date_stop,impressions,reach,frequency,spend,cpm,ctr,cpc,clicks,actions,action_values"
         ),
-        "limit": 200,
+        "limit": 5000,
     }
     if since and until:
         params["time_range"] = f'{{"since":"{since}","until":"{until}"}}'
@@ -219,8 +219,6 @@ async def paged_get(config: MetaConfig, path: str, params: dict[str, Any]) -> li
                 response = await client.get(url, params=request_params)
                 request_params = {}
                 if response.status_code >= 400:
-                    if rows:
-                        return rows
                     raise MetaApiError(extract_meta_error(response))
                 payload = response.json()
                 rows.extend(payload.get("data", []))

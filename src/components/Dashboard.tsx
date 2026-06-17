@@ -604,6 +604,7 @@ function Overview({
     <>
       <DecisionHero data={data} />
       <KpiGrid kpis={kpis} />
+      <LiveFunnelRates />
       <section className="overview-command-grid">
         <FunnelPanel funnel={funnel} />
         <TopProblemsPanel data={data} />
@@ -666,6 +667,127 @@ function FunnelPanel({ funnel }: { funnel: ReturnType<typeof deriveFunnel> }) {
         ))}
       </div>
     </article>
+  )
+}
+
+interface LiveFunnelRatesPayload {
+  ok: boolean
+  hasData?: boolean
+  days?: number
+  counts?: { linkClicks: number; landingPageViews: number; leads: number; botStarts: number; subscribes: number }
+  rates?: { visitRate: number; leadRate: number; startRate: number }
+  startSource?: string
+  error?: string
+}
+
+function liveFunnelApiUrl(path: string) {
+  const base = import.meta.env.VITE_API_BASE_URL as string | undefined
+  if (base) {
+    return `${base.replace(/\/$/, '')}${path}`
+  }
+  if (typeof window !== 'undefined' && ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
+    return `http://127.0.0.1:8000${path}`
+  }
+  return path
+}
+
+// Live ad-funnel rates pulled straight from Meta insights (visit / lead / START).
+// Rates are computed and capped server-side in analysis_engine, so this panel
+// only formats them. Falls back to a neutral "waiting for data" state when the
+// campaign has no spend yet or Meta is not connected.
+function LiveFunnelRates() {
+  const [payload, setPayload] = useState<LiveFunnelRatesPayload | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      setLoading(false)
+      return
+    }
+    let active = true
+    void fetch(liveFunnelApiUrl('/api/funnel/rates?days=30'))
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: LiveFunnelRatesPayload | null) => {
+        if (active) {
+          setPayload(data)
+          setLoading(false)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setPayload(null)
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const rates = payload?.rates
+  const counts = payload?.counts
+  const live = Boolean(payload?.ok && payload?.hasData)
+
+  const cards = [
+    {
+      label: 'Visit rate',
+      Icon: MousePointerClick,
+      value: rates ? formatRate(rates.visitRate) : loading ? '…' : '—',
+      helper: live
+        ? `${formatNumber(counts?.landingPageViews ?? 0)} landing views / ${formatNumber(counts?.linkClicks ?? 0)} link clicks`
+        : 'Landing page views ÷ link clicks',
+    },
+    {
+      label: 'Lead rate',
+      Icon: Target,
+      value: rates ? formatRate(rates.leadRate) : loading ? '…' : '—',
+      helper: live
+        ? `${formatNumber(counts?.leads ?? 0)} leads / ${formatNumber(counts?.landingPageViews ?? 0)} landing views`
+        : 'Leads ÷ landing page views',
+    },
+    {
+      label: 'START rate',
+      Icon: Bot,
+      value: rates ? formatRate(rates.startRate) : loading ? '…' : '—',
+      helper: live
+        ? `${formatNumber(counts?.botStarts ?? 0)} bot starts / ${formatNumber(counts?.leads ?? 0)} leads`
+        : 'Telegram bot starts ÷ leads',
+    },
+  ]
+
+  const note = live
+    ? `Live from Meta · last ${payload?.days ?? 30} days · deduplicated, capped at 100%`
+    : payload && payload.ok === false
+      ? payload.error ?? 'Connect Meta to populate live funnel rates.'
+      : 'Waiting for ad spend — rates populate once the campaign runs.'
+
+  return (
+    <section className="kpi-grid" aria-label="Live funnel rates">
+      {cards.map(({ label, Icon, value, helper }) => (
+        <article className={`metric-card ${live ? 'positive' : 'neutral'}`} key={label}>
+          <div className="metric-icon">
+            <Icon size={20} />
+          </div>
+          <div>
+            <p>{label}</p>
+            <strong>{value}</strong>
+            <span>{live ? 'Live' : 'Awaiting data'}</span>
+            <small>{helper}</small>
+          </div>
+        </article>
+      ))}
+      <article className="metric-card neutral">
+        <div className="metric-icon">
+          <RadioTower size={20} />
+        </div>
+        <div>
+          <p>Source</p>
+          <strong>{live ? 'Meta live' : 'Standby'}</strong>
+          <span>{payload?.ok === false ? 'Not connected' : 'Auto-refresh'}</span>
+          <small>{note}</small>
+        </div>
+      </article>
+    </section>
   )
 }
 

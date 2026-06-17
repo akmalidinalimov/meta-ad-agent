@@ -6,11 +6,23 @@ from typing import Any
 
 
 ACTION_ALIASES = {
-    "lead": {"lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"},
+    "lead": {
+        "lead",
+        "onsite_web_lead",
+        "onsite_conversion.lead_grouped",
+        "offsite_conversion.fb_pixel_lead",
+        "offsite_lead_add_20_s_calls",
+    },
     "purchase": {"purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase"},
     "registration": {"complete_registration", "offsite_conversion.fb_pixel_complete_registration"},
     "link_click": {"link_click"},
     "landing_visit": {"landing_page_view", "omni_landing_page_view"},
+    "subscribe": {
+        "subscribe",
+        "onsite_conversion.subscribe_total",
+        "offsite_conversion.fb_pixel_subscribe",
+        "offsite_conversion.subscribe",
+    },
 }
 
 
@@ -221,6 +233,8 @@ def merge_metrics(target: dict[str, Any], row: dict[str, Any]) -> None:
     target["leads"] = target.get("leads", 0) + action_count(row, "lead") + action_count(row, "registration")
     target["purchases"] = target.get("purchases", 0) + action_count(row, "purchase")
     target["linkClicks"] = target.get("linkClicks", 0) + action_count(row, "link_click")
+    target["landingPageViews"] = target.get("landingPageViews", 0) + action_count(row, "landing_visit")
+    target["subscribes"] = target.get("subscribes", 0) + action_count(row, "subscribe")
 
 
 def finalize_metrics(item: dict[str, Any]) -> None:
@@ -230,11 +244,19 @@ def finalize_metrics(item: dict[str, Any]) -> None:
     item["cpp"] = ratio(item.get("spend", 0), item.get("purchases", 0))
     item["leadRateFromClick"] = ratio(item.get("leads", 0), item.get("clicks", 0)) * 100
     item["purchaseRateFromClick"] = ratio(item.get("purchases", 0), item.get("clicks", 0)) * 100
+    # Funnel rates (the three the dashboard surfaces). Capped at 100% so Meta's
+    # attribution overshoot (e.g. landing views > link clicks across windows)
+    # can never render an impossible >100% rate. Visit rate is measured against
+    # link clicks, falling back to all clicks only when link clicks are absent.
+    visit_base = item.get("linkClicks", 0) or item.get("clicks", 0)
+    item["visitRate"] = min(100.0, ratio(item.get("landingPageViews", 0), visit_base) * 100)
+    item["leadRate"] = min(100.0, ratio(item.get("leads", 0), item.get("landingPageViews", 0)) * 100)
+    item["startRate"] = min(100.0, ratio(item.get("subscribes", 0), item.get("leads", 0)) * 100)
     item["qualityScore"] = quality_score(item)
 
 
 def empty_metrics() -> dict[str, float]:
-    return {"rows": 0, "spend": 0, "impressions": 0, "reach": 0, "clicks": 0, "leads": 0, "purchases": 0, "linkClicks": 0}
+    return {"rows": 0, "spend": 0, "impressions": 0, "reach": 0, "clicks": 0, "leads": 0, "purchases": 0, "linkClicks": 0, "landingPageViews": 0, "subscribes": 0}
 
 
 def quality_score(item: dict[str, Any]) -> float:
@@ -250,11 +272,11 @@ def quality_sort(item: dict[str, Any]) -> tuple[float, float, float]:
 
 def action_count(row: dict[str, Any], alias: str) -> float:
     action_types = ACTION_ALIASES[alias]
-    total = 0.0
+    values = []
     for action in row.get("actions", []) or []:
         if action.get("action_type") in action_types:
-            total += as_float(action.get("value"))
-    return total
+            values.append(as_float(action.get("value")))
+    return max(values, default=0.0)
 
 
 def extract_interests(targeting: dict[str, Any]) -> list[str]:
