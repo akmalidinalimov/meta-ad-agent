@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any, Protocol
 
 import httpx
@@ -66,17 +67,53 @@ def build_bitrix_webhook_url(config: BitrixConfig) -> str:
     return f"{portal}/rest/{config.user_id}/{config.webhook_key}/"
 
 
-async def fetch_bitrix_leads(*, transport: BitrixTransport, limit: int = 100) -> list[dict[str, Any]]:
-    payload = await transport.call(
-        "crm.lead.list",
-        {
-            "order": {"DATE_CREATE": "DESC"},
-            "select": ["*", "UF_*"],
-            "start": 0,
-        },
-    )
-    rows = payload.get("result", [])
-    return [normalize_bitrix_lead(row) for row in rows[:limit]]
+_MAX_PAGES = 50  # backstop: 50 pages * 50 rows/page = 2500 records per range
+
+
+def _date_filter(days: int | None) -> dict[str, str] | None:
+    if not days:
+        return None
+    since = (date.today() - timedelta(days=days)).isoformat()
+    return {">=DATE_CREATE": since}
+
+
+async def _fetch_paged(
+    *, transport: BitrixTransport, method: str, days: int | None, limit: int | None
+) -> list[dict[str, Any]]:
+    """Read-only paged list. Follows Bitrix's ``next`` cursor; adds a DATE_CREATE
+    filter only when ``days`` is given. When ``days`` is None and the transport
+    returns no ``next``, this issues exactly one call with the historical params."""
+    filter_ = _date_filter(days)
+    rows: list[dict[str, Any]] = []
+    start = 0
+    for _ in range(_MAX_PAGES):
+        params: dict[str, Any] = {"order": {"DATE_CREATE": "DESC"}, "select": ["*", "UF_*"], "start": start}
+        if filter_:
+            params["filter"] = filter_
+        payload = await transport.call(method, params)
+        batch = payload.get("result", [])
+        rows.extend(batch)
+        nxt = payload.get("next")
+        if not batch or nxt is None:
+            break
+        if limit is not None and len(rows) >= limit:
+            break
+        start = nxt
+    return rows[:limit] if limit is not None else rows
+
+
+async def fetch_bitrix_leads(
+    *, transport: BitrixTransport, limit: int | None = 100, days: int | None = None
+) -> list[dict[str, Any]]:
+    rows = await _fetch_paged(transport=transport, method="crm.lead.list", days=days, limit=limit)
+    return [normalize_bitrix_lead(row) for row in rows]
+
+
+async def fetch_bitrix_deals(
+    *, transport: BitrixTransport, limit: int | None = 100, days: int | None = None
+) -> list[dict[str, Any]]:
+    rows = await _fetch_paged(transport=transport, method="crm.deal.list", days=days, limit=limit)
+    return [normalize_bitrix_deal(row) for row in rows]
 
 
 async def fetch_bitrix_statuses(*, transport: BitrixTransport, entity_id: str = "STATUS") -> list[dict[str, Any]]:
@@ -111,6 +148,15 @@ def normalize_bitrix_lead(row: dict[str, Any]) -> dict[str, Any]:
         "updatedAt": row.get("DATE_MODIFY") or "",
         "raw": row,
     }
+
+
+def normalize_bitrix_deal(row: dict[str, Any]) -> dict[str, Any]:
+    """Same shape as a normalized lead, but the stage comes from the deal pipeline
+    field ``STAGE_ID`` (falling back to ``STATUS_ID``)."""
+    normalized = normalize_bitrix_lead(row)
+    normalized["stage"] = row.get("STAGE_ID") or row.get("STATUS_ID") or ""
+    normalized["crm"] = "bitrix24:deal"
+    return normalized
 
 
 def normalize_bitrix_status(row: dict[str, Any]) -> dict[str, Any]:

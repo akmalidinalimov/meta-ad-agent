@@ -3,8 +3,10 @@ import asyncio
 from backend.bitrix_client import (
     BitrixConfig,
     build_bitrix_webhook_url,
+    fetch_bitrix_deals,
     fetch_bitrix_leads,
     fetch_bitrix_statuses,
+    normalize_bitrix_deal,
     normalize_bitrix_lead,
     normalize_bitrix_status,
 )
@@ -103,3 +105,54 @@ def test_fetch_bitrix_statuses_uses_crm_status_list_for_lead_stages():
         ("crm.status.list", {"filter": {"ENTITY_ID": "STATUS"}, "order": {"SORT": "ASC"}})
     ]
     assert [status["statusId"] for status in statuses] == ["NEW", "CONVERTED"]
+
+
+class PagingBitrixTransport:
+    def __init__(self):
+        self.calls = []
+
+    async def call(self, method, params):
+        self.calls.append((method, params))
+        start = params.get("start", 0)
+        if start == 0:
+            return {"result": [{"ID": "1", "STATUS_ID": "NEW", "STAGE_ID": "C1:NEW"}], "next": 50}
+        return {"result": [{"ID": "2", "STATUS_ID": "NEW", "STAGE_ID": "C1:NEW"}]}
+
+
+def test_fetch_bitrix_leads_follows_next_paging():
+    transport = PagingBitrixTransport()
+
+    leads = asyncio.run(fetch_bitrix_leads(transport=transport, limit=None))
+
+    assert [call[1]["start"] for call in transport.calls] == [0, 50]
+    assert [lead["crmLeadId"] for lead in leads] == ["1", "2"]
+
+
+def test_fetch_bitrix_leads_adds_date_filter_when_days_given():
+    transport = PagingBitrixTransport()
+
+    asyncio.run(fetch_bitrix_leads(transport=transport, days=7, limit=None))
+
+    first_params = transport.calls[0][1]
+    assert ">=DATE_CREATE" in first_params["filter"]
+
+
+def test_normalize_bitrix_deal_reads_stage_id_and_utm():
+    out = normalize_bitrix_deal(
+        {"ID": "5", "STAGE_ID": "C1:WON", "PHONE": [{"VALUE": "+998901112233"}], "UTM_CONTENT": "ai"}
+    )
+
+    assert out["crmLeadId"] == "5"
+    assert out["stage"] == "C1:WON"
+    assert out["phone"] == "+998901112233"
+    assert out["utmContent"] == "ai"
+
+
+def test_fetch_bitrix_deals_uses_crm_deal_list():
+    transport = PagingBitrixTransport()
+
+    deals = asyncio.run(fetch_bitrix_deals(transport=transport, limit=None))
+
+    assert transport.calls[0][0] == "crm.deal.list"
+    assert deals[0]["crmLeadId"] == "1"
+    assert deals[0]["stage"] == "C1:NEW"
