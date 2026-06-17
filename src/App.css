@@ -3042,3 +3042,75 @@
     justify-items: start;
   }
 }
+
+/* Per-audience CRM funnel matrix (Part 4) */
+.crm-funnel-note {
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.crm-funnel-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.crm-funnel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.crm-funnel-table th {
+  padding: 0 12px 10px;
+  border-bottom: 1px solid #d9e1eb;
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.crm-funnel-table th:first-child,
+.crm-funnel-table td:first-child {
+  text-align: left;
+}
+
+.crm-funnel-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid #eef2f7;
+  color: #334155;
+  font-weight: 800;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.crm-funnel-table td:first-child {
+  color: #172033;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.crm-funnel-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.crm-funnel-table th.paid-col,
+.crm-funnel-table td.paid-col {
+  background: #e7f8f1;
+  color: #0f766e;
+}
+
+.crm-funnel-table td strong {
+  color: #0f766e;
+}
+
+.crm-funnel-table .unattributed-row td {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.crm-funnel-table .unattributed-row td:first-child {
+  color: #94a3b8;
+}

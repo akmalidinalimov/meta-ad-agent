@@ -42,6 +42,7 @@ import {
 import { ChartFrame } from './dashboard/shared/ChartFrame'
 import { MediaThumb } from './dashboard/shared/MediaThumb'
 import { PanelHeading } from './dashboard/shared/PanelHeading'
+import { buildAudienceRows, type CrmFunnelPayload } from './crmFunnel'
 import {
   deriveCreativeScores,
   deriveFunnel,
@@ -605,6 +606,7 @@ function Overview({
       <DecisionHero data={data} />
       <KpiGrid kpis={kpis} />
       <LiveFunnelRates />
+      {import.meta.env.VITE_CRM_ENABLED === 'true' ? <CrmFunnelByAudience /> : null}
       <section className="overview-command-grid">
         <FunnelPanel funnel={funnel} />
         <TopProblemsPanel data={data} />
@@ -788,6 +790,113 @@ function LiveFunnelRates() {
         </div>
       </article>
     </section>
+  )
+}
+
+// Per-audience CRM funnel matrix (Part 4). Reads /api/crm/funnel (read-only Bitrix,
+// phone-joined to bot starts) and renders audiences x CRM stages through Paid. Gated by
+// VITE_CRM_ENABLED so a half-configured CRM never reaches the live dashboard.
+function CrmFunnelByAudience() {
+  const [payload, setPayload] = useState<CrmFunnelPayload | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [errored, setErrored] = useState(false)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      setLoading(false)
+      return
+    }
+    let active = true
+    void fetch(liveFunnelApiUrl('/api/crm/funnel?days=30'))
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: CrmFunnelPayload | null) => {
+        if (!active) return
+        setPayload(data)
+        setErrored(data == null || data.ok === false)
+        setLoading(false)
+      })
+      .catch(() => {
+        if (active) {
+          setErrored(true)
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const heading = <PanelHeading eyebrow="CRM" title="Per-audience funnel to Paid" icon={Target} />
+
+  if (loading) {
+    return (
+      <article className="panel panel-wide">
+        {heading}
+        <p className="crm-funnel-note">Loading CRM funnel…</p>
+      </article>
+    )
+  }
+  if (errored || !payload || payload.ok === false) {
+    return (
+      <article className="panel panel-wide">
+        {heading}
+        <p className="crm-funnel-note">{payload?.error ?? 'CRM funnel unavailable. Configure Bitrix24 and retry.'}</p>
+      </article>
+    )
+  }
+
+  const rows = buildAudienceRows(payload)
+  if (rows.length === 0) {
+    return (
+      <article className="panel panel-wide">
+        {heading}
+        <p className="crm-funnel-note">No CRM leads in range yet.</p>
+      </article>
+    )
+  }
+
+  const isPaid = (stageId: string) => payload.paidStageIds.includes(stageId)
+
+  return (
+    <article className="panel panel-wide" aria-label="CRM funnel by audience">
+      {heading}
+      <p className="crm-funnel-note">
+        Match rate {Math.round(payload.matchRate * 100)}% · phone-join · last 30 days
+        {payload.paidStageIds.length === 0 ? ' · ⚠ Paid stage not set (BITRIX_PAID_STATUS_IDS)' : ''}
+      </p>
+      <div className="crm-funnel-scroll">
+        <table className="crm-funnel-table">
+          <thead>
+            <tr>
+              <th>Audience</th>
+              <th>Bot starts</th>
+              {payload.stages.map((stageId) => (
+                <th key={stageId} className={isPaid(stageId) ? 'paid-col' : undefined}>
+                  {payload.stageLabels[stageId] ?? stageId}
+                </th>
+              ))}
+              <th>Paid rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.audience} className={row.audience === 'unattributed' ? 'unattributed-row' : undefined}>
+                <td>{row.audience}</td>
+                <td>{formatNumber(row.botStarts)}</td>
+                {row.cells.map((cell) => (
+                  <td key={cell.stageId} className={isPaid(cell.stageId) ? 'paid-col' : undefined}>
+                    {formatNumber(cell.count)}
+                  </td>
+                ))}
+                <td>
+                  <strong>{row.paidRatePct}</strong>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </article>
   )
 }
 

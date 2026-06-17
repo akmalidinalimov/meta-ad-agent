@@ -14,7 +14,24 @@ The backend now includes:
 - `POST /api/crm/bitrix/import`
 - `GET /api/crm/bitrix/stages`
 - `GET /api/crm/leads`
+- `GET /api/crm/funnel?days=N&entity=lead|deal` — per-audience × per-CRM-stage matrix (read-only)
 - normalized CRM lead storage in `storage/crm_leads.json`
+
+## Per-audience funnel (`GET /api/crm/funnel`)
+
+Read-only, additive endpoint. For each Bitrix lead (or deal, with `?entity=deal`) it reads the
+current stage, **joins to a ChatPlace bot-start by phone** (trailing-9-digit match, then
+`@username`, then `utm_content` as a cross-check) and **inherits that bot-start's audience**
+(`aud`). It returns the count at every discovered stage per audience (`ai`/`business`/`it`/
+`original`/`content`), plus an honest `unattributed` bucket and a `matchRate`. Audiences are
+captured at bot-start via the enriched START webhook (`aud`, `phone`, `username`); until that
+webhook is flowing, all leads land in `unattributed` (matchRate 0) — by design, never hidden.
+
+- **Paid stage:** stages are discovered live (`crm.status.list`); the terminal "Paid" stage(s)
+  are taken from `BITRIX_PAID_STATUS_IDS` (comma-separated, authoritative) or guessed from
+  stage-label keywords. The response exposes `paidStageIds` so the choice is auditable.
+- **Dashboard:** the React dashboard renders this matrix only when the frontend build has
+  `VITE_CRM_ENABLED=true` (a feature flag), so a half-configured CRM never reaches the live UI.
 
 Imported leads preserve:
 
