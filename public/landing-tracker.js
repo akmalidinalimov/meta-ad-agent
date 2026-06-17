@@ -114,38 +114,61 @@
     } catch (_) {}
   }
 
-  function bindTelegramLinks() {
-    var links = document.querySelectorAll(config.telegramSelector || DEFAULT_SELECTOR)
-    links.forEach(function (anchor) {
-      decorateTelegramLink(anchor)
-      anchor.addEventListener('click', function () {
-        sendEvent(config.telegramClickEventName || 'telegram_link_click')
-      })
-    })
+  function telegramSelector() {
+    return config.telegramSelector || DEFAULT_SELECTOR
   }
 
-  function bindCrmFormLinks() {
-    var links = document.querySelectorAll(config.crmFormSelector || DEFAULT_CRM_SELECTOR)
-    links.forEach(function (anchor) {
-      decorateCrmFormLink(anchor)
-      anchor.addEventListener('click', function () {
-        sendEvent(config.crmFormClickEventName || 'form_button_click')
-      })
-    })
+  function crmFormSelector() {
+    return config.crmFormSelector || DEFAULT_CRM_SELECTOR
+  }
+
+  // Decorate links that already exist. Idempotent: decorateTelegramLink is a
+  // no-op once a start payload is present, and decorateCrmFormLink rewrites the
+  // same attribution every time, so re-running it is harmless.
+  function decorateExistingLinks() {
+    document.querySelectorAll(telegramSelector()).forEach(decorateTelegramLink)
+    document.querySelectorAll(crmFormSelector()).forEach(decorateCrmFormLink)
+  }
+
+  // Single capture-phase listener on the document. Unlike per-element binding,
+  // this catches clicks on CTAs that a SPA (Lovable/React) renders AFTER the
+  // tracker loads, and survives re-renders that replace the nodes. Decorate the
+  // matched anchor right before navigation so a visitor token is injected even
+  // on late-rendered links (no-op when a start payload already exists).
+  function bindDelegatedClicks() {
+    document.addEventListener(
+      'click',
+      function (event) {
+        var node = event.target
+        if (!node || typeof node.closest !== 'function') return
+        var telegram = node.closest(telegramSelector())
+        if (telegram) {
+          decorateTelegramLink(telegram)
+          sendEvent(config.telegramClickEventName || 'telegram_link_click')
+          return
+        }
+        var crmForm = node.closest(crmFormSelector())
+        if (crmForm) {
+          decorateCrmFormLink(crmForm)
+          sendEvent(config.crmFormClickEventName || 'form_button_click')
+        }
+      },
+      true,
+    )
   }
 
   var visitorId = getVisitorId()
   window.MetaAdAgentVisitorId = visitorId
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () {
-      bindTelegramLinks()
-      bindCrmFormLinks()
-      sendEvent(config.landingViewEventName || 'landing_view')
-    })
-  } else {
-    bindTelegramLinks()
-    bindCrmFormLinks()
+  function init() {
+    bindDelegatedClicks()
+    decorateExistingLinks()
     sendEvent(config.landingViewEventName || 'landing_view')
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init)
+  } else {
+    init()
   }
 })()
