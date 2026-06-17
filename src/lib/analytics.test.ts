@@ -17,6 +17,14 @@ describe('getDateWindow', () => {
       end: '2026-05-28',
     })
   })
+
+  it('builds an inclusive 7 day window', () => {
+    expect(getDateWindow('7d', '2026-06-17')).toEqual({ start: '2026-06-11', end: '2026-06-17' })
+  })
+
+  it('builds an inclusive 14 day window', () => {
+    expect(getDateWindow('14d', '2026-06-17')).toEqual({ start: '2026-06-04', end: '2026-06-17' })
+  })
 })
 
 describe('deriveRankingRows', () => {

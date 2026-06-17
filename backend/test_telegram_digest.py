@@ -72,3 +72,91 @@ def test_no_targets_means_no_markers():
     text = format_kpi_digest(SUMMARY, FUNNEL)
     assert "✅" not in text
     assert "⚠️" not in text
+
+
+# --- Per-campaign digest scoping (KPI campaign picker) -----------------------
+
+from backend.telegram_digest import _campaign_funnel, _campaign_summary, compose_kpi_digest_text
+
+
+def _knowledge_with_two_campaigns():
+    return {
+        "raw": {
+            "insights": {
+                "base": [
+                    {
+                        "campaign_id": "c1",
+                        "campaign_name": "Alpha",
+                        "spend": "100",
+                        "impressions": "1000",
+                        "clicks": "100",
+                        "actions": [
+                            {"action_type": "lead", "value": "20"},
+                            {"action_type": "subscribe", "value": "8"},
+                        ],
+                    },
+                    {
+                        "campaign_id": "c2",
+                        "campaign_name": "Beta",
+                        "spend": "50",
+                        "impressions": "500",
+                        "clicks": "50",
+                        "actions": [{"action_type": "lead", "value": "5"}],
+                    },
+                ]
+            }
+        },
+        "analysis": {"summary": {"spend": 150, "leads": 25, "cpl": 6, "ctr": 1, "purchases": 0}},
+        "snapshot": {"generatedAt": "2026-06-17T00:00:00Z"},
+    }
+
+
+def test_campaign_summary_scopes_to_one_campaign():
+    summary, name = _campaign_summary(_knowledge_with_two_campaigns(), "c1")
+    assert name == "Alpha"
+    assert summary["spend"] == 100  # only c1's spend, not the 150 account total
+    assert summary["leads"] == 20
+    assert summary["subscribes"] == 8
+
+
+def test_campaign_summary_is_none_for_unknown_campaign():
+    assert _campaign_summary(_knowledge_with_two_campaigns(), "missing") is None
+
+
+def test_campaign_funnel_uses_subscribes_over_leads_and_caps():
+    funnel = _campaign_funnel({"subscribes": 8, "leads": 20})
+    assert funnel["uniqueTelegramUsers"] == 8
+    assert funnel["rates"]["telegramStartRate"] == 40.0  # 8 / 20
+    assert _campaign_funnel({"subscribes": 30, "leads": 10})["rates"]["telegramStartRate"] == 100.0
+
+
+def _patch_digest_sources(monkeypatch, *, selection):
+    import backend.approval_store as approval_store
+    import backend.funnel_events as funnel_events
+    import backend.knowledge_base as kb
+    import backend.kpi_digest_campaign_store as kpi_store
+    import backend.targets_store as targets_store
+
+    monkeypatch.setattr(kb, "load_knowledge_base", lambda: _knowledge_with_two_campaigns())
+    monkeypatch.setattr(kpi_store, "load_kpi_digest_campaign", lambda **kw: selection)
+    monkeypatch.setattr(funnel_events, "build_funnel_summary", lambda **kw: {"uniqueTelegramUsers": 999, "rates": {"telegramStartRate": 99}})
+    monkeypatch.setattr(targets_store, "load_targets", lambda **kw: {})
+    monkeypatch.setattr(approval_store, "list_approval_requests", lambda **kw: [])
+
+
+def test_compose_is_account_wide_when_no_campaign_pinned(monkeypatch):
+    _patch_digest_sources(monkeypatch, selection=None)
+    text = compose_kpi_digest_text()
+    assert "account-wide" in text
+    assert "$150.00" in text  # account-total spend, account funnel STARTs (999)
+    assert "999" in text
+
+
+def test_compose_scopes_to_pinned_campaign(monkeypatch):
+    _patch_digest_sources(monkeypatch, selection={"campaignId": "c1", "campaignName": "Alpha"})
+    text = compose_kpi_digest_text()
+    assert "campaign: Alpha" in text
+    assert "$100.00" in text  # c1's spend
+    assert "$150.00" not in text  # not the account total
+    # Scoped digest uses Meta per-campaign subscribes (8), not the account funnel's 999.
+    assert "999" not in text

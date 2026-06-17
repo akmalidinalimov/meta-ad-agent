@@ -174,6 +174,29 @@ def adset_ads_keyboard(adset_id: str, campaign_id: str) -> dict[str, Any]:
     return {"inline_keyboard": rows}
 
 
+# --- KPI digest scope picker (callback namespace `kpi`). ---
+# Schemes: kpi:show, kpi:c:<campaign_id>, kpi:reset. The campaign name goes in the
+# button text (full, lightly capped) so the operator can confirm the right campaign.
+
+
+def kpi_panel_keyboard(campaigns: list[dict[str, Any]], selected_id: str | None = None) -> dict[str, Any]:
+    """Pick which campaign the 4-hourly KPI digest reports on (or reset to account-wide).
+
+    One button per campaign (cap 20) with a ✅ on the currently-watched one, plus a
+    "Show KPIs now" shortcut and a "Reset to account-wide" button."""
+    rows: list[list[dict[str, Any]]] = [[{"text": "📊 Show KPIs now", "callback_data": "kpi:show"}]]
+    for campaign in campaigns[:20]:
+        cid = str(campaign.get("id") or "")
+        if not cid:
+            continue
+        icon = _campaign_status_icon(campaign)
+        check = "✅ " if selected_id and cid == str(selected_id) else ""
+        label = f"{check}{icon} {_truncate(str(campaign.get('name') or cid), 60)}"
+        rows.append([{"text": label, "callback_data": f"kpi:c:{cid}"}])
+    rows.append([{"text": "♻️ Reset to account-wide", "callback_data": "kpi:reset"}])
+    return {"inline_keyboard": rows}
+
+
 # --- Task 4: Pending Approvals drill-down (callback namespace `apv`). ---
 # Schemes: apv:list, apv:a:<approval_id>, apv:s:<approval_id>~<idx>. Ad sets in an
 # approval have no id, so they are addressed by index after a `~` separator.

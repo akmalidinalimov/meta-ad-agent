@@ -49,10 +49,10 @@ export interface CreativeDecisionInsight {
   risks: string[]
 }
 
-export type DateRange = '7d' | '30d' | '90d'
+export type DateRange = '7d' | '14d' | '30d'
 
 export function getDateWindow(range: DateRange, anchorDate: string) {
-  const days = range === '7d' ? 7 : range === '30d' ? 30 : 90
+  const days = range === '7d' ? 7 : range === '14d' ? 14 : 30
   const date = new Date(`${anchorDate}T00:00:00`)
   date.setDate(date.getDate() - days + 1)
   return { start: formatDateKey(date), end: anchorDate }
@@ -80,13 +80,17 @@ export function filterMetricsForDashboard(args: {
     end: string
     campaignIds: string[]
     creativeFormat: 'all' | Creative['format']
-    placement: 'all' | Placement
-    objective: 'all' | Campaign['objective']
+    // Placement/objective are optional segmentation kept for callers (e.g. Rankings);
+    // the Monitor filter bar no longer exposes them and simply omits them ('all').
+    placement?: 'all' | Placement
+    objective?: 'all' | Campaign['objective']
   }
 }) {
   const campaignById = new Map(args.campaigns.map((campaign) => [campaign.id, campaign]))
   const adIds = new Set(args.ads.map((ad) => ad.id))
   const creativeById = new Map(args.creatives.map((creative) => [creative.id, creative]))
+  const placementFilter = args.filters.placement ?? 'all'
+  const objectiveFilter = args.filters.objective ?? 'all'
 
   return args.metrics.filter((metric) => {
     const creative = creativeById.get(metric.creativeId)
@@ -97,8 +101,8 @@ export function filterMetricsForDashboard(args: {
       metric.date <= args.filters.end &&
       (args.filters.campaignIds.includes('all') || args.filters.campaignIds.includes(metric.campaignId)) &&
       (args.filters.creativeFormat === 'all' || creative?.format === args.filters.creativeFormat) &&
-      (args.filters.placement === 'all' || metric.placement === args.filters.placement) &&
-      (args.filters.objective === 'all' || campaign?.objective === args.filters.objective) &&
+      (placementFilter === 'all' || metric.placement === placementFilter) &&
+      (objectiveFilter === 'all' || campaign?.objective === objectiveFilter) &&
       adIds.has(metric.adId)
     )
   })
@@ -107,12 +111,13 @@ export function filterMetricsForDashboard(args: {
 export function getCampaignOptions(args: {
   campaigns: Campaign[]
   window: { start: string; end: string }
-  objective: 'all' | Campaign['objective']
+  objective?: 'all' | Campaign['objective']
 }) {
+  const objective = args.objective ?? 'all'
   return args.campaigns.filter(
     (campaign) =>
       campaignOverlapsWindow(campaign, args.window) &&
-      (args.objective === 'all' || campaign.objective === args.objective),
+      (objective === 'all' || campaign.objective === objective),
   )
 }
 
