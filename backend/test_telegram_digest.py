@@ -74,53 +74,10 @@ def test_no_targets_means_no_markers():
     assert "⚠️" not in text
 
 
-# --- Per-campaign digest scoping (KPI campaign picker) -----------------------
+# --- Per-campaign digest scoping (KPI campaign picker, LIVE Meta data) --------
 
-from backend.telegram_digest import _campaign_funnel, _campaign_summary, compose_kpi_digest_text
-
-
-def _knowledge_with_two_campaigns():
-    return {
-        "raw": {
-            "insights": {
-                "base": [
-                    {
-                        "campaign_id": "c1",
-                        "campaign_name": "Alpha",
-                        "spend": "100",
-                        "impressions": "1000",
-                        "clicks": "100",
-                        "actions": [
-                            {"action_type": "lead", "value": "20"},
-                            {"action_type": "subscribe", "value": "8"},
-                        ],
-                    },
-                    {
-                        "campaign_id": "c2",
-                        "campaign_name": "Beta",
-                        "spend": "50",
-                        "impressions": "500",
-                        "clicks": "50",
-                        "actions": [{"action_type": "lead", "value": "5"}],
-                    },
-                ]
-            }
-        },
-        "analysis": {"summary": {"spend": 150, "leads": 25, "cpl": 6, "ctr": 1, "purchases": 0}},
-        "snapshot": {"generatedAt": "2026-06-17T00:00:00Z"},
-    }
-
-
-def test_campaign_summary_scopes_to_one_campaign():
-    summary, name = _campaign_summary(_knowledge_with_two_campaigns(), "c1")
-    assert name == "Alpha"
-    assert summary["spend"] == 100  # only c1's spend, not the 150 account total
-    assert summary["leads"] == 20
-    assert summary["subscribes"] == 8
-
-
-def test_campaign_summary_is_none_for_unknown_campaign():
-    assert _campaign_summary(_knowledge_with_two_campaigns(), "missing") is None
+import backend.telegram_digest as telegram_digest
+from backend.telegram_digest import _campaign_funnel, compose_kpi_digest_text
 
 
 def test_campaign_funnel_uses_subscribes_over_leads_and_caps():
@@ -130,33 +87,70 @@ def test_campaign_funnel_uses_subscribes_over_leads_and_caps():
     assert _campaign_funnel({"subscribes": 30, "leads": 10})["rates"]["telegramStartRate"] == 100.0
 
 
-def _patch_digest_sources(monkeypatch, *, selection):
+def _patch_digest_sources(monkeypatch, *, selection, live_summary, has_rows=True, available=True):
+    """Patch the digest's data sources. _live_meta_summary is patched directly so the
+    tests assert the compose WIRING (scope label + which summary feeds the table) without
+    hitting Meta."""
     import backend.approval_store as approval_store
     import backend.funnel_events as funnel_events
-    import backend.knowledge_base as kb
     import backend.kpi_digest_campaign_store as kpi_store
     import backend.targets_store as targets_store
 
-    monkeypatch.setattr(kb, "load_knowledge_base", lambda: _knowledge_with_two_campaigns())
     monkeypatch.setattr(kpi_store, "load_kpi_digest_campaign", lambda **kw: selection)
+    monkeypatch.setattr(telegram_digest, "_live_meta_summary", lambda campaign_id, days=90: (live_summary, has_rows, available))
     monkeypatch.setattr(funnel_events, "build_funnel_summary", lambda **kw: {"uniqueTelegramUsers": 999, "rates": {"telegramStartRate": 99}})
     monkeypatch.setattr(targets_store, "load_targets", lambda **kw: {})
     monkeypatch.setattr(approval_store, "list_approval_requests", lambda **kw: [])
 
 
-def test_compose_is_account_wide_when_no_campaign_pinned(monkeypatch):
-    _patch_digest_sources(monkeypatch, selection=None)
+def test_compose_is_account_wide_live_when_no_campaign_pinned(monkeypatch):
+    _patch_digest_sources(
+        monkeypatch,
+        selection=None,
+        live_summary={"spend": 150, "leads": 25, "cpl": 6, "ctr": 1, "purchases": 0, "subscribes": 0},
+    )
     text = compose_kpi_digest_text()
-    assert "account-wide" in text
-    assert "$150.00" in text  # account-total spend, account funnel STARTs (999)
-    assert "999" in text
+    assert "account-wide · live · last 90 days" in text
+    assert "$150.00" in text          # live account-total spend
+    assert "999" in text              # account-wide uses the first-party funnel (999 STARTs)
 
 
-def test_compose_scopes_to_pinned_campaign(monkeypatch):
-    _patch_digest_sources(monkeypatch, selection={"campaignId": "c1", "campaignName": "Alpha"})
+def test_compose_scopes_to_pinned_campaign_live(monkeypatch):
+    _patch_digest_sources(
+        monkeypatch,
+        selection={"campaignId": "c1", "campaignName": "DA - SHAHLOAI - VSL - 16.06.2026"},
+        live_summary={"spend": 100, "leads": 20, "cpl": 5, "ctr": 2, "purchases": 0, "subscribes": 8},
+    )
     text = compose_kpi_digest_text()
-    assert "campaign: Alpha" in text
-    assert "$100.00" in text  # c1's spend
-    assert "$150.00" not in text  # not the account total
-    # Scoped digest uses Meta per-campaign subscribes (8), not the account funnel's 999.
-    assert "999" not in text
+    assert "campaign: DA - SHAHLOAI - VSL - 16.06.2026 · live · last 90 days" in text
+    assert "$100.00" in text          # the campaign's live spend
+    assert "$150.00" not in text      # not the account total
+    assert "999" not in text          # per-campaign uses Meta subscribes (8), not the account funnel
+
+
+def test_compose_pinned_campaign_with_no_delivery_notes_it(monkeypatch):
+    _patch_digest_sources(
+        monkeypatch,
+        selection={"campaignId": "c1", "campaignName": "DA - SHAHLOAI - VSL - 16.06.2026"},
+        live_summary={"spend": 0, "leads": 0, "cpl": 0, "ctr": 0, "purchases": 0, "subscribes": 0},
+        has_rows=False,
+    )
+    text = compose_kpi_digest_text()
+    assert "no delivery in this window yet" in text
+    assert "DA - SHAHLOAI - VSL - 16.06.2026" in text
+    assert "$0.00" in text
+
+
+def test_compose_flags_unavailable_when_live_fetch_fails(monkeypatch):
+    # A Meta fetch failure must NOT be mislabelled as "no delivery" — it says so.
+    _patch_digest_sources(
+        monkeypatch,
+        selection={"campaignId": "c1", "campaignName": "DA - SHAHLOAI - VSL - 16.06.2026"},
+        live_summary={},
+        has_rows=False,
+        available=False,
+    )
+    text = compose_kpi_digest_text()
+    assert "live data unavailable" in text
+    assert "no delivery in this window yet" not in text
+    assert "DA - SHAHLOAI - VSL - 16.06.2026" in text

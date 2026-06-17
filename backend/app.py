@@ -23,6 +23,7 @@ from .config import allowed_origins
 from .routers import agents as agents_router
 from .routers import auth as auth_router
 from .routers import approvals as approvals_router
+from .routers import campaigns as campaigns_router
 from .routers import crm as crm_router
 from .routers import dashboard as dashboard_router
 from .routers import funnel as funnel_router
@@ -218,6 +219,7 @@ for module in (
     planning_router,
     funnel_router,
     crm_router,
+    campaigns_router,
     dashboard_router,
     monitoring_router,
     opportunities_router,
