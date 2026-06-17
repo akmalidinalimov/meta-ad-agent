@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   BarChart3,
@@ -14,17 +14,17 @@ import { RankingsView } from './dashboard/views/RankingsView'
 import { SettingsView } from './dashboard/views/SettingsView'
 import { TeamPanel } from './dashboard/views/TeamPanel'
 import { MonitorView } from './dashboard/views/MonitorView'
-import { EmptyState } from './dashboard/shared/EmptyState'
 import {
   deriveFunnel,
   deriveTrend,
   filterMetricsForDashboard,
-  getCampaignOptions,
   getDateWindow,
+  type DateRange,
 } from '../lib/analytics'
-import { getDashboardAnchorDate, labelRawSetting } from '../lib/format'
+import { getDashboardAnchorDate } from '../lib/format'
 import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
-import type { DashboardData, DashboardFilters } from '../types/marketing'
+import { getLiveCampaigns, type LiveCampaign } from '../services/dashboardDataProvider'
+import type { DashboardData } from '../types/marketing'
 
 const navItems = [
   { id: 'overview', label: 'Monitor', icon: LayoutDashboard },
@@ -65,18 +65,9 @@ interface DashboardProps {
   role?: string | null
 }
 
-const defaultFilters: DashboardFilters = {
-  dateRange: '30d',
-  campaignIds: ['all'],
-  creativeFormat: 'all',
-  audience: 'all',
-  funnelStage: 'all',
-}
-
-// Map the selected range to a day count for the live funnel-rate cards, which query
-// Meta directly — so the date control drives those headline rates too, not just the
-// synced KPI rail/trend below them.
-function rangeToDays(range: DashboardFilters['dateRange']): number {
+// Map the selected range to a day count for both the live Meta queries and the
+// synced account-history window, so the date control drives every number on screen.
+function rangeToDays(range: DateRange): number {
   return range === '7d' ? 7 : range === '14d' ? 14 : 30
 }
 
@@ -87,10 +78,18 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
   const visibleNavItems = visibleNavFor(role)
   const [activeView, setActiveView] = useState<ViewId>('overview')
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
-  const [filters, setFilters] = useState<DashboardFilters>(defaultFilters)
+  const [dateRange, setDateRange] = useState<DateRange>('30d')
+  const [selectedCampaignId, setSelectedCampaignId] = useState('all')
+  const [liveCampaigns, setLiveCampaigns] = useState<LiveCampaign[]>([])
+  const [liveError, setLiveError] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const days = rangeToDays(dateRange)
 
+  // Account-history window (synced snapshot) drives the disclosure charts only —
+  // it is account-wide (no campaign/creative filter); the live panel above it owns
+  // the per-campaign scope.
   const filteredMetrics = useMemo(() => {
-    const window = getDateWindow(filters.dateRange, getDashboardAnchorDate(data))
+    const window = getDateWindow(dateRange, getDashboardAnchorDate(data))
     return filterMetricsForDashboard({
       metrics: data.metrics,
       campaigns: data.campaigns,
@@ -99,14 +98,14 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
       filters: {
         start: window.start,
         end: window.end,
-        campaignIds: filters.campaignIds,
-        creativeFormat: filters.creativeFormat,
+        campaignIds: ['all'],
+        creativeFormat: 'all',
       },
     })
-  }, [data, filters])
+  }, [data, dateRange])
   const funnel = useMemo(() => deriveFunnel(filteredMetrics), [filteredMetrics])
   const trend = useMemo(() => deriveTrend(filteredMetrics), [filteredMetrics])
-  const hasData = filteredMetrics.length > 0
+  const hasHistory = filteredMetrics.length > 0
   const dataSourceTone = data.dataSource?.kind === 'meta' ? 'good' : 'warning'
 
   useEffect(() => {
@@ -117,6 +116,40 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
       })
   }, [])
 
+  // Load the live campaign list for the picker, scoped to those CREATED within the
+  // selected window. A range change re-fetches; Refresh forces a live pull. We never
+  // setState synchronously in the effect body (react-hooks/set-state-in-effect) and
+  // reset the selection only if the current pick is no longer in range.
+  useEffect(() => {
+    let active = true
+    void getLiveCampaigns(days, refreshKey > 0)
+      .then((result) => {
+        if (!active) return
+        setLiveCampaigns(result.campaigns)
+        setLiveError(result.ok ? null : result.error ?? 'Connect Meta to list live campaigns.')
+        setSelectedCampaignId((current) =>
+          current === 'all' || result.campaigns.some((campaign) => campaign.id === current)
+            ? current
+            : 'all',
+        )
+      })
+      .catch(() => {
+        if (!active) return
+        setLiveCampaigns([])
+        setLiveError('Connect Meta to list live campaigns.')
+      })
+    return () => {
+      active = false
+    }
+  }, [days, refreshKey])
+
+  // Refresh bumps refreshKey (forces live re-fetch in the picker + KPI panels) and
+  // re-runs the snapshot refresh so the account-history disclosure updates too.
+  const handleRefresh = useCallback(() => {
+    setRefreshKey((key) => key + 1)
+    if (onRefresh) void onRefresh()
+  }, [onRefresh])
+
   // Freshness stamp: when this data was loaded, and whether it is live. Keyed to
   // `data` so the timestamp re-stamps on every refresh (no effect → no cascading
   // render). The memo body doesn't read `data`, so exhaustive-deps flags it as
@@ -125,6 +158,10 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
   const loadedAt = useMemo(() => new Date(), [data])
   const isLive = data.dataSource?.kind === 'meta' && !data.dataSource?.backendUnreachable
   const freshness = `${isLive ? 'data as of' : 'snapshot ·'} ${loadedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`
+
+  const selectedCampaignName =
+    liveCampaigns.find((campaign) => campaign.id === selectedCampaignId)?.name ??
+    (selectedCampaignId === 'all' ? 'All campaigns' : selectedCampaignId)
 
   return (
     <main className="app-shell">
@@ -146,7 +183,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
           </div>
           <div className="status-pill neutral">{freshness}</div>
           {onRefresh && (
-            <button className="sync-button secondary" type="button" onClick={() => void onRefresh()} disabled={isRefreshing}>
+            <button className="sync-button secondary" type="button" onClick={handleRefresh} disabled={isRefreshing}>
               <RefreshCcw size={16} />
               {isRefreshing ? 'Refreshing...' : 'Refresh data'}
             </button>
@@ -179,18 +216,31 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
         </div>
       )}
 
-      <Filters data={data} filters={filters} onChange={setFilters} />
+      <Filters
+        dateRange={dateRange}
+        onDateRangeChange={setDateRange}
+        campaigns={liveCampaigns}
+        selectedCampaignId={selectedCampaignId}
+        onCampaignChange={setSelectedCampaignId}
+        error={liveError}
+      />
 
       {activeView === 'team' && isManager && <TeamPanel />}
 
-      {/* Empty state is scoped to the data-driven Monitor only, so an over-narrow
-          filter never hides Settings (reconnect) or Rankings. */}
-      {activeView === 'overview' &&
-        (hasData ? (
-          <MonitorView metrics={filteredMetrics} trend={trend} funnel={funnel} days={rangeToDays(filters.dateRange)} />
-        ) : (
-          <EmptyState onReset={() => setFilters(defaultFilters)} />
-        ))}
+      {/* The live panel owns its own empty state, so the Monitor renders
+          unconditionally — an empty snapshot no longer hides live KPIs. */}
+      {activeView === 'overview' && (
+        <MonitorView
+          metrics={filteredMetrics}
+          trend={trend}
+          funnel={funnel}
+          days={days}
+          campaignId={selectedCampaignId}
+          campaignName={selectedCampaignName}
+          refreshKey={refreshKey}
+          hasHistory={hasHistory}
+        />
+      )}
       {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
       {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} onDashboardRefresh={onRefresh} />}
     </main>
@@ -198,136 +248,47 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
 }
 
 function Filters({
-  data,
-  filters,
-  onChange,
+  dateRange,
+  onDateRangeChange,
+  campaigns,
+  selectedCampaignId,
+  onCampaignChange,
+  error,
 }: {
-  data: DashboardData
-  filters: DashboardFilters
-  onChange: (filters: DashboardFilters) => void
+  dateRange: DateRange
+  onDateRangeChange: (range: DateRange) => void
+  campaigns: LiveCampaign[]
+  selectedCampaignId: string
+  onCampaignChange: (campaignId: string) => void
+  error: string | null
 }) {
-  const update = <K extends keyof DashboardFilters>(key: K, value: DashboardFilters[K]) => {
-    const nextFilters = { ...filters, [key]: value }
-    if (key === 'dateRange') {
-      const dateWindow = getDateWindow(nextFilters.dateRange, getDashboardAnchorDate(data))
-      const validCampaignIds = new Set(
-        getCampaignOptions({
-          campaigns: data.campaigns,
-          window: dateWindow,
-        }).map((campaign) => campaign.id),
-      )
-      const selectedCampaignIds = nextFilters.campaignIds.filter((campaignId) => campaignId !== 'all' && validCampaignIds.has(campaignId))
-      nextFilters.campaignIds = selectedCampaignIds.length > 0 ? selectedCampaignIds : ['all']
-    }
-    onChange(nextFilters)
-  }
-
-  const updateCampaignSelection = (selectedValues: string[]) => {
-    if (selectedValues.includes('all') || selectedValues.length === 0) {
-      update('campaignIds', ['all'])
-      return
-    }
-
-    update('campaignIds', selectedValues)
-  }
-
-  const toggleCampaign = (campaignId: string) => {
-    if (campaignId === 'all') {
-      update('campaignIds', ['all'])
-      return
-    }
-
-    const current = filters.campaignIds.includes('all') ? [] : filters.campaignIds
-    const next = current.includes(campaignId)
-      ? current.filter((selectedId) => selectedId !== campaignId)
-      : [...current, campaignId]
-
-    update('campaignIds', next.length > 0 ? next : ['all'])
-  }
-
+  const rangeLabel = dateRange === '7d' ? 'Last 7 days' : dateRange === '14d' ? 'Last 14 days' : 'Last 30 days'
   const campaignSummary =
-    filters.campaignIds.includes('all')
+    selectedCampaignId === 'all'
       ? 'All campaigns'
-      : `${filters.campaignIds.length} campaign${filters.campaignIds.length === 1 ? '' : 's'} selected`
-
-  const isCampaignSelected = (campaignId: string) =>
-    campaignId === 'all' ? filters.campaignIds.includes('all') : filters.campaignIds.includes(campaignId)
-
-  const handleCampaignSelectChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    updateCampaignSelection(Array.from(event.target.selectedOptions, (option) => option.value))
-  }
-
-  const optionWindow = getDateWindow(filters.dateRange, getDashboardAnchorDate(data))
-  const campaignOptions = getCampaignOptions({
-    campaigns: data.campaigns,
-    window: optionWindow,
-  })
+      : campaigns.find((campaign) => campaign.id === selectedCampaignId)?.name ?? '1 campaign'
 
   return (
     <details className="filter-bar" aria-label="Dashboard filters">
       <summary className="filter-summary">
         <SlidersHorizontal size={18} />
         <strong>Filters</strong>
-        <span>{labelRawSetting(filters.dateRange)} · {campaignSummary}</span>
+        <span>{rangeLabel} · {campaignSummary}</span>
       </summary>
       <div className="filter-fields">
         <label>
           Date range
-          <select value={filters.dateRange} onChange={(event) => update('dateRange', event.target.value as DashboardFilters['dateRange'])}>
+          <select value={dateRange} onChange={(event) => onDateRangeChange(event.target.value as DateRange)}>
             <option value="7d">Last 7 days</option>
             <option value="14d">Last 14 days</option>
             <option value="30d">Last 30 days</option>
           </select>
         </label>
         <label>
-          Creative type
-          <select value={filters.creativeFormat} onChange={(event) => update('creativeFormat', event.target.value as DashboardFilters['creativeFormat'])}>
-            <option value="all">All types</option>
-            <option value="video">Video</option>
-            <option value="image">Image</option>
-            <option value="gif">GIF</option>
-            <option value="carousel">Carousel</option>
-          </select>
-        </label>
-        <label className="campaign-filter-field">
-          Campaigns
-          <div className="campaign-selection-summary">
-            <span>{campaignSummary}</span>
-            {!filters.campaignIds.includes('all') && (
-              <button type="button" onClick={() => update('campaignIds', ['all'])}>
-                Clear
-              </button>
-            )}
-          </div>
-          <div className="campaign-chip-list">
-            <button
-              type="button"
-              className={isCampaignSelected('all') ? 'active' : ''}
-              onClick={() => toggleCampaign('all')}
-            >
-              All campaigns
-            </button>
-            {campaignOptions.slice(0, 12).map((campaign) => (
-              <button
-                type="button"
-                className={isCampaignSelected(campaign.id) ? 'active' : ''}
-                onClick={() => toggleCampaign(campaign.id)}
-                key={campaign.id}
-                title={campaign.name}
-              >
-                {campaign.name}
-              </button>
-            ))}
-          </div>
-          <select
-            className="campaign-multi-select"
-            value={filters.campaignIds}
-            multiple
-            size={Math.min(10, campaignOptions.length + 1)}
-            onChange={handleCampaignSelectChange}
-          >
+          Campaign
+          <select value={selectedCampaignId} onChange={(event) => onCampaignChange(event.target.value)}>
             <option value="all">All campaigns</option>
-            {campaignOptions.map((campaign) => (
+            {campaigns.map((campaign) => (
               <option value={campaign.id} key={campaign.id}>
                 {campaign.name}
               </option>
@@ -335,6 +296,7 @@ function Filters({
           </select>
         </label>
       </div>
+      {error && <p className="filter-error">{error}</p>}
     </details>
   )
 }

@@ -119,22 +119,37 @@ def format_kpi_digest(
     return "\n".join(parts)
 
 
-def _campaign_summary(knowledge: dict[str, Any], campaign_id: str) -> tuple[dict[str, Any], str] | None:
-    """(summary, campaign_name) scoped to one campaign, or None when that campaign has
-    no rows in the latest synced knowledge base (e.g. brand-new / no delivery yet).
+DIGEST_WINDOW_DAYS = 90
 
-    Reuses analysis_engine.summarize_overall on just that campaign's base insight rows,
-    so the scoped summary has the exact same shape/fields as the account summary — no
-    new metric math, and CPL/lead-rate/CTR/purchases stay consistent with the dashboard.
+
+def _live_meta_summary(campaign_id: str | None, days: int = DIGEST_WINDOW_DAYS) -> tuple[dict[str, Any], bool]:
+    """LIVE Meta KPI summary (summarize_overall shape) for one campaign or the whole
+    account, fetched fresh from Meta — NOT the stale synced knowledge base. Returns
+    (summary, hasData).
+
+    Runs the async insight fetch via asyncio.run, which is SAFE here because the digest
+    is composed either from a sync Telegram handler (no running event loop) or from the
+    monitoring loop's ``asyncio.to_thread`` worker (a thread with no running loop) —
+    mirroring meta_live._live_account_sync. A live-fetch failure degrades to an empty
+    summary rather than breaking the digest.
     """
-    from .analysis_engine import summarize_overall, valid_rows
+    import asyncio
 
-    base_rows = ((knowledge.get("raw") or {}).get("insights") or {}).get("base", [])
-    rows = [row for row in valid_rows(base_rows) if str(row.get("campaign_id")) == str(campaign_id)]
-    if not rows:
-        return None
-    name = next((str(row.get("campaign_name")) for row in rows if row.get("campaign_name")), "")
-    return summarize_overall(rows), name
+    from .analysis_engine import summarize_overall, valid_rows
+    from .meta_client import get_meta_config
+    from .meta_sync import safe_chunked_insights
+
+    config = get_meta_config()
+    if not config.is_configured:
+        return {}, False
+    try:
+        raw = asyncio.run(safe_chunked_insights(config, "kpi_digest", None, days=days))
+    except Exception:  # noqa: BLE001 - never let a live-fetch failure break the digest
+        return {}, False
+    rows = valid_rows(raw)
+    if campaign_id:
+        rows = [row for row in rows if str(row.get("campaign_id")) == str(campaign_id)]
+    return summarize_overall(rows), bool(rows)
 
 
 def _campaign_funnel(summary: dict[str, Any]) -> dict[str, Any]:
@@ -154,40 +169,35 @@ def _campaign_funnel(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def compose_kpi_digest_text() -> str:
-    """Load the latest synced analysis + live funnel and render the digest text.
+    """Render the KPI digest from LIVE Meta data (always current, not a stale snapshot).
 
     Account-wide by default. When the operator has pinned a campaign (Telegram KPI
-    panel), the digest is scoped to that campaign and the subtitle names it, so it is
-    always clear which campaign the numbers describe.
+    panel), the digest is scoped to that campaign — fetched live so a brand-new / just-
+    running campaign reports correctly — and the subtitle names it. A pinned campaign
+    with no delivery yet honestly shows zeros with a "no delivery yet" note rather than
+    silently falling back to the account total.
     """
     from .approval_store import list_approval_requests
     from .funnel_events import build_funnel_summary
-    from .knowledge_base import load_knowledge_base
     from .kpi_digest_campaign_store import load_kpi_digest_campaign
     from .targets_store import load_targets
 
-    knowledge = load_knowledge_base() or {}
     targets = load_targets()
     pending = sum(1 for approval in list_approval_requests() if approval.get("status") == "needs_review")
-    generated_at = (knowledge.get("snapshot") or {}).get("generatedAt")
-
     selection = load_kpi_digest_campaign()
-    scoped = _campaign_summary(knowledge, selection["campaignId"]) if selection else None
 
-    if scoped:
-        summary, resolved_name = scoped
+    if selection:
+        summary, has_rows = _live_meta_summary(selection["campaignId"])
         funnel = _campaign_funnel(summary)
-        name = resolved_name or selection.get("campaignName") or selection["campaignId"]
-        scope_label = f"campaign: {name}"
+        name = selection.get("campaignName") or selection["campaignId"]
+        note = "" if has_rows else " · no delivery in this window yet"
+        scope_label = f"campaign: {name}{note}"
     else:
-        summary = (knowledge.get("analysis") or {}).get("summary", {})
+        summary, _ = _live_meta_summary(None)
         funnel = build_funnel_summary()
-        scope_label = (
-            "account-wide (pinned campaign not in latest sync yet)" if selection else "account-wide"
-        )
+        scope_label = "account-wide"
 
-    pieces = [scope_label, "last 90 days"] + ([f"synced {generated_at}"] if generated_at else [])
-    subtitle = " · ".join(pieces)
+    subtitle = f"{scope_label} · live · last {DIGEST_WINDOW_DAYS} days"
     return format_kpi_digest(summary, funnel, pending_approvals=pending, subtitle=subtitle, targets=targets)
 
 

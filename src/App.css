@@ -200,6 +200,12 @@
   font-weight: var(--weight-medium);
 }
 
+.filter-error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #b4543e;
+}
+
 .filter-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2672,6 +2678,11 @@
   color: var(--text-muted);
   margin: 0 0 8px;
 }
+.monitor-live-freshness {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
 .funnel-rate-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -2699,7 +2710,12 @@
 .funnel-rate-card strong { display: block; font-size: 20px; font-weight: var(--weight-strong); margin: 2px 0; }
 .funnel-rate-card small { font-size: 11px; color: var(--text-muted); }
 
-.monitor-kpis { display: flex; flex-direction: column; gap: 14px; }
+.monitor-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
 .monitor-kpi {
   background: var(--surface);
   border: 1px solid var(--border);
