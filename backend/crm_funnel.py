@@ -6,9 +6,11 @@ from typing import Any, Iterable
 # Audiences we split by (match the ChatPlace src_<aud> tags / referral-link aud values).
 KNOWN_AUDIENCES = ("ai", "business", "it", "original", "content")
 
-# Substrings that identify a terminal "Paid"/"Won" stage label when BITRIX_PAID_STATUS_IDS
-# is not configured. Uzbek / Russian / English; matched case-insensitively on the label.
-PAID_NAME_KEYWORDS = ("paid", "to'l", "to‘l", "to'la", "оплач", "оплат", "won", "купил", "успешн")
+# Substrings that identify a terminal "Paid"/"Won" stage when BITRIX_PAID_STATUS_IDS is
+# not configured. Matched case-insensitively against the stage id AND label, in Uzbek /
+# Russian / English. This is only a rough default — the sales team should confirm the real
+# Paid stage(s) and set BITRIX_PAID_STATUS_IDS, which always wins over this heuristic.
+PAID_NAME_KEYWORDS = ("paid", "to'l", "to‘l", "to’l", "оплач", "оплат", "won", "sotil", "купил", "успешн")
 
 _DIGITS = re.compile(r"\D+")
 
@@ -85,8 +87,8 @@ def resolve_paid_stage_ids(stages: list[dict[str, Any]], *, configured_ids: list
             return configured
     paid: set[str] = set()
     for stage in stages:
-        name = str(stage.get("name") or "").lower()
-        if any(keyword in name for keyword in PAID_NAME_KEYWORDS):
+        haystack = f"{stage.get('id') or ''} {stage.get('name') or ''}".lower()
+        if any(keyword in haystack for keyword in PAID_NAME_KEYWORDS):
             paid.add(str(stage.get("id")))
     return paid
 

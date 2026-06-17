@@ -74,6 +74,11 @@ def test_resolve_paid_stage_ids_prefers_config_over_heuristic():
     assert resolve_paid_stage_ids(STAGES, configured_ids=None) == {"PAID"}  # keyword "to'l"
 
 
+def test_resolve_paid_stage_ids_matches_won_by_stage_id_and_sold_label():
+    deal_stages = [{"id": "WON", "name": "SOTILDI"}, {"id": "NEW", "name": "Yangi imkoniyat"}]
+    assert resolve_paid_stage_ids(deal_stages, configured_ids=None) == {"WON"}
+
+
 def test_build_crm_funnel_matrix_joins_by_phone_and_counts_paid():
     records = [
         {"stage": "PAID", "phone": "+998901112233", "telegramUsername": "", "utmContent": ""},   # -> ai (phone)
