@@ -53,7 +53,7 @@ function money(value: number): string {
 const RATE_CARDS = [
   { key: 'visit', label: 'Visit rate', color: '#2563eb', desc: '% of ad-clickers whose page loaded', sub: (i: FunnelInputs) => `${formatNumber(i.landingViews)} views ÷ ${formatNumber(i.linkClicks)} clicks` },
   { key: 'lead', label: 'Lead rate', color: '#0d9488', desc: '% of visitors who clicked the CTA', sub: (i: FunnelInputs) => `${formatNumber(i.leads)} leads ÷ ${formatNumber(i.landingViews)} views` },
-  { key: 'start', label: 'Start rate', color: '#7c3aed', desc: '% of leads who started the bot', sub: (i: FunnelInputs) => `${formatNumber(i.botStarts)} starts ÷ ${formatNumber(i.leads)} leads` },
+  { key: 'start', label: 'Start rate', color: '#7c3aed', desc: '% of button-clickers who started the bot', sub: (i: FunnelInputs) => `${formatNumber(i.botStarts)} starts ÷ ${formatNumber(i.leads)} leads` },
   { key: 'vslView', label: 'VSL view rate', color: '#ea580c', desc: '% of bot-starters who watched the VSL', sub: (i: FunnelInputs) => `${formatNumber(i.vslViews)} VSL views ÷ ${formatNumber(i.botStarts)} starts` },
   { key: 'crmFill', label: 'CRM fill rate', color: '#db2777', desc: '% of bot-starters who filled the form', sub: (i: FunnelInputs) => `${formatNumber(i.crmLeads)} CRM leads ÷ ${formatNumber(i.botStarts)} starts` },
 ] as const
@@ -142,17 +142,37 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
       </div>
 
       <div className="simple-cards">
-        {RATE_CARDS.map((card) => (
-          <article className="simple-rate-card" key={card.key}>
-            <p className="simple-rate-label" style={{ color: card.color }}>
-              <span className="simple-dot" style={{ background: card.color }} />
-              {card.label}
-            </p>
-            <strong style={{ color: card.color }}>{loading ? '…' : `${out.rates[card.key as keyof typeof out.rates]}%`}</strong>
-            <span className="simple-rate-sub">{card.sub(inputs)}</span>
-            <small>{card.desc}</small>
-          </article>
-        ))}
+        {RATE_CARDS.map((card) => {
+          // START rate uses the backend's select_start_rate (first-party bot starts ÷
+          // Telegram button clicks, scoped + capped) — the deliberate implementation —
+          // rather than the client-side starts÷leads. The other four stay client-computed.
+          let value: string
+          let sub: string
+          if (card.key === 'start') {
+            value = loading ? '…' : kpis?.rates ? `${kpis.rates.startRate}%` : '—'
+            const starts = formatNumber(kpis?.counts?.botStarts ?? 0)
+            const denom =
+              kpis?.startDenominatorSource === 'telegram_link_click'
+                ? `${formatNumber(kpis?.counts?.telegramLinkClicks ?? 0)} button clicks`
+                : `${formatNumber(kpis?.counts?.leads ?? 0)} leads`
+            const scopeNote = kpis?.startScope === 'account' && campaignId !== 'all' ? ' · account-wide' : ''
+            sub = `${starts} starts ÷ ${denom}${scopeNote}`
+          } else {
+            value = loading ? '…' : `${out.rates[card.key as keyof typeof out.rates]}%`
+            sub = card.sub(inputs)
+          }
+          return (
+            <article className="simple-rate-card" key={card.key}>
+              <p className="simple-rate-label" style={{ color: card.color }}>
+                <span className="simple-dot" style={{ background: card.color }} />
+                {card.label}
+              </p>
+              <strong style={{ color: card.color }}>{value}</strong>
+              <span className="simple-rate-sub">{sub}</span>
+              <small>{card.desc}</small>
+            </article>
+          )
+        })}
       </div>
 
       <div className="simple-block">
