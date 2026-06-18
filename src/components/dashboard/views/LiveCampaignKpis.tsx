@@ -1,9 +1,10 @@
 // The primary Monitor headline: the simple per-campaign funnel dashboard — five rate
 // cards (visit / lead / start / VSL-view / CRM-fill), the funnel, cost per stage, the
-// CRM stage breakdown, and spend & volume. Meta volumes come from /api/campaigns/kpis;
-// CRM stages from /api/crm/stages (the configured order source); VSL from /api/vsl. Bot
-// starts / CRM leads / VSL views are pre-filled from live data but stay editable and are
-// remembered (localStorage). All rates are computed client-side so they match exactly.
+// CRM stage breakdown, and spend & volume. EVERYTHING auto-fetches on Refresh — there
+// are no manual inputs: Meta volumes from /api/campaigns/kpis, bot starts from the
+// first-party Telegram relay, CRM leads from /api/crm/stages (Bitrix), VSL views from
+// /api/vsl (YouTube). Rates are recomputed client-side (capped at 100%); Start rate uses
+// the backend's select_start_rate.
 import { useEffect, useState } from 'react'
 import {
   getCampaignKpis,
@@ -23,29 +24,6 @@ interface LiveCampaignKpisProps {
   refreshKey: number
 }
 
-const MANUAL_KEYS = { botStarts: 'vslDash.botStarts', crmLeads: 'vslDash.crmLeads', vslViews: 'vslDash.vslViews' } as const
-type ManualField = keyof typeof MANUAL_KEYS
-
-function readStoredManual(field: ManualField): string | null {
-  if (typeof window === 'undefined') return null
-  try {
-    return window.localStorage.getItem(MANUAL_KEYS[field])
-  } catch {
-    return null
-  }
-}
-function storeManual(field: ManualField, value: string) {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(MANUAL_KEYS[field], value)
-  } catch {
-    /* ignore quota / privacy-mode errors */
-  }
-}
-function toInt(value: string): number {
-  const n = parseInt(value.replace(/[^0-9]/g, ''), 10)
-  return Number.isFinite(n) ? n : 0
-}
 function money(value: number): string {
   return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
@@ -73,29 +51,17 @@ const EMPTY_VSL: VslMetrics = { ok: false, configured: false, views: null, views
 export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }: LiveCampaignKpisProps) {
   const currentKey = `${campaignId}|${days}|${refreshKey}`
   const [bundle, setBundle] = useState<{ kpis: CampaignKpis; crm: CrmStages; vsl: VslMetrics; loadedKey: string } | null>(null)
-  const [manual, setManual] = useState({ botStarts: '', crmLeads: '', vslViews: '' })
 
   useEffect(() => {
     if (typeof fetch !== 'function') return
     let active = true
     const key = `${campaignId}|${days}|${refreshKey}`
+    // refreshKey>0 means the Refresh button was pressed → force a live, uncached pull on
+    // every source (Meta insights, CRM stages, YouTube) and bust any browser cache.
     const force = refreshKey > 0
     void Promise.all([getCampaignKpis(campaignId, days, force), getCrmStages(days, force), getVsl(days, force)])
       .then(([kpis, crm, vsl]) => {
-        if (!active) return
-        setBundle({ kpis, crm, vsl, loadedKey: key })
-        // Refresh shows FRESH live values; a stored manual entry is only a fallback when
-        // there is no live value (e.g. VSL views before YouTube is connected), so a stale
-        // localStorage value can never shadow live bot-starts / CRM-leads on Refresh.
-        const prefill = (field: ManualField, liveValue: number | null) => {
-          if (liveValue != null) return String(liveValue)
-          return readStoredManual(field) ?? ''
-        }
-        setManual({
-          botStarts: prefill('botStarts', kpis.counts?.botStarts ?? null),
-          crmLeads: prefill('crmLeads', crm.ok ? crm.total : null),
-          vslViews: prefill('vslViews', vsl.views ?? null),
-        })
+        if (active) setBundle({ kpis, crm, vsl, loadedKey: key })
       })
       .catch(() => {
         if (active) setBundle({ kpis: { ok: false }, crm: EMPTY_CRM, vsl: EMPTY_VSL, loadedKey: key })
@@ -108,23 +74,24 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
   const loading = bundle?.loadedKey !== currentKey
   const kpis = loading ? undefined : bundle?.kpis
   const crm = loading ? undefined : bundle?.crm
+  const vsl = loading ? undefined : bundle?.vsl
   const live = Boolean(kpis?.ok && kpis?.hasData)
 
+  // Every input is LIVE — no manual entry. Bot starts come from the first-party Telegram
+  // relay (kpis.counts.botStarts), CRM leads from Bitrix (/api/crm/stages total), VSL
+  // views from YouTube (/api/vsl). All refresh together when Refresh is pressed.
   const inputs: FunnelInputs = {
     linkClicks: kpis?.counts?.linkClicks ?? 0,
     landingViews: kpis?.counts?.landingPageViews ?? 0,
     leads: kpis?.counts?.leads ?? 0,
-    botStarts: toInt(manual.botStarts),
-    vslViews: toInt(manual.vslViews),
-    crmLeads: toInt(manual.crmLeads),
+    botStarts: kpis?.counts?.botStarts ?? 0,
+    vslViews: vsl?.views ?? 0,
+    crmLeads: crm?.ok ? crm.total : 0,
     spend: kpis?.kpis?.spend ?? 0,
   }
   const out = computeSimpleFunnel(inputs)
   const maxBar = Math.max(inputs.linkClicks, 1)
-  const onManual = (field: ManualField, value: string) => {
-    setManual((m) => ({ ...m, [field]: value }))
-    storeManual(field, value)
-  }
+  const vslNeedsConnect = Boolean(vsl && !vsl.configured)
 
   const freshness = loading
     ? 'Loading live data…'
@@ -157,6 +124,9 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
                 : `${formatNumber(kpis?.counts?.leads ?? 0)} leads`
             const scopeNote = kpis?.startScope === 'account' && campaignId !== 'all' ? ' · account-wide' : ''
             sub = `${starts} starts ÷ ${denom}${scopeNote}`
+          } else if (card.key === 'vslView' && vslNeedsConnect) {
+            value = loading ? '…' : '—'
+            sub = 'Connect YouTube to populate'
           } else {
             value = loading ? '…' : `${out.rates[card.key as keyof typeof out.rates]}%`
             sub = card.sub(inputs)
@@ -190,23 +160,10 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
             </div>
           ))}
         </div>
-        <div className="manual-inputs">
-          <label>
-            Bot starts
-            <input inputMode="numeric" value={manual.botStarts} onChange={(e) => onManual('botStarts', e.target.value)} />
-          </label>
-          <label>
-            CRM leads (Bitrix)
-            <input inputMode="numeric" value={manual.crmLeads} onChange={(e) => onManual('crmLeads', e.target.value)} />
-          </label>
-          <label>
-            VSL views (YouTube)
-            <input inputMode="numeric" value={manual.vslViews} onChange={(e) => onManual('vslViews', e.target.value)} />
-          </label>
-        </div>
         <small className="simple-help">
-          Each row’s % is that step’s conversion vs the stage above it. Bot starts / CRM leads / VSL views are pre-filled
-          from live data but stay editable here and are remembered.
+          Each row’s % is that step’s conversion vs the stage above it. Everything auto-refreshes — Meta volumes from live
+          insights, bot starts from the Telegram relay, CRM leads from Bitrix, VSL views from YouTube.
+          {vslNeedsConnect ? ' VSL views read 0 until YouTube is connected (set YOUTUBE_VSL_VIDEO_ID + YOUTUBE_API_KEY).' : ''}
         </small>
       </div>
 
