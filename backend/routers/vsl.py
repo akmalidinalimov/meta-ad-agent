@@ -21,7 +21,7 @@ def build_youtube_transport(config: Any) -> Any:
 
 
 @router.get("/api/vsl")
-async def vsl_metrics(days: int = 30) -> dict[str, Any]:
+async def vsl_metrics(days: int = 30, force: bool = False) -> dict[str, Any]:  # force: cache-bust only (uncached)
     config = get_youtube_config()
     if not config.is_configured:
         return {

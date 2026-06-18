@@ -44,4 +44,10 @@ describe('computeSimpleFunnel — matches the reference image exactly', () => {
     expect(zero.rates.visit).toBe(0)
     expect(zero.cost.perLead).toBe(0)
   })
+
+  it('caps rates at 100% (account-wide bot starts vs one campaign, or attribution overshoot)', () => {
+    const out = computeSimpleFunnel({ linkClicks: 100, landingViews: 200, leads: 50, botStarts: 9999, vslViews: 0, crmLeads: 0, spend: 0 })
+    expect(out.rates.visit).toBe(100) // 200/100 → capped
+    expect(out.rates.start).toBe(100) // 9999/50 → capped
+  })
 })

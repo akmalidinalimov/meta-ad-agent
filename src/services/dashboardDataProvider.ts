@@ -188,10 +188,10 @@ export type CrmStages = {
   days?: number
   error?: string
 }
-export async function getCrmStages(days: number): Promise<CrmStages> {
+export async function getCrmStages(days: number, force = false): Promise<CrmStages> {
   const empty: CrmStages = { ok: false, total: 0, paid: 0, paidStageIds: [], stages: [] }
   try {
-    const response = await fetch(apiUrl(`/api/crm/stages?days=${days}`))
+    const response = await fetch(apiUrl(`/api/crm/stages?days=${days}&force=${force}`))
     if (!response.ok) return empty
     return (await response.json()) as CrmStages
   } catch {
@@ -209,10 +209,10 @@ export type VslMetrics = {
   hasRetention: boolean
   error?: string
 }
-export async function getVsl(days: number): Promise<VslMetrics> {
+export async function getVsl(days: number, force = false): Promise<VslMetrics> {
   const empty: VslMetrics = { ok: false, configured: false, views: null, viewsWatched50: null, watchRate50: null, hasRetention: false }
   try {
-    const response = await fetch(apiUrl(`/api/vsl?days=${days}`))
+    const response = await fetch(apiUrl(`/api/vsl?days=${days}&force=${force}`))
     if (!response.ok) return empty
     return (await response.json()) as VslMetrics
   } catch {

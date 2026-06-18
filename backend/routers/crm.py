@@ -76,7 +76,7 @@ def crm_leads() -> dict[str, Any]:
 
 
 @router.get("/api/crm/stages")
-async def crm_stages(days: int = 30) -> dict[str, Any]:
+async def crm_stages(days: int = 30, force: bool = False) -> dict[str, Any]:
     """Bitrix lead stage distribution for the configured order/source (default: leads
     titled 'AI Creators 5.0 buyurtmasi'). Read-only, additive, TTL-cached."""
     config = get_bitrix_config()
@@ -95,7 +95,7 @@ async def crm_stages(days: int = 30) -> dict[str, Any]:
     cache_key = f"{title}:{days}"
     now = datetime.now(timezone.utc)
     cached = _STAGES_CACHE.get(cache_key)
-    if cached and (now - cached["at"]).total_seconds() < _STAGES_TTL_SECONDS:
+    if not force and cached and (now - cached["at"]).total_seconds() < _STAGES_TTL_SECONDS:
         return cached["payload"]
 
     transport = build_bitrix_transport(config)

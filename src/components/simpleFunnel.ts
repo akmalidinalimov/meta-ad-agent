@@ -25,8 +25,11 @@ export interface SimpleFunnelOutput {
   cost: { perVisit: number; perLead: number; perBotStart: number; perVslView: number; perCrmLead: number }
 }
 
+// Rate as a 1-decimal percent, capped at 100% — Meta cross-window attribution (and the
+// account-wide bot-start denominator on a single campaign) can otherwise yield an
+// impossible >100%. Matches the rest of the app, which also caps rates at 100.
 function pct(numer: number, denom: number): number {
-  return denom > 0 ? Math.round((numer / denom) * 1000) / 10 : 0
+  return denom > 0 ? Math.min(100, Math.round((numer / denom) * 1000) / 10) : 0
 }
 
 function money(spend: number, count: number): number {

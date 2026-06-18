@@ -79,13 +79,17 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
     if (typeof fetch !== 'function') return
     let active = true
     const key = `${campaignId}|${days}|${refreshKey}`
-    void Promise.all([getCampaignKpis(campaignId, days, refreshKey > 0), getCrmStages(days), getVsl(days)])
+    const force = refreshKey > 0
+    void Promise.all([getCampaignKpis(campaignId, days, force), getCrmStages(days, force), getVsl(days, force)])
       .then(([kpis, crm, vsl]) => {
         if (!active) return
         setBundle({ kpis, crm, vsl, loadedKey: key })
+        // Refresh shows FRESH live values; a stored manual entry is only a fallback when
+        // there is no live value (e.g. VSL views before YouTube is connected), so a stale
+        // localStorage value can never shadow live bot-starts / CRM-leads on Refresh.
         const prefill = (field: ManualField, liveValue: number | null) => {
-          const stored = readStoredManual(field)
-          return stored != null ? stored : liveValue != null ? String(liveValue) : ''
+          if (liveValue != null) return String(liveValue)
+          return readStoredManual(field) ?? ''
         }
         setManual({
           botStarts: prefill('botStarts', kpis.counts?.botStarts ?? null),
