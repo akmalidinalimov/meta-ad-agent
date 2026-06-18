@@ -86,7 +86,7 @@ import type {
   TrackingHealthItem,
 } from '../types/marketing'
 
-const COLORS = ['#2dd4bf', '#60a5fa', '#f6b545', '#f87171', '#a78bfa', '#5eead4']
+const COLORS = ['#1f9d8a', '#3b82f6', '#f59e0b', '#ef4444', '#7c3aed', '#0f766e']
 
 const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
   alert: AlertTriangle,
@@ -1076,8 +1076,8 @@ function TrendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
           <XAxis dataKey="day" tickLine={false} axisLine={false} />
           <YAxis tickLine={false} axisLine={false} />
           <Tooltip />
-          <Line type="monotone" dataKey="leads" stroke="#2dd4bf" strokeWidth={3} dot={false} />
-          <Line type="monotone" dataKey="buyers" stroke="#f87171" strokeWidth={3} dot={false} />
+          <Line type="monotone" dataKey="leads" stroke="#1f9d8a" strokeWidth={3} dot={false} />
+          <Line type="monotone" dataKey="buyers" stroke="#ef4444" strokeWidth={3} dot={false} />
         </LineChart>
       </ChartFrame>
     </article>
@@ -1337,8 +1337,8 @@ function AudiencePanel({ data }: { data: DashboardData }) {
           <XAxis dataKey="segment" tickLine={false} axisLine={false} />
           <YAxis tickLine={false} axisLine={false} />
           <Tooltip />
-          <Bar dataKey="subs" fill="#60a5fa" radius={[5, 5, 0, 0]} />
-          <Bar dataKey="buyers" fill="#2dd4bf" radius={[5, 5, 0, 0]} />
+          <Bar dataKey="subs" fill="#3b82f6" radius={[5, 5, 0, 0]} />
+          <Bar dataKey="buyers" fill="#1f9d8a" radius={[5, 5, 0, 0]} />
         </BarChart>
       </ChartFrame>
     </article>
@@ -1355,7 +1355,7 @@ function SpendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
           <XAxis dataKey="day" tickLine={false} axisLine={false} />
           <YAxis tickLine={false} axisLine={false} />
           <Tooltip />
-          <Area type="monotone" dataKey="spend" stroke="#a78bfa" fill="rgba(167, 139, 250, 0.18)" strokeWidth={3} />
+          <Area type="monotone" dataKey="spend" stroke="#7c3aed" fill="#ddd6fe" strokeWidth={3} />
         </AreaChart>
       </ChartFrame>
     </article>

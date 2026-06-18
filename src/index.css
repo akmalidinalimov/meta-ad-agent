@@ -1,33 +1,9 @@
 :root {
-  /* Dark instrument-panel theme — design tokens */
-  --ink: #0a0e13;
-  --surface: #121a23;
-  --surface-2: #19232e;
-  --surface-3: #202c39;
-  --border: #26313f;
-  --border-strong: #34465a;
-  --text: #e8eef6;
-  --text-muted: #8b98a9;
-  --text-dim: #5e6b7b;
-  --brand: #2dd4bf;
-  --brand-ink: #0c322e;
-  --gold: #f6b545;
-  --gold-ink: #38290f;
-  --positive: #4ade80;
-  --positive-ink: #0f2a1e;
-  --warning: #fbbf24;
-  --warning-ink: #2c2410;
-  --danger: #f87171;
-  --danger-ink: #2c1515;
-  --blue: #60a5fa;
-
-  --font-display: 'Chivo', ui-sans-serif, system-ui, sans-serif;
-  --font-body: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
-
-  font-family: var(--font-body);
-  color: var(--text);
-  background: var(--ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  color: #172033;
+  background: #eef2f7;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -42,12 +18,6 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  color: var(--text);
-  background:
-    radial-gradient(1100px 560px at 82% -12%, rgba(45, 212, 191, 0.07), transparent 60%),
-    radial-gradient(900px 480px at -8% 8%, rgba(246, 181, 69, 0.05), transparent 55%),
-    var(--ink);
-  background-attachment: fixed;
 }
 
 button,
