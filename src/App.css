@@ -3114,3 +3114,40 @@
 .crm-funnel-table .unattributed-row td:first-child {
   color: #94a3b8;
 }
+
+/* Cost-per-step + VSL metric cards (Funnel & Cost tab) */
+.cost-step-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.cost-step-card {
+  padding: 15px 16px;
+  border: 1px solid #e7edf4;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #ffffff 0%, #f6fbf9 100%);
+}
+
+.cost-step-card p {
+  margin: 0 0 6px;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.cost-step-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #0f766e;
+  font-size: 1.6rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.cost-step-card small {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 700;
+}

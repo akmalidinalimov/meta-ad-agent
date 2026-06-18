@@ -100,6 +100,7 @@ const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'funnel', label: 'Funnel & Cost', icon: Gauge },
   { id: 'commandCenter', label: 'Command Center', icon: Bot },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings },
@@ -284,6 +285,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
               metrics={filteredMetrics}
             />
           )}
+          {activeView === 'funnel' && <FunnelView />}
           {activeView === 'commandCenter' && (
             <CommandCenterView
               data={data}
@@ -605,8 +607,6 @@ function Overview({
     <>
       <DecisionHero data={data} />
       <KpiGrid kpis={kpis} />
-      <LiveFunnelRates />
-      {import.meta.env.VITE_CRM_ENABLED === 'true' ? <CrmFunnelByAudience /> : null}
       <section className="overview-command-grid">
         <FunnelPanel funnel={funnel} />
         <TopProblemsPanel data={data} />
@@ -676,10 +676,28 @@ interface LiveFunnelRatesPayload {
   ok: boolean
   hasData?: boolean
   days?: number
+  spend?: number
   counts?: { linkClicks: number; landingPageViews: number; leads: number; botStarts: number; subscribes: number }
   rates?: { visitRate: number; leadRate: number; startRate: number }
+  costPerStep?: { linkClick: number; landingView: number; lead: number; botStart: number }
   startSource?: string
   error?: string
+}
+
+interface VslPayload {
+  ok: boolean
+  configured: boolean
+  views: number | null
+  viewsWatched50: number | null
+  watchRate50: number | null
+  hasRetention: boolean
+  error?: string
+}
+
+// Cost values are in the ad account's own currency (Meta reports spend in it).
+function formatCost(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function liveFunnelApiUrl(path: string) {
@@ -897,6 +915,154 @@ function CrmFunnelByAudience() {
         </table>
       </div>
     </article>
+  )
+}
+
+// Aggregate cost of each funnel step (spend / count). Meta steps come from
+// /api/funnel/rates; cost-per-Paid is composed here from /api/crm/funnel's paid total.
+function CostPerStepPanel() {
+  const [rates, setRates] = useState<LiveFunnelRatesPayload | null>(null)
+  const [paid, setPaid] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      setLoading(false)
+      return
+    }
+    let active = true
+    void Promise.all([
+      fetch(liveFunnelApiUrl('/api/funnel/rates?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(liveFunnelApiUrl('/api/crm/funnel?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([ratesData, crmData]: [LiveFunnelRatesPayload | null, CrmFunnelPayload | null]) => {
+      if (!active) return
+      setRates(ratesData)
+      if (crmData && crmData.audiences) {
+        const totalPaid = Object.values(crmData.audiences).reduce((sum, audience) => sum + (audience.paid ?? 0), 0)
+        setPaid(totalPaid)
+      }
+      setLoading(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const cps = rates?.costPerStep
+  const spend = rates?.spend ?? 0
+  const costPaid = paid && paid > 0 ? spend / paid : null
+  const live = Boolean(rates?.ok && rates?.hasData)
+  const cards = [
+    { label: 'Cost / landing view', value: cps?.landingView, hint: 'spend ÷ landing views' },
+    { label: 'Cost / lead', value: cps?.lead, hint: 'spend ÷ leads' },
+    { label: 'Cost / bot start', value: cps?.botStart, hint: 'spend ÷ bot starts' },
+    { label: 'Cost / paid', value: costPaid, hint: 'spend ÷ CRM paid' },
+  ]
+
+  return (
+    <section className="panel panel-wide" aria-label="Cost per funnel step">
+      <PanelHeading eyebrow="Economics" title="Cost per funnel step" icon={CircleDollarSign} />
+      <p className="crm-funnel-note">
+        {live
+          ? `Spend ${formatCost(spend)} · last 30 days · ad-account currency`
+          : loading
+            ? 'Loading cost…'
+            : 'Connect Meta to populate cost per step.'}
+      </p>
+      <div className="cost-step-grid">
+        {cards.map((card) => (
+          <article className="cost-step-card" key={card.label}>
+            <p>{card.label}</p>
+            <strong>{loading ? '…' : formatCost(card.value)}</strong>
+            <small>{card.hint}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+// VSL watch-through (YouTube). Views (primary) + 50%-watched count + watch rate.
+function VslPanel() {
+  const [payload, setPayload] = useState<VslPayload | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      setLoading(false)
+      return
+    }
+    let active = true
+    void fetch(liveFunnelApiUrl('/api/vsl?days=30'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: VslPayload | null) => {
+        if (active) {
+          setPayload(data)
+          setLoading(false)
+        }
+      })
+      .catch(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const heading = <PanelHeading eyebrow="VSL" title="Video sales letter watch-through" icon={Film} />
+  if (loading) {
+    return (
+      <section className="panel panel-wide">
+        {heading}
+        <p className="crm-funnel-note">Loading VSL metrics…</p>
+      </section>
+    )
+  }
+  if (!payload || payload.configured === false) {
+    return (
+      <section className="panel panel-wide">
+        {heading}
+        <p className="crm-funnel-note">{payload?.error ?? 'Connect YouTube to show VSL views and 50%-watched.'}</p>
+      </section>
+    )
+  }
+
+  const cards = [
+    { label: 'Views', value: payload.views != null ? formatNumber(payload.views) : '—', hint: 'total YouTube views' },
+    {
+      label: '50% watched',
+      value: payload.viewsWatched50 != null ? formatNumber(payload.viewsWatched50) : '—',
+      hint: payload.hasRetention ? 'viewers reaching the midpoint' : 'needs YouTube OAuth',
+    },
+    { label: 'Watch rate', value: payload.watchRate50 != null ? `${payload.watchRate50}%` : '—', hint: '50%-watched ÷ views' },
+  ]
+
+  return (
+    <section className="panel panel-wide" aria-label="VSL watch metrics">
+      {heading}
+      <div className="cost-step-grid">
+        {cards.map((card) => (
+          <article className="cost-step-card" key={card.label}>
+            <p>{card.label}</p>
+            <strong>{card.value}</strong>
+            <small>{card.hint}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+// Dedicated funnel-economics view: rates, cost per step, VSL watch-through, and the
+// per-audience CRM funnel — pulled out of the crowded Overview into one focused tab.
+function FunnelView() {
+  return (
+    <>
+      <LiveFunnelRates />
+      <CostPerStepPanel />
+      <VslPanel />
+      <CrmFunnelByAudience />
+    </>
   )
 }
 
