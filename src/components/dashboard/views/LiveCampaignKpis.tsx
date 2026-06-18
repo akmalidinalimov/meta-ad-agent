@@ -16,6 +16,7 @@ import {
 } from '../../../services/dashboardDataProvider'
 import { formatNumber } from '../../../lib/analytics'
 import { computeSimpleFunnel, type FunnelInputs } from '../../simpleFunnel'
+import { FunnelTrends, type TrendRateKey } from './FunnelTrends'
 
 interface LiveCampaignKpisProps {
   campaignId: string
@@ -51,6 +52,9 @@ const EMPTY_VSL: VslMetrics = { ok: false, configured: false, views: null, views
 export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }: LiveCampaignKpisProps) {
   const currentKey = `${campaignId}|${days}|${refreshKey}`
   const [bundle, setBundle] = useState<{ kpis: CampaignKpis; crm: CrmStages; vsl: VslMetrics; loadedKey: string } | null>(null)
+  // Which rate's trend chart is open (null = trends hidden). Set by clicking a rate card
+  // below or the "Show trends" button inside FunnelTrends.
+  const [trendRate, setTrendRate] = useState<TrendRateKey | null>(null)
 
   useEffect(() => {
     if (typeof fetch !== 'function') return
@@ -131,8 +135,24 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
             value = loading ? '…' : `${out.rates[card.key as keyof typeof out.rates]}%`
             sub = card.sub(inputs)
           }
+          const selected = trendRate === card.key
+          const toggle = () => setTrendRate((prev) => (prev === card.key ? null : (card.key as TrendRateKey)))
           return (
-            <article className="simple-rate-card" key={card.key}>
+            <article
+              className={`simple-rate-card simple-rate-clickable${selected ? ' is-selected' : ''}`}
+              key={card.key}
+              role="button"
+              tabIndex={0}
+              aria-pressed={selected}
+              title="Click to see this rate's trend over time"
+              onClick={toggle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  toggle()
+                }
+              }}
+            >
               <p className="simple-rate-label" style={{ color: card.color }}>
                 <span className="simple-dot" style={{ background: card.color }} />
                 {card.label}
@@ -140,10 +160,19 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
               <strong style={{ color: card.color }}>{value}</strong>
               <span className="simple-rate-sub">{sub}</span>
               <small>{card.desc}</small>
+              <span className="simple-rate-trend-hint">📈 {selected ? 'trend shown' : 'view trend'}</span>
             </article>
           )
         })}
       </div>
+
+      <FunnelTrends
+        campaignId={campaignId}
+        days={days}
+        refreshKey={refreshKey}
+        selectedRate={trendRate}
+        onSelectRate={setTrendRate}
+      />
 
       <div className="simple-block">
         <h5>{campaignId === 'all' ? 'Funnel — all campaigns' : 'Funnel — this campaign'}</h5>

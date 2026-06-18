@@ -3,7 +3,18 @@ rate/cost math as src/components/simpleFunnel.ts) and degrade gracefully when a 
 is unavailable."""
 
 import backend.telegram_digest as telegram_digest
-from backend.telegram_digest import _cost, _rate, compose_kpi_digest_text, format_full_digest
+from backend.telegram_digest import (
+    _cost,
+    _rate,
+    _sparkline,
+    _trend_arrow,
+    compose_kpi_digest_text,
+    format_full_digest,
+)
+
+
+async def _no_history(campaign_id, days=7):
+    return []
 
 # Golden bundle: the SAME reference numbers as simpleFunnel.test.ts, in the live shapes
 # returned by /api/campaigns/kpis, /api/crm/stages and /api/vsl.
@@ -149,6 +160,7 @@ def test_compose_is_account_wide_when_no_campaign_pinned(monkeypatch):
         return KPIS, CRM, VSL
 
     monkeypatch.setattr(telegram_digest, "_gather_digest_data", _fake_gather)
+    monkeypatch.setattr(telegram_digest, "_gather_history", _no_history)
 
     text = compose_kpi_digest_text()
     assert "account-wide · live · last 90 days" in text
@@ -174,7 +186,59 @@ def test_compose_scopes_to_pinned_campaign(monkeypatch):
         return KPIS, CRM, VSL
 
     monkeypatch.setattr(telegram_digest, "_gather_digest_data", _fake_gather)
+    monkeypatch.setattr(telegram_digest, "_gather_history", _no_history)
 
     text = compose_kpi_digest_text()
     assert "campaign: DA - SHAHLOAI - VSL - 16.06.2026 · live · last 90 days" in text
     assert "2 suggestion(s) waiting" in text
+
+
+# --- 7-day trend sparklines -----------------------------------------------------------
+
+
+def test_sparkline_maps_levels_and_marks_gaps():
+    assert _sparkline([0, 50, 100]) == "▁▅█"
+    assert _sparkline([None]) == "·"
+    assert _sparkline([]) == "—"
+
+
+def test_trend_arrow_direction():
+    assert _trend_arrow([10, 20]) == "↑"
+    assert _trend_arrow([20, 10]) == "↓"
+    assert _trend_arrow([10, 10]) == "→"
+    assert _trend_arrow([10]) == ""  # need at least two points
+
+
+def _history_point(date, *, link_clicks, landing, leads, starts, crm, vsl, start_rate):
+    return {
+        "date": date,
+        "spend": 1.0,
+        "startRate": start_rate,
+        "counts": {
+            "linkClicks": link_clicks,
+            "landingViews": landing,
+            "leads": leads,
+            "botStarts": starts,
+            "telegramLinkClicks": starts,
+            "subscribes": 0,
+            "crmLeads": crm,
+            "vslViews": vsl,
+        },
+    }
+
+
+def test_full_digest_renders_trend_section_with_history():
+    history = [
+        _history_point("2026-06-17", link_clicks=100, landing=50, leads=25, starts=10, crm=2, vsl=None, start_rate=40),
+        _history_point("2026-06-18", link_clicks=100, landing=70, leads=35, starts=10, crm=3, vsl=None, start_rate=50),
+        _history_point("2026-06-19", link_clicks=100, landing=90, leads=45, starts=10, crm=4, vsl=None, start_rate=60),
+    ]
+    text = format_full_digest(KPIS, CRM, VSL, history=history)
+    assert "TREND (7d)" in text
+    assert "↑" in text  # visit/lead/start all rising across the window
+    assert "accruing" in text  # VSL has no daily data yet
+
+
+def test_full_digest_without_history_has_no_trend_section():
+    text = format_full_digest(KPIS, CRM, VSL)
+    assert "TREND (7d)" not in text

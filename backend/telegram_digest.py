@@ -85,6 +85,74 @@ def _rate_str(value: float) -> str:
     return f"{value:.1f}%"
 
 
+SPARK_CHARS = "▁▂▃▄▅▆▇█"
+# Rates rendered in the TREND (7d) block, in funnel order.
+_TREND_RATES = (
+    ("Visit rate", "visit"),
+    ("Lead rate", "lead"),
+    ("Start rate", "start"),
+    ("VSL view rate", "vslView"),
+    ("CRM fill rate", "crmFill"),
+)
+
+
+def _sparkline(values: list[float | None]) -> str:
+    """A unicode block sparkline for a 0–100% series. Missing days render as '·'."""
+    out: list[str] = []
+    for value in values:
+        if value is None:
+            out.append("·")
+            continue
+        clamped = max(0.0, min(100.0, float(value)))
+        out.append(SPARK_CHARS[int(round(clamped / 100 * (len(SPARK_CHARS) - 1)))])
+    return "".join(out) if out else "—"
+
+
+def _trend_arrow(values: list[float | None]) -> str:
+    nums = [v for v in values if v is not None]
+    if len(nums) < 2:
+        return ""
+    delta = nums[-1] - nums[0]
+    return "↑" if delta > 1 else "↓" if delta < -1 else "→"
+
+
+def _rate_series(points: list[dict[str, Any]], key: str) -> list[float | None]:
+    """Per-day values for one rate, derived from the history points with the SAME math as
+    the dashboard cards (so the sparkline and the headline agree). VSL is None on days with
+    no snapshot delta so the sparkline shows a gap, not a misleading 0."""
+    series: list[float | None] = []
+    for point in points:
+        counts = point.get("counts", {}) or {}
+        if key == "visit":
+            series.append(_rate(counts.get("landingViews"), counts.get("linkClicks")))
+        elif key == "lead":
+            series.append(_rate(counts.get("leads"), counts.get("landingViews")))
+        elif key == "start":
+            series.append(float(point.get("startRate", 0) or 0))
+        elif key == "vslView":
+            vsl_views = counts.get("vslViews")
+            series.append(None if vsl_views is None else _rate(vsl_views, counts.get("botStarts")))
+        elif key == "crmFill":
+            series.append(_rate(counts.get("crmLeads"), counts.get("botStarts")))
+    return series
+
+
+def _build_trend_rows(history: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
+    """The TREND (7d) rows: (label, sparkline, "↑ first→last%"). Rates with no data in the
+    window (e.g. VSL before snapshots accrue) read 'accruing'."""
+    last7 = history[-7:]
+    rows: list[tuple[str, str, str]] = []
+    for label, key in _TREND_RATES:
+        series = _rate_series(last7, key)
+        non_null = [v for v in series if v is not None]
+        if not non_null:
+            rows.append((label, "accruing", ""))
+            continue
+        note = f"{_trend_arrow(series)} {non_null[0]:.0f}→{non_null[-1]:.0f}%".strip()
+        rows.append((label, _sparkline(series), note))
+    return rows
+
+
 def _render_table(sections: list[tuple[str, list[tuple[str, str, str]]]]) -> str:
     """Render labelled sections into one monospace block (Telegram <pre>). Labels and
     values are padded to a single global width so every section's columns line up."""
@@ -131,6 +199,18 @@ async def _gather_digest_data(
     return kpis, crm, vsl
 
 
+async def _gather_history(campaign_id: str | None, days: int = 7) -> list[dict[str, Any]]:
+    """The last ``days`` days of per-day funnel points for the in-chat trend sparklines.
+    Best-effort: any failure yields [] so the digest still renders without a trend block."""
+    from .routers.funnel import funnel_history
+
+    try:
+        result = await funnel_history(campaignId=campaign_id, days=days, force=True)
+    except Exception:  # noqa: BLE001 - sparklines are a bonus, never break the digest
+        return []
+    return result.get("points", []) if result.get("ok") else []
+
+
 # --- digest rendering -----------------------------------------------------------------
 
 
@@ -143,6 +223,7 @@ def format_full_digest(
     pending: int = 0,
     targets: dict[str, Any] | None = None,
     days: int = DIGEST_WINDOW_DAYS,
+    history: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render the full KPI digest from the dashboard's live bundles. parse_mode must be
     "HTML" when sending. Sections: RATES (visit / lead / start / VSL-view / CRM-fill),
@@ -252,6 +333,13 @@ def format_full_digest(
         ("VOLUME", vol_rows),
     ]
 
+    # In-chat 7-day trend sparklines (so the operator sees direction without opening the
+    # web dashboard). Inserted right after RATES.
+    if history:
+        trend_rows = _build_trend_rows(history)
+        if trend_rows:
+            sections.insert(1, ("TREND (7d)", trend_rows))
+
     if crm_ok and crm_total > 0:
         stage_rows: list[tuple[str, str, str]] = []
         for stage in crm.get("stages") or []:
@@ -311,8 +399,16 @@ def compose_kpi_digest_text() -> str:
     campaign_id = selection.get("campaignId") if selection else None
 
     kpis, crm, vsl = asyncio.run(_gather_digest_data(campaign_id, DIGEST_WINDOW_DAYS))
+    history = asyncio.run(_gather_history(campaign_id, days=7))
     return format_full_digest(
-        kpis, crm, vsl, selection=selection, pending=pending, targets=targets, days=DIGEST_WINDOW_DAYS
+        kpis,
+        crm,
+        vsl,
+        selection=selection,
+        pending=pending,
+        targets=targets,
+        days=DIGEST_WINDOW_DAYS,
+        history=history,
     )
 
 

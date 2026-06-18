@@ -220,6 +220,60 @@ export async function getVsl(days: number, force = false): Promise<VslMetrics> {
   }
 }
 
+// Per-day funnel history (the trend charts). Each point carries the day's COUNTS — the
+// UI derives visit/lead/VSL-view/CRM-fill with the same computeSimpleFunnel as the live
+// cards, and uses the backend startRate — so the trend line and the headline card agree.
+export type FunnelHistoryPoint = {
+  date: string
+  spend: number
+  startRate: number
+  startDenominatorSource?: string
+  counts: {
+    linkClicks: number
+    landingViews: number
+    leads: number
+    botStarts: number
+    telegramLinkClicks: number
+    subscribes: number
+    crmLeads: number
+    vslViews: number | null
+  }
+}
+export type FunnelHistory = {
+  ok: boolean
+  days?: number
+  since?: string
+  until?: string
+  campaignId?: string
+  vslConfigured?: boolean
+  points: FunnelHistoryPoint[]
+  notes?: Record<string, string>
+  error?: string
+}
+
+export async function getFunnelHistory(
+  campaignId: string,
+  opts: { days?: number; since?: string; until?: string; force?: boolean } = {},
+): Promise<FunnelHistory> {
+  const empty: FunnelHistory = { ok: false, points: [] }
+  try {
+    const params = new URLSearchParams()
+    if (campaignId && campaignId !== 'all') params.set('campaignId', campaignId)
+    if (opts.since && opts.until) {
+      params.set('since', opts.since)
+      params.set('until', opts.until)
+    } else if (opts.days) {
+      params.set('days', String(opts.days))
+    }
+    if (opts.force) params.set('force', 'true')
+    const response = await fetch(apiUrl(`/api/funnel/history?${params.toString()}`))
+    if (!response.ok) return empty
+    return (await response.json()) as FunnelHistory
+  } catch {
+    return empty
+  }
+}
+
 function apiUrl(path: string) {
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined
   if (configuredBaseUrl) {

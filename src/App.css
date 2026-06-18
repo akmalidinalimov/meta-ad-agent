@@ -3026,6 +3026,113 @@
   font-size: 0.76rem;
   line-height: 1.35;
 }
+/* Clickable rate cards reveal a per-stage trend chart. */
+.simple-rate-clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+.simple-rate-clickable:hover {
+  box-shadow: 0 16px 36px -24px rgba(15, 23, 42, 0.5);
+  transform: translateY(-1px);
+}
+.simple-rate-clickable:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.simple-rate-card.is-selected {
+  border-color: #c7d2fe;
+  box-shadow: 0 0 0 2px #c7d2fe inset, 0 12px 30px -26px rgba(15, 23, 42, 0.4);
+}
+.simple-rate-trend-hint {
+  margin-top: 2px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+/* Per-stage trend section (charts). */
+.simple-trends-toggle {
+  display: flex;
+}
+.simple-trend-btn {
+  appearance: none;
+  border: 1px dashed #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 800;
+  font-size: 0.85rem;
+  padding: 10px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.simple-trend-btn:hover {
+  background: #eef2f7;
+}
+.simple-trends-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.simple-trends-head h5 {
+  margin: 0;
+}
+.simple-trend-hide {
+  appearance: none;
+  border: 1px solid #e7edf4;
+  background: #fff;
+  color: #64748b;
+  font-weight: 800;
+  font-size: 0.78rem;
+  padding: 5px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.simple-trend-hide:hover {
+  background: #f1f5f9;
+}
+.simple-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.simple-chip {
+  appearance: none;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  font-weight: 800;
+  font-size: 0.78rem;
+  padding: 6px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #475569;
+}
+.simple-chip:hover {
+  background: #f8fafc;
+}
+.simple-chip.is-active {
+  color: #fff;
+  border-color: #2563eb;
+  background: #2563eb;
+}
+.simple-date-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.simple-date-range input {
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+  color: #334155;
+}
 .simple-block {
   padding: 18px;
   border: 1px solid #e7edf4;
