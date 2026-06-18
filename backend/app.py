@@ -31,6 +31,7 @@ from .bitrix_client import (
     get_bitrix_config,
 )
 from .crm_funnel import build_crm_funnel
+from .youtube_client import HttpYouTubeTransport, build_vsl_report, get_youtube_config
 from .campaign_watch import build_campaign_watch
 from .campaign_specific_analysis import campaign_specific_answer
 from .chatplace_events import normalize_chatplace_event
@@ -885,6 +886,37 @@ async def crm_funnel(days: int = 30, entity: str = "lead") -> dict[str, Any]:
     payload["entity"] = entity
     _CRM_FUNNEL_CACHE[cache_key] = {"at": now, "payload": payload}
     return payload
+
+
+def build_youtube_transport(config: Any) -> Any:
+    return HttpYouTubeTransport(config)
+
+
+@app.get("/api/vsl")
+async def vsl_metrics(days: int = 30) -> dict[str, Any]:
+    """VSL engagement: total Views (primary) + 50%-watched view count and rate
+    (secondary, from YouTube audience retention). Read-only; graceful until configured."""
+    config = get_youtube_config()
+    if not config.is_configured:
+        return {
+            "ok": False,
+            "configured": False,
+            "error": "YouTube not configured. Set YOUTUBE_VSL_VIDEO_ID plus YOUTUBE_API_KEY (views) and/or YOUTUBE_OAUTH_* (50% retention).",
+            "views": None,
+            "viewsWatched50": None,
+            "watchRate50": None,
+            "hasRetention": False,
+        }
+    try:
+        report = await build_vsl_report(transport=build_youtube_transport(config), config=config, days=days)
+    except Exception as exc:  # noqa: BLE001 - surface a sanitized 502
+        raise HTTPException(status_code=502, detail=f"YouTube read failed: {exc}") from exc
+    report["ok"] = True
+    report["configured"] = True
+    report["videoId"] = config.video_id
+    report["days"] = days
+    report["refreshedAt"] = datetime.now(timezone.utc).isoformat()
+    return report
 
 
 @app.get("/api/tasks")
