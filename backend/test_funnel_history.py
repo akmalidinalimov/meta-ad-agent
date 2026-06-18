@@ -113,6 +113,22 @@ def test_build_history_series_counts_start_rate_and_vsl_delta():
     assert d2["startDenominatorSource"] == "meta_leads"
 
 
+def test_build_history_series_uses_real_daily_vsl_when_provided():
+    # With YouTube Analytics daily views, VSL views come straight from that map (backfilled,
+    # 0 is a real value) — NOT the cumulative-snapshot delta.
+    points = build_history_series(
+        dates=["2026-06-17", "2026-06-18"],
+        meta_by_date=daily_meta_metrics(META_ROWS, campaign_id="c1"),
+        bot_starts_by_date={"2026-06-17": 1420, "2026-06-18": 1500},
+        link_clicks_by_date={},
+        crm_by_date={},
+        vsl_cumulative_by_date={"2026-06-17": 100, "2026-06-18": 130},  # ignored when daily given
+        vsl_daily_by_date={"2026-06-17": 331, "2026-06-18": 0},
+    )
+    assert points[0]["counts"]["vslViews"] == 331  # real daily, not a snapshot delta
+    assert points[1]["counts"]["vslViews"] == 0  # a real 0-view day, not null
+
+
 def test_build_history_series_is_zero_safe_for_empty_days():
     points = build_history_series(
         dates=["2026-06-19"],
@@ -127,11 +143,29 @@ def test_build_history_series_is_zero_safe_for_empty_days():
     assert points[0]["counts"]["vslViews"] is None
 
 
-def test_vsl_snapshot_store_round_trip(tmp_path):
+def test_build_history_series_flags_the_current_day_incomplete():
+    points = build_history_series(
+        dates=["2026-06-17", "2026-06-18"],
+        meta_by_date=daily_meta_metrics(META_ROWS, campaign_id="c1"),
+        bot_starts_by_date={},
+        link_clicks_by_date={},
+        crm_by_date={},
+        vsl_cumulative_by_date={},
+        today="2026-06-18",
+    )
+    assert points[0]["incomplete"] is False  # 06-17 is a complete day
+    assert points[1]["incomplete"] is True  # 06-18 is the in-progress server day
+
+
+def test_vsl_snapshot_store_keeps_daily_max_and_ignores_wobble(tmp_path):
     record_vsl_snapshot("2026-06-18", 130, storage_dir=tmp_path)
     assert load_vsl_snapshots(storage_dir=tmp_path) == {"2026-06-18": 130.0}
-    # Re-recording the same date refreshes it (latest line wins).
+    # A higher reading (a new daily high) is recorded.
     record_vsl_snapshot("2026-06-18", 145, storage_dir=tmp_path)
+    assert load_vsl_snapshots(storage_dir=tmp_path) == {"2026-06-18": 145.0}
+    # YouTube's downward wobble (145 -> 120) is ignored — the day keeps its peak, so the
+    # daily delta can never go negative.
+    record_vsl_snapshot("2026-06-18", 120, storage_dir=tmp_path)
     assert load_vsl_snapshots(storage_dir=tmp_path) == {"2026-06-18": 145.0}
     # None (VSL unconfigured) is a no-op.
     record_vsl_snapshot("2026-06-19", None, storage_dir=tmp_path)

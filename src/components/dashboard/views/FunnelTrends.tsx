@@ -29,7 +29,15 @@ const RANGES = [
   { key: '90', label: '90d', days: 90 },
 ] as const
 
-type SeriesRow = { date: string; visit: number; lead: number; start: number; vslView: number | null; crmFill: number }
+type SeriesRow = {
+  date: string
+  incomplete: boolean
+  visit: number
+  lead: number
+  start: number
+  vslView: number | null
+  crmFill: number
+}
 
 interface FunnelTrendsProps {
   campaignId: string
@@ -79,8 +87,28 @@ export function FunnelTrends({ campaignId, days, refreshKey, selectedRate, onSel
   }
 
   const meta = RATE_META[selectedRate]
-  const chartData = series.map((row) => ({ date: row.date.slice(5), value: row[selectedRate] }))
-  const vslForwardOnly = selectedRate === 'vslView' && history?.vslConfigured === false
+  const chartData = series.map((row) => ({ date: row.date.slice(5), value: row[selectedRate], incomplete: row.incomplete }))
+  const hasData = chartData.some((d) => d.value != null)
+  const hasIncomplete = series.some((row) => row.incomplete)
+
+  // Distinguish the in-progress (provisional) day with a hollow dot so its still-settling
+  // conversion rate isn't read as a real dip.
+  const renderDot = (props: { cx?: number; cy?: number; index?: number; payload?: { incomplete?: boolean } }) => {
+    const { cx, cy, index, payload } = props
+    if (typeof cx !== 'number' || typeof cy !== 'number' || Number.isNaN(cy)) return <g key={index} />
+    const provisional = payload?.incomplete
+    return (
+      <circle
+        key={index}
+        cx={cx}
+        cy={cy}
+        r={provisional ? 4 : 2}
+        fill={provisional ? '#ffffff' : meta.color}
+        stroke={meta.color}
+        strokeWidth={provisional ? 2 : 1}
+      />
+    )
+  }
 
   return (
     <div className="simple-block simple-trends">
@@ -145,8 +173,23 @@ export function FunnelTrends({ campaignId, days, refreshKey, selectedRate, onSel
 
       {loading ? (
         <p className="simple-help">Loading trend…</p>
-      ) : chartData.length === 0 ? (
-        <p className="simple-help">No history in this range yet.</p>
+      ) : !hasData ? (
+        <div className="simple-trend-empty">
+          {selectedRate === 'vslView' ? (
+            <>
+              <strong>No daily VSL trend yet.</strong>
+              <span>
+                YouTube only reports a lifetime total, so the VSL line builds up from daily snapshots — it needs 2+ days
+                and starts drawing tomorrow. For instant daily VSL history, connect YouTube Analytics (OAuth).
+              </span>
+            </>
+          ) : (
+            <>
+              <strong>No data for this rate in the selected range yet.</strong>
+              <span>Once this campaign has delivery on these days, the line appears here.</span>
+            </>
+          )}
+        </div>
       ) : (
         <div style={{ width: '100%', height: 240 }}>
           <ResponsiveContainer>
@@ -167,7 +210,7 @@ export function FunnelTrends({ campaignId, days, refreshKey, selectedRate, onSel
                 dataKey="value"
                 stroke={meta.color}
                 strokeWidth={2.5}
-                dot={{ r: 2 }}
+                dot={renderDot}
                 activeDot={{ r: 4 }}
                 connectNulls={false}
                 isAnimationActive={false}
@@ -181,7 +224,9 @@ export function FunnelTrends({ campaignId, days, refreshKey, selectedRate, onSel
       <small className="simple-help">
         {history?.since && history?.until ? `${history.since} → ${history.until} · daily` : 'daily'} · same math as the
         cards above.
-        {vslForwardOnly ? ' VSL trend accrues from today forward — YouTube reports only a running total, so earlier days are blank.' : ''}
+        {hasIncomplete
+          ? ' The hollow last point is today (in progress) — its lead/start/CRM rate is still settling and rises as the day finishes and Meta attributes late conversions.'
+          : ''}
       </small>
     </div>
   )
@@ -211,6 +256,7 @@ function buildSeries(history: FunnelHistory | null): SeriesRow[] {
     })
     return {
       date: p.date,
+      incomplete: Boolean(p.incomplete),
       visit: out.rates.visit,
       lead: out.rates.lead,
       start: p.startRate,

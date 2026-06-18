@@ -225,6 +225,7 @@ export async function getVsl(days: number, force = false): Promise<VslMetrics> {
 // cards, and uses the backend startRate — so the trend line and the headline card agree.
 export type FunnelHistoryPoint = {
   date: string
+  incomplete?: boolean
   spend: number
   startRate: number
   startDenominatorSource?: string
@@ -246,6 +247,7 @@ export type FunnelHistory = {
   until?: string
   campaignId?: string
   vslConfigured?: boolean
+  vslSource?: string | null
   points: FunnelHistoryPoint[]
   notes?: Record<string, string>
   error?: string

@@ -3069,6 +3069,26 @@
 .simple-trend-btn:hover {
   background: #eef2f7;
 }
+.simple-trend-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 22px;
+  border: 1px dashed #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  text-align: center;
+}
+.simple-trend-empty strong {
+  color: #334155;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+.simple-trend-empty span {
+  color: #64748b;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
 .simple-trends-head {
   display: flex;
   align-items: center;

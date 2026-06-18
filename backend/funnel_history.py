@@ -100,11 +100,19 @@ def build_history_series(
     link_clicks_by_date: dict[str, int],
     crm_by_date: dict[str, int],
     vsl_cumulative_by_date: dict[str, float] | None = None,
+    vsl_daily_by_date: dict[str, int] | None = None,
+    today: str | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble the per-day points. Each point carries the day's COUNTS (so the frontend
     derives visit/lead/VSL-view/CRM-fill with computeSimpleFunnel) plus the backend START
-    rate for that day. VSL daily views are the delta of the cumulative snapshot vs the
-    previous snapshot day (null until at least two snapshots exist)."""
+    rate for that day. The current server day (``today``) is flagged ``incomplete`` because
+    its conversion-based rates (lead/start/CRM) keep climbing as the day finishes and Meta
+    attributes late conversions.
+
+    VSL daily views come from ``vsl_daily_by_date`` (real per-day views from YouTube
+    Analytics, including backfill) when available; otherwise they fall back to the
+    day-over-day delta of a cumulative snapshot (``vsl_cumulative_by_date``), which is null
+    until at least two snapshots exist."""
     vsl_cumulative_by_date = vsl_cumulative_by_date or {}
     points: list[dict[str, Any]] = []
     last_cumulative: float | None = None
@@ -119,10 +127,13 @@ def build_history_series(
         tg_link_clicks = int(link_clicks_by_date.get(day, 0))
         crm_leads = int(crm_by_date.get(day, 0))
 
-        # VSL is cumulative-only from YouTube; daily views = day-over-day delta of the
-        # snapshot. Null until we have a prior snapshot to diff against.
+        # VSL daily views: prefer real per-day data (YouTube Analytics) when present;
+        # otherwise derive from the cumulative snapshot's day-over-day delta.
         vsl_views: int | None = None
-        if day in vsl_cumulative_by_date:
+        if vsl_daily_by_date is not None:
+            if day in vsl_daily_by_date:
+                vsl_views = int(vsl_daily_by_date[day])
+        elif day in vsl_cumulative_by_date:
             cumulative = float(vsl_cumulative_by_date[day])
             if last_cumulative is not None and cumulative >= last_cumulative:
                 vsl_views = int(round(cumulative - last_cumulative))
@@ -134,6 +145,7 @@ def build_history_series(
         points.append(
             {
                 "date": day,
+                "incomplete": today is not None and day == today,
                 "spend": round(spend, 2),
                 "startRate": start["rate"],
                 "startDenominatorSource": start["denominatorSource"],
@@ -156,8 +168,9 @@ def build_history_series(
 
 
 def load_vsl_snapshots(*, storage_dir: Path = STORAGE_DIR) -> dict[str, float]:
-    """date (YYYY-MM-DD) -> cumulative VSL view count recorded that day. Later lines win,
-    so re-recording a date refreshes it."""
+    """date (YYYY-MM-DD) -> the day's cumulative VSL view count. We keep the MAX seen for a
+    date, not the latest: YouTube's lifetime viewCount wobbles down by ~tens as it removes
+    invalid views, and a downward wobble would otherwise produce a negative daily delta."""
     path = storage_dir / "funnel_history.jsonl"
     if not path.exists():
         return {}
@@ -173,7 +186,7 @@ def load_vsl_snapshots(*, storage_dir: Path = STORAGE_DIR) -> dict[str, float]:
         value = record.get("vslViews")
         if day and value is not None:
             try:
-                snapshots[day] = float(value)
+                snapshots[day] = max(snapshots.get(day, 0.0), float(value))
             except (TypeError, ValueError):
                 continue
     return snapshots
@@ -182,16 +195,20 @@ def load_vsl_snapshots(*, storage_dir: Path = STORAGE_DIR) -> dict[str, float]:
 def record_vsl_snapshot(
     date_str: str, cumulative_views: float | int | None, *, storage_dir: Path = STORAGE_DIR
 ) -> None:
-    """Append today's cumulative VSL views so a daily delta becomes computable. No-op when
-    VSL isn't configured (cumulative_views is None)."""
+    """Record today's cumulative VSL views so a daily delta becomes computable. No-op when
+    VSL isn't configured (None) or when the value isn't a new daily high — that keeps the
+    log from filling with YouTube's minute-to-minute wobble and preserves the day's peak."""
     if cumulative_views is None:
         return
+    day = str(date_str)[:10]
+    try:
+        value = float(cumulative_views)
+    except (TypeError, ValueError):
+        return
+    if value <= load_vsl_snapshots(storage_dir=storage_dir).get(day, 0.0):
+        return  # not a new high for the day → skip (avoids noise + downward wobble)
     storage_dir.mkdir(parents=True, exist_ok=True)
     path = storage_dir / "funnel_history.jsonl"
-    record = {
-        "date": str(date_str)[:10],
-        "vslViews": float(cumulative_views),
-        "recordedAt": datetime.now(timezone.utc).isoformat(),
-    }
+    record = {"date": day, "vslViews": value, "recordedAt": datetime.now(timezone.utc).isoformat()}
     with path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(record) + "\n")

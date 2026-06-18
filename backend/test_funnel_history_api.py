@@ -97,3 +97,8 @@ def test_history_builds_daily_points(monkeypatch):
     assert point["counts"]["crmLeads"] == 3
     assert point["counts"]["vslViews"] is None  # VSL not configured in this test
     assert point["startRate"] == 50.0  # 2 starts ÷ ... (button clicks present yesterday)
+    assert point["incomplete"] is False  # yesterday is a complete day
+
+    # The current server day is flagged provisional (its conversion rates are still settling).
+    today_point = next(p for p in body["points"] if p["date"] == today.isoformat())
+    assert today_point["incomplete"] is True
