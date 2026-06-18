@@ -3373,3 +3373,52 @@
     grid-template-columns: 110px minmax(0, 1fr) 90px;
   }
 }
+
+/* CRM stage breakdown (source-filtered) */
+.crm-stages {
+  display: grid;
+  gap: 8px;
+}
+.crm-stage-row {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 110px;
+  align-items: center;
+  gap: 12px;
+}
+.crm-stage-name {
+  overflow: hidden;
+  color: #475569;
+  font-size: 0.83rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crm-stage-track {
+  height: 22px;
+  border-radius: 6px;
+  background: #eef2f7;
+  overflow: hidden;
+}
+.crm-stage-bar {
+  height: 100%;
+  border-radius: 6px;
+  background: #64748b;
+}
+.crm-stage-row.paid .crm-stage-bar {
+  background: #0f766e;
+}
+.crm-stage-count {
+  justify-self: end;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.crm-stage-row.paid .crm-stage-count {
+  color: #0f766e;
+}
+@media (max-width: 1100px) {
+  .crm-stage-row {
+    grid-template-columns: 130px minmax(0, 1fr) 92px;
+  }
+}

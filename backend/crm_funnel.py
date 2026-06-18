@@ -105,6 +105,41 @@ def _join_audience(record: dict[str, Any], by_phone: dict[str, str], by_username
     return aud if aud in KNOWN_AUDIENCES else ""
 
 
+def build_crm_stage_breakdown(
+    records: list[dict[str, Any]],
+    *,
+    stages: list[dict[str, Any]],
+    paid_status_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Overall stage distribution (no audience split) for a filtered set of leads —
+    e.g. only the 'AI Creators 5.0 buyurtmasi' order leads. Returns ordered stages with
+    counts, the total, and the Paid count."""
+    stage_ids = [str(s.get("id")) for s in stages if str(s.get("id") or "")]
+    stage_labels = {str(s.get("id")): str(s.get("name") or s.get("id")) for s in stages}
+    counts = {sid: 0 for sid in stage_ids}
+    total = 0
+    for record in records:
+        sid = str(record.get("stage") or "")
+        if not sid:
+            continue
+        total += 1
+        if sid not in counts:
+            counts[sid] = 0
+            stage_ids.append(sid)
+            stage_labels.setdefault(sid, sid)
+        counts[sid] += 1
+    paid_ids = resolve_paid_stage_ids(
+        [{"id": sid, "name": stage_labels[sid]} for sid in stage_ids], configured_ids=paid_status_ids
+    )
+    paid = sum(count for sid, count in counts.items() if sid in paid_ids)
+    return {
+        "total": total,
+        "paid": paid,
+        "paidStageIds": sorted(paid_ids),
+        "stages": [{"id": sid, "name": stage_labels[sid], "count": counts[sid]} for sid in stage_ids],
+    }
+
+
 def build_crm_funnel(
     records: list[dict[str, Any]],
     *,

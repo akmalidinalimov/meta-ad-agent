@@ -1142,8 +1142,25 @@ const COST_DEFS = [
 // five rate cards, the funnel, cost per stage, and a spend/volume strip. Meta volumes are
 // per-campaign and live; bot starts / CRM leads / VSL views are pre-filled from our backend
 // but stay editable + remembered (the reference's "type the current counts" behaviour).
+interface CrmStageRow {
+  id: string
+  name: string
+  count: number
+}
+interface CrmStagesPayload {
+  ok: boolean
+  source?: string
+  total: number
+  paid: number
+  paidStageIds: string[]
+  stages: CrmStageRow[]
+  days?: number
+  error?: string
+}
+
 function SimpleDashboard({ data }: { data: DashboardData }) {
   const [payload, setPayload] = useState<CampaignsPayload | null>(null)
+  const [crmStages, setCrmStages] = useState<CrmStagesPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [campaignId, setCampaignId] = useState('all')
   const [manual, setManual] = useState({ botStarts: '', crmLeads: '', vslViews: '' })
@@ -1156,19 +1173,19 @@ function SimpleDashboard({ data }: { data: DashboardData }) {
     let active = true
     void Promise.all([
       fetch(liveFunnelApiUrl('/api/funnel/campaigns?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-      fetch(liveFunnelApiUrl('/api/crm/funnel?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(liveFunnelApiUrl('/api/crm/stages?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
       fetch(liveFunnelApiUrl('/api/vsl?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    ]).then(([camp, crm, vsl]: [CampaignsPayload | null, CrmFunnelPayload | null, VslPayload | null]) => {
+    ]).then(([camp, crm, vsl]: [CampaignsPayload | null, CrmStagesPayload | null, VslPayload | null]) => {
       if (!active) return
       setPayload(camp)
-      const crmTotal = crm?.audiences ? Object.values(crm.audiences).reduce((s, a) => s + (a.submits ?? 0), 0) : null
+      setCrmStages(crm)
       const prefill = (field: ManualField, backend: number | null) => {
         const stored = readStoredManual(field)
         return stored != null ? stored : backend != null ? String(backend) : ''
       }
       setManual({
         botStarts: prefill('botStarts', camp?.botStarts ?? null),
-        crmLeads: prefill('crmLeads', crmTotal),
+        crmLeads: prefill('crmLeads', crm?.total ?? null),
         vslViews: prefill('vslViews', vsl?.views ?? null),
       })
       setLoading(false)
@@ -1269,6 +1286,34 @@ function SimpleDashboard({ data }: { data: DashboardData }) {
           starts, CRM leads and VSL views are pre-filled from your live data but stay editable here and are remembered.
         </small>
       </section>
+
+      {crmStages && crmStages.ok && crmStages.total > 0 ? (
+        <section className="panel" aria-label="CRM stages">
+          <PanelHeading eyebrow="CRM" title={`CRM stages — ${crmStages.source ?? 'leads'}`} icon={ClipboardCheck} />
+          <p className="simple-help">
+            {formatNumber(crmStages.total)} leads · Bitrix24 · last 30 days · {formatNumber(crmStages.paid)} paid
+          </p>
+          <div className="crm-stages">
+            {crmStages.stages
+              .filter((s) => s.count > 0)
+              .map((s) => {
+                const pctOfTotal = Math.round((s.count / crmStages.total) * 100)
+                const isPaid = crmStages.paidStageIds.includes(s.id)
+                return (
+                  <div className={`crm-stage-row${isPaid ? ' paid' : ''}`} key={s.id}>
+                    <span className="crm-stage-name">{s.name}</span>
+                    <div className="crm-stage-track">
+                      <div className="crm-stage-bar" style={{ width: `${Math.max(2, pctOfTotal)}%` }} />
+                    </div>
+                    <span className="crm-stage-count">
+                      {formatNumber(s.count)} · {pctOfTotal}%
+                    </span>
+                  </div>
+                )
+              })}
+          </div>
+        </section>
+      ) : null}
 
       <section className="panel" aria-label="Cost per stage">
         <PanelHeading eyebrow="Economics" title="Cost per stage" icon={CircleDollarSign} />

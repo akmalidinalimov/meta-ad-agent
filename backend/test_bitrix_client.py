@@ -148,6 +148,14 @@ def test_normalize_bitrix_deal_reads_stage_id_and_utm():
     assert out["utmContent"] == "ai"
 
 
+def test_fetch_bitrix_leads_filters_by_title():
+    transport = PagingBitrixTransport()
+
+    asyncio.run(fetch_bitrix_leads(transport=transport, title_contains="AI Creators 5.0 buyurtmasi", limit=None))
+
+    assert transport.calls[0][1]["filter"]["%TITLE"] == "AI Creators 5.0 buyurtmasi"
+
+
 def test_fetch_bitrix_deals_uses_crm_deal_list():
     transport = PagingBitrixTransport()
 

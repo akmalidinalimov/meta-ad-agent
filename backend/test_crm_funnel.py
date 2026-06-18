@@ -101,3 +101,16 @@ def test_build_crm_funnel_matrix_joins_by_phone_and_counts_paid():
     assert out["audiences"]["business"]["CONTACTED"] == 1
     assert out["audiences"]["unattributed"]["NEW"] == 1
     assert out["matchRate"] == 0.75   # 3 of 4 matched
+
+
+def test_build_crm_stage_breakdown_counts_by_stage():
+    from backend.crm_funnel import build_crm_stage_breakdown
+
+    records = [{"stage": "NEW"}, {"stage": "NEW"}, {"stage": "PAID"}, {"stage": "JUNK"}, {"stage": ""}]
+    out = build_crm_stage_breakdown(records, stages=STAGES, paid_status_ids=None)
+
+    assert out["total"] == 4  # the empty-stage record is skipped
+    by_id = {s["id"]: s["count"] for s in out["stages"]}
+    assert by_id["NEW"] == 2 and by_id["PAID"] == 1
+    assert by_id["JUNK"] == 1  # stage not in the discovered list is appended
+    assert out["paid"] == 1 and out["paidStageIds"] == ["PAID"]  # PAID via the "to'l" heuristic

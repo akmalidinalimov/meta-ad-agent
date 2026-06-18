@@ -78,12 +78,15 @@ def _date_filter(days: int | None) -> dict[str, str] | None:
 
 
 async def _fetch_paged(
-    *, transport: BitrixTransport, method: str, days: int | None, limit: int | None
+    *, transport: BitrixTransport, method: str, days: int | None, limit: int | None, extra_filter: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
     """Read-only paged list. Follows Bitrix's ``next`` cursor; adds a DATE_CREATE
-    filter only when ``days`` is given. When ``days`` is None and the transport
-    returns no ``next``, this issues exactly one call with the historical params."""
-    filter_ = _date_filter(days)
+    filter only when ``days`` is given, merged with any ``extra_filter`` (e.g. a title
+    match). When ``days`` is None and no extra filter, this issues exactly one call with
+    the historical params and no ``filter`` key."""
+    filter_: dict[str, Any] = dict(_date_filter(days) or {})
+    if extra_filter:
+        filter_.update(extra_filter)
     rows: list[dict[str, Any]] = []
     start = 0
     for _ in range(_MAX_PAGES):
@@ -103,9 +106,10 @@ async def _fetch_paged(
 
 
 async def fetch_bitrix_leads(
-    *, transport: BitrixTransport, limit: int | None = 100, days: int | None = None
+    *, transport: BitrixTransport, limit: int | None = 100, days: int | None = None, title_contains: str | None = None
 ) -> list[dict[str, Any]]:
-    rows = await _fetch_paged(transport=transport, method="crm.lead.list", days=days, limit=limit)
+    extra = {"%TITLE": title_contains} if title_contains else None
+    rows = await _fetch_paged(transport=transport, method="crm.lead.list", days=days, limit=limit, extra_filter=extra)
     return [normalize_bitrix_lead(row) for row in rows]
 
 
