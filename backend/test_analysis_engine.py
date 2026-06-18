@@ -66,6 +66,19 @@ def test_funnel_rates_resolve_pixel_and_capi_aliases():
     assert round(totals["startRate"], 1) == 75.0
 
 
+def test_cost_and_ratio_golden_baseline():
+    # CHANGE-SAFETY GOLDEN BASELINE: lock the existing cost/ratio outputs so the
+    # cost-per-step additions (Phase A2) can prove these never moved. Inputs:
+    # spend=10, impressions=1000, clicks=120, link_clicks=100, lpv=80, leads=20, subs=12.
+    totals = summarize_overall([_funnel_row(120, 100, 80, 20, 12)])
+    assert totals["spend"] == 10
+    assert round(totals["ctr"], 4) == 12.0                 # 120 / 1000 * 100
+    assert round(totals["cpc"], 4) == round(10 / 120, 4)   # spend / clicks
+    assert round(totals["cpl"], 4) == 0.5                  # spend / leads
+    assert totals["cpp"] == 0                              # no purchases -> zero-safe
+    assert round(totals["leadRateFromClick"], 2) == 16.67  # 20 / 120 * 100
+
+
 def test_map_creative_preserves_meta_attribution_and_media():
     row = {
         "id": "ad_1",
