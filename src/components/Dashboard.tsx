@@ -43,6 +43,7 @@ import { ChartFrame } from './dashboard/shared/ChartFrame'
 import { MediaThumb } from './dashboard/shared/MediaThumb'
 import { PanelHeading } from './dashboard/shared/PanelHeading'
 import { buildAudienceRows, type CrmFunnelPayload } from './crmFunnel'
+import { computeSimpleFunnel, type FunnelInputs } from './simpleFunnel'
 import {
   deriveCreativeScores,
   deriveFunnel,
@@ -100,9 +101,9 @@ const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'funnel', label: 'Funnel & Cost', icon: Gauge },
   { id: 'commandCenter', label: 'Command Center', icon: Bot },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
+  { id: 'details', label: 'Details', icon: Gauge },
   { id: 'settings', label: 'Settings', icon: Settings },
 ] as const
 
@@ -268,24 +269,28 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
         })}
       </nav>
 
-      <Filters data={data} filters={filters} onChange={setFilters} />
+      {activeView !== 'overview' && <Filters data={data} filters={filters} onChange={setFilters} />}
 
-      {!hasData ? (
+      {activeView === 'overview' ? (
+        <SimpleDashboard data={data} />
+      ) : !hasData ? (
         <EmptyState onReset={() => setFilters(defaultFilters)} />
       ) : (
         <>
-          {activeView === 'overview' && (
-            <Overview
-              data={data}
-              kpis={filteredKpis}
-              creativeScores={creativeScores}
-              funnel={funnel}
-              trend={trend}
-              placements={placements}
-              metrics={filteredMetrics}
-            />
+          {activeView === 'details' && (
+            <>
+              <Overview
+                data={data}
+                kpis={filteredKpis}
+                creativeScores={creativeScores}
+                funnel={funnel}
+                trend={trend}
+                placements={placements}
+                metrics={filteredMetrics}
+              />
+              <FunnelView />
+            </>
           )}
-          {activeView === 'funnel' && <FunnelView />}
           {activeView === 'commandCenter' && (
             <CommandCenterView
               data={data}
@@ -1063,6 +1068,236 @@ function FunnelView() {
       <VslPanel />
       <CrmFunnelByAudience />
     </>
+  )
+}
+
+interface CampaignFunnelRow {
+  campaignId: string
+  campaignName: string
+  spend: number
+  impressions: number
+  reach: number
+  clicks: number
+  linkClicks: number
+  landingViews: number
+  leads: number
+}
+interface CampaignsPayload {
+  ok: boolean
+  days?: number
+  campaigns: CampaignFunnelRow[]
+  total: CampaignFunnelRow
+  botStarts: number
+  hasData?: boolean
+  error?: string
+}
+
+const MANUAL_KEYS = { botStarts: 'vslDash.botStarts', crmLeads: 'vslDash.crmLeads', vslViews: 'vslDash.vslViews' } as const
+type ManualField = keyof typeof MANUAL_KEYS
+
+function readStoredManual(field: ManualField): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage.getItem(MANUAL_KEYS[field])
+  } catch {
+    return null
+  }
+}
+function storeManual(field: ManualField, value: string) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(MANUAL_KEYS[field], value)
+  } catch {
+    /* ignore quota / privacy-mode errors */
+  }
+}
+function toInt(value: string): number {
+  const n = parseInt(value.replace(/[^0-9]/g, ''), 10)
+  return Number.isFinite(n) ? n : 0
+}
+function formatMoney(value: number): string {
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+const RATE_CARD_DEFS = [
+  { key: 'visit', label: 'Visit rate', color: '#2563eb', desc: '% of ad-clickers whose page actually loaded', sub: (i: FunnelInputs) => `${formatNumber(i.landingViews)} views ÷ ${formatNumber(i.linkClicks)} clicks` },
+  { key: 'lead', label: 'Lead rate', color: '#0d9488', desc: '% of visitors who clicked the CTA (pixel Lead)', sub: (i: FunnelInputs) => `${formatNumber(i.leads)} leads ÷ ${formatNumber(i.landingViews)} views` },
+  { key: 'start', label: 'Start rate', color: '#7c3aed', desc: '% of leads who started the Telegram bot', sub: (i: FunnelInputs) => `${formatNumber(i.botStarts)} starts ÷ ${formatNumber(i.leads)} leads` },
+  { key: 'vslView', label: 'VSL view rate', color: '#ea580c', desc: '% of bot-starters who watched the YouTube VSL', sub: (i: FunnelInputs) => `${formatNumber(i.vslViews)} VSL views ÷ ${formatNumber(i.botStarts)} starts` },
+  { key: 'crmFill', label: 'CRM fill rate', color: '#db2777', desc: '% of bot-starters who filled the CRM form', sub: (i: FunnelInputs) => `${formatNumber(i.crmLeads)} CRM leads ÷ ${formatNumber(i.botStarts)} starts` },
+] as const
+
+const FUNNEL_COLORS: Record<string, string> = {
+  linkClicks: '#2563eb', landingViews: '#2563eb', leads: '#0d9488', botStarts: '#7c3aed', vslViews: '#ea580c', crmLeads: '#db2777',
+}
+const COST_DEFS = [
+  { key: 'perVisit', color: '#2563eb', label: 'per visit (landing view)' },
+  { key: 'perLead', color: '#0d9488', label: 'per lead (CTA)' },
+  { key: 'perBotStart', color: '#7c3aed', label: 'per bot start' },
+  { key: 'perVslView', color: '#ea580c', label: 'per VSL view' },
+  { key: 'perCrmLead', color: '#db2777', label: 'per CRM lead' },
+] as const
+
+// The simple single-page dashboard (the operator's primary view): one campaign filter,
+// five rate cards, the funnel, cost per stage, and a spend/volume strip. Meta volumes are
+// per-campaign and live; bot starts / CRM leads / VSL views are pre-filled from our backend
+// but stay editable + remembered (the reference's "type the current counts" behaviour).
+function SimpleDashboard({ data }: { data: DashboardData }) {
+  const [payload, setPayload] = useState<CampaignsPayload | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [campaignId, setCampaignId] = useState('all')
+  const [manual, setManual] = useState({ botStarts: '', crmLeads: '', vslViews: '' })
+
+  useEffect(() => {
+    if (typeof fetch !== 'function') {
+      setLoading(false)
+      return
+    }
+    let active = true
+    void Promise.all([
+      fetch(liveFunnelApiUrl('/api/funnel/campaigns?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(liveFunnelApiUrl('/api/crm/funnel?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(liveFunnelApiUrl('/api/vsl?days=30')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([camp, crm, vsl]: [CampaignsPayload | null, CrmFunnelPayload | null, VslPayload | null]) => {
+      if (!active) return
+      setPayload(camp)
+      const crmTotal = crm?.audiences ? Object.values(crm.audiences).reduce((s, a) => s + (a.submits ?? 0), 0) : null
+      const prefill = (field: ManualField, backend: number | null) => {
+        const stored = readStoredManual(field)
+        return stored != null ? stored : backend != null ? String(backend) : ''
+      }
+      setManual({
+        botStarts: prefill('botStarts', camp?.botStarts ?? null),
+        crmLeads: prefill('crmLeads', crmTotal),
+        vslViews: prefill('vslViews', vsl?.views ?? null),
+      })
+      setLoading(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const meta: CampaignFunnelRow | null = useMemo(() => {
+    if (!payload) return null
+    if (campaignId === 'all') return payload.total
+    return payload.campaigns.find((c) => c.campaignId === campaignId) ?? payload.total
+  }, [payload, campaignId])
+
+  const inputs: FunnelInputs = {
+    linkClicks: meta?.linkClicks ?? 0,
+    landingViews: meta?.landingViews ?? 0,
+    leads: meta?.leads ?? 0,
+    botStarts: toInt(manual.botStarts),
+    vslViews: toInt(manual.vslViews),
+    crmLeads: toInt(manual.crmLeads),
+    spend: meta?.spend ?? 0,
+  }
+  const out = computeSimpleFunnel(inputs)
+  const maxBar = Math.max(inputs.linkClicks, 1)
+
+  const onManual = (field: ManualField, value: string) => {
+    setManual((m) => ({ ...m, [field]: value }))
+    storeManual(field, value)
+  }
+
+  const campaignOptions = payload?.campaigns ?? []
+  const live = Boolean(payload?.ok && payload?.hasData)
+
+  return (
+    <div className="simple-dash">
+      <div className="simple-toolbar">
+        <label className="simple-campaign">
+          <span>Campaign</span>
+          <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+            <option value="all">All campaigns</option>
+            {campaignOptions.map((c) => (
+              <option value={c.campaignId} key={c.campaignId}>
+                {c.campaignName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="simple-note">{loading ? 'Loading…' : live ? 'Live from Meta · last 30 days' : 'Connect Meta to populate rates'}</span>
+      </div>
+
+      <section className="simple-cards" aria-label="Funnel rates">
+        {RATE_CARD_DEFS.map((card) => (
+          <article className="simple-rate-card" key={card.key}>
+            <p className="simple-rate-label" style={{ color: card.color }}>
+              <span className="simple-dot" style={{ background: card.color }} />
+              {card.label}
+            </p>
+            <strong style={{ color: card.color }}>{loading ? '…' : `${out.rates[card.key as keyof typeof out.rates]}%`}</strong>
+            <span className="simple-rate-sub">{card.sub(inputs)}</span>
+            <small>{card.desc}</small>
+          </article>
+        ))}
+      </section>
+
+      <section className="panel simple-funnel-panel" aria-label="Funnel this campaign">
+        <PanelHeading eyebrow="Funnel" title={campaignId === 'all' ? 'Funnel — all campaigns' : 'Funnel — this campaign'} icon={Target} />
+        <div className="simple-funnel">
+          {out.funnel.map((row) => (
+            <div className="simple-funnel-row" key={row.key}>
+              <span className="simple-funnel-label">{row.label}</span>
+              <div className="simple-funnel-track">
+                <div className="simple-funnel-bar" style={{ width: `${Math.max(2, (row.value / maxBar) * 100)}%`, background: FUNNEL_COLORS[row.key] }}>
+                  <em>{formatNumber(row.value)}</em>
+                </div>
+              </div>
+              <span className="simple-funnel-pct">{row.pctLabel}</span>
+            </div>
+          ))}
+        </div>
+        <div className="manual-inputs">
+          <label>
+            Bot starts
+            <input inputMode="numeric" value={manual.botStarts} onChange={(e) => onManual('botStarts', e.target.value)} />
+          </label>
+          <label>
+            CRM leads (Bitrix)
+            <input inputMode="numeric" value={manual.crmLeads} onChange={(e) => onManual('crmLeads', e.target.value)} />
+          </label>
+          <label>
+            VSL views (YouTube)
+            <input inputMode="numeric" value={manual.vslViews} onChange={(e) => onManual('vslViews', e.target.value)} />
+          </label>
+        </div>
+        <small className="simple-help">
+          Each row’s % is that step’s conversion vs the stage directly above it. Visit & Lead rates come live from Meta; bot
+          starts, CRM leads and VSL views are pre-filled from your live data but stay editable here and are remembered.
+        </small>
+      </section>
+
+      <section className="panel" aria-label="Cost per stage">
+        <PanelHeading eyebrow="Economics" title="Cost per stage" icon={CircleDollarSign} />
+        <div className="simple-cost">
+          {COST_DEFS.map((c) => (
+            <article className="simple-cost-item" key={c.key}>
+              <strong style={{ color: c.color }}>{loading ? '…' : formatMoney(out.cost[c.key as keyof typeof out.cost])}</strong>
+              <small>{c.label}</small>
+            </article>
+          ))}
+        </div>
+        <small className="simple-help">Spend ÷ each stage’s volume. Cost per CRM lead is your true cost per real, contactable lead — the number that matters most for ROI.</small>
+      </section>
+
+      <section className="panel" aria-label="Spend and volume">
+        <PanelHeading eyebrow="Totals" title="Spend & volume" icon={BarChart3} />
+        <div className="simple-spend">
+          <article><strong>{formatMoney(inputs.spend)}</strong><small>Spend</small></article>
+          <article><strong>{formatNumber(meta?.impressions ?? 0)}</strong><small>Impressions</small></article>
+          <article><strong>{formatNumber(meta?.reach ?? 0)}</strong><small>Reach</small></article>
+          <article><strong>{formatNumber(inputs.linkClicks)}</strong><small>Link clicks</small></article>
+          <article><strong>{formatNumber(inputs.landingViews)}</strong><small>Landing views</small></article>
+          <article><strong>{formatNumber(inputs.leads)}</strong><small>Website leads</small></article>
+          <article><strong>{formatNumber(inputs.vslViews)}</strong><small>VSL views (YouTube)</small></article>
+          <article><strong>{formatNumber(inputs.crmLeads)}</strong><small>CRM leads (Bitrix)</small></article>
+        </div>
+      </section>
+      {data.dataSource?.kind === 'mock' ? <p className="simple-help">Showing sample data — connect Meta in Settings for live numbers.</p> : null}
+    </div>
   )
 }
 

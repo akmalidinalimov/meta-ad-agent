@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .analysis_engine import action_count, as_float, build_meta_analysis, cost_per_step, extract_interests, summarize_overall, valid_rows
+from .analysis_engine import action_count, as_float, build_meta_analysis, cost_per_step, extract_interests, rank_dimension, summarize_overall, valid_rows
 from .agent_council import run_strategy_council, should_run_strategy_council
 from .agent_orchestrator import agent_registry, build_agent_decision, build_agent_handoffs, orchestrate_agent_chat, route_question
 from .agent_quality import evaluate_agent_response
@@ -1497,6 +1497,70 @@ async def funnel_rates(campaign_id: str | None = None, days: int = 30) -> dict[s
             "botStart": round(costs["botStart"], 4),
         },
         "startSource": start_source,
+        "hasData": bool(rows),
+        "syncErrors": sync_errors,
+    }
+
+
+def _campaign_metrics(metrics: dict[str, Any], *, name: str, cid: str) -> dict[str, Any]:
+    return {
+        "campaignId": cid,
+        "campaignName": name,
+        "spend": round(metrics.get("spend", 0), 2),
+        "impressions": int(metrics.get("impressions", 0)),
+        "reach": int(metrics.get("reach", 0)),
+        "clicks": int(metrics.get("clicks", 0)),
+        "linkClicks": int(metrics.get("linkClicks", 0)),
+        "landingViews": int(metrics.get("landingPageViews", 0)),
+        "leads": int(metrics.get("leads", 0)),
+    }
+
+
+def _empty_campaign_total() -> dict[str, Any]:
+    return _campaign_metrics({}, name="All campaigns", cid="all")
+
+
+@app.get("/api/funnel/campaigns")
+async def funnel_campaigns(days: int = 30) -> dict[str, Any]:
+    """Per-campaign Meta funnel volumes (spend, impressions, reach, link clicks, landing
+    views, leads) for the simple dashboard's campaign filter. One Meta read; the dashboard
+    switches campaigns client-side. botStarts is the overall first-party relay count."""
+    config = get_meta_config()
+    if not config.is_configured:
+        return {
+            "ok": False,
+            "error": "Meta is not connected. Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to backend/.env.",
+            "days": days,
+            "campaigns": [],
+            "total": _empty_campaign_total(),
+            "botStarts": 0,
+            "hasData": False,
+        }
+
+    raw = await safe_chunked_insights(config, "funnel_campaigns", None, days=days)
+    sync_errors = [row["sync_error"] for row in raw if row.get("sync_error")]
+    rows = valid_rows(raw)
+    total_summary = summarize_overall(rows)
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    bot_starts = count_bot_starts(since_iso=since_iso)
+
+    campaigns = []
+    for item in rank_dimension(rows, ["campaign_id", "campaign_name"], limit=200):
+        keys = item.get("keys", {})
+        campaigns.append(
+            _campaign_metrics(
+                item,
+                name=str(keys.get("campaign_name") or keys.get("campaign_id") or "Campaign"),
+                cid=str(keys.get("campaign_id") or ""),
+            )
+        )
+
+    return {
+        "ok": True,
+        "days": days,
+        "campaigns": campaigns,
+        "total": _campaign_metrics(total_summary, name="All campaigns", cid="all"),
+        "botStarts": bot_starts,
         "hasData": bool(rows),
         "syncErrors": sync_errors,
     }
