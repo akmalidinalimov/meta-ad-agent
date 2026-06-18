@@ -34,6 +34,7 @@ def test_crm_funnel_groups_by_audience_via_phone_join(monkeypatch, tmp_path):
     )
     transport = FakeFunnelTransport()
     monkeypatch.setenv("BITRIX24_WEBHOOK_URL", "https://example.bitrix24.com/rest/1/secret/")
+    monkeypatch.delenv("BITRIX_PAID_STATUS_IDS", raising=False)  # exercise the label heuristic, not the machine's .env
     monkeypatch.setattr(app_module, "build_bitrix_transport", lambda config: transport)
     monkeypatch.setattr(app_module, "FUNNEL_EVENTS_STORAGE_DIR", storage)
     app_module._CRM_FUNNEL_CACHE.clear()
@@ -64,3 +65,19 @@ def test_crm_funnel_reports_unconfigured_without_calling_bitrix(monkeypatch):
 
     assert res.status_code == 200
     assert res.json()["ok"] is False
+
+
+def test_crm_funnel_honors_paid_status_ids_env(monkeypatch, tmp_path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "funnel_events.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setenv("BITRIX24_WEBHOOK_URL", "https://example.bitrix24.com/rest/1/secret/")
+    monkeypatch.setenv("BITRIX_PAID_STATUS_IDS", "NEW")  # force NEW to be the configured paid stage
+    monkeypatch.setattr(app_module, "build_bitrix_transport", lambda config: FakeFunnelTransport())
+    monkeypatch.setattr(app_module, "FUNNEL_EVENTS_STORAGE_DIR", storage)
+    app_module._CRM_FUNNEL_CACHE.clear()
+    client = TestClient(app)
+
+    body = client.get("/api/crm/funnel?days=30").json()
+
+    assert body["paidStageIds"] == ["NEW"]  # env override wins over the label heuristic

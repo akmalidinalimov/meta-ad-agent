@@ -79,6 +79,20 @@ def test_cost_and_ratio_golden_baseline():
     assert round(totals["leadRateFromClick"], 2) == 16.67  # 20 / 120 * 100
 
 
+def test_cost_per_step_aggregate():
+    from backend.analysis_engine import cost_per_step
+
+    totals = summarize_overall([_funnel_row(120, 100, 80, 20, 12)])  # spend=10
+    costs = cost_per_step(totals, bot_starts=8)
+    assert round(costs["linkClick"], 4) == 0.1     # 10 / 100 link clicks
+    assert round(costs["landingView"], 4) == 0.125  # 10 / 80 landing views
+    assert round(costs["lead"], 4) == 0.5          # 10 / 20 leads (== cpl)
+    assert round(costs["botStart"], 4) == 1.25     # 10 / 8 bot starts
+
+    safe = cost_per_step(summarize_overall([]), bot_starts=0)
+    assert safe["lead"] == 0 and safe["botStart"] == 0 and safe["landingView"] == 0
+
+
 def test_map_creative_preserves_meta_attribution_and_media():
     row = {
         "id": "ad_1",

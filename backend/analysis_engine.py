@@ -255,6 +255,25 @@ def finalize_metrics(item: dict[str, Any]) -> None:
     item["qualityScore"] = quality_score(item)
 
 
+def cost_per_step(totals: dict[str, Any], *, bot_starts: float = 0) -> dict[str, float]:
+    """Aggregate cost of each funnel step = spend / count at that step (zero-safe).
+
+    Mirrors the funnel the dashboard shows: link click -> landing view -> lead ->
+    bot start. ``lead`` here equals ``cpl`` by construction (spend / leads). The
+    bot-start count is the first-party Telegram relay total (from funnel_events),
+    so cost-per-start reflects real starts, not Meta's subscribe proxy.
+    Cost-per-Paid is composed downstream (spend / CRM paid) because Paid lives in
+    Bitrix, kept out of this Meta-only function to avoid coupling.
+    """
+    spend = totals.get("spend", 0)
+    return {
+        "linkClick": ratio(spend, totals.get("linkClicks", 0)),
+        "landingView": ratio(spend, totals.get("landingPageViews", 0)),
+        "lead": ratio(spend, totals.get("leads", 0)),
+        "botStart": ratio(spend, bot_starts),
+    }
+
+
 def empty_metrics() -> dict[str, float]:
     return {"rows": 0, "spend": 0, "impressions": 0, "reach": 0, "clicks": 0, "leads": 0, "purchases": 0, "linkClicks": 0, "landingPageViews": 0, "subscribes": 0}
 

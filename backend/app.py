@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .analysis_engine import action_count, as_float, build_meta_analysis, extract_interests, summarize_overall, valid_rows
+from .analysis_engine import action_count, as_float, build_meta_analysis, cost_per_step, extract_interests, summarize_overall, valid_rows
 from .agent_council import run_strategy_council, should_run_strategy_council
 from .agent_orchestrator import agent_registry, build_agent_decision, build_agent_handoffs, orchestrate_agent_chat, route_question
 from .agent_quality import evaluate_agent_response
@@ -1436,10 +1436,16 @@ async def funnel_rates(campaign_id: str | None = None, days: int = 30) -> dict[s
     start_source = "telegram_relay" if bot_starts else ("meta_capi" if subscribes else "none")
     start_rate = min(100.0, (start_numerator / leads * 100) if leads else 0.0)
 
+    # Aggregate cost of each funnel step = spend / count at that step. Cost-per-Paid is
+    # composed on the dashboard (spend / CRM paid) since Paid lives in Bitrix.
+    spend = round(totals.get("spend", 0), 2)
+    costs = cost_per_step(totals, bot_starts=bot_starts)
+
     return {
         "ok": True,
         "days": days,
         "campaignId": campaign_id,
+        "spend": spend,
         "counts": {
             "linkClicks": totals.get("linkClicks", 0),
             "landingPageViews": totals.get("landingPageViews", 0),
@@ -1451,6 +1457,12 @@ async def funnel_rates(campaign_id: str | None = None, days: int = 30) -> dict[s
             "visitRate": round(totals.get("visitRate", 0), 1),
             "leadRate": round(totals.get("leadRate", 0), 1),
             "startRate": round(start_rate, 1),
+        },
+        "costPerStep": {
+            "linkClick": round(costs["linkClick"], 4),
+            "landingView": round(costs["landingView"], 4),
+            "lead": round(costs["lead"], 4),
+            "botStart": round(costs["botStart"], 4),
         },
         "startSource": start_source,
         "hasData": bool(rows),
