@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any, Protocol
 
 import httpx
@@ -66,17 +67,53 @@ def build_bitrix_webhook_url(config: BitrixConfig) -> str:
     return f"{portal}/rest/{config.user_id}/{config.webhook_key}/"
 
 
-async def fetch_bitrix_leads(*, transport: BitrixTransport, limit: int = 100) -> list[dict[str, Any]]:
-    payload = await transport.call(
-        "crm.lead.list",
-        {
-            "order": {"DATE_CREATE": "DESC"},
-            "select": ["*", "UF_*"],
-            "start": 0,
-        },
-    )
-    rows = payload.get("result", [])
-    return [normalize_bitrix_lead(row) for row in rows[:limit]]
+_MAX_PAGES = 50  # backstop: 50 pages * 50 rows/page = 2500 records per range
+
+
+def _date_filter(days: int | None) -> dict[str, str] | None:
+    if not days:
+        return None
+    since = (date.today() - timedelta(days=days)).isoformat()
+    return {">=DATE_CREATE": since}
+
+
+async def _fetch_paged(
+    *,
+    transport: BitrixTransport,
+    method: str,
+    days: int | None,
+    limit: int | None,
+    extra_filter: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Read-only paged list. Follows Bitrix's ``next`` cursor and merges an optional
+    DATE_CREATE filter + an extra filter (e.g. a ``%TITLE`` substring)."""
+    filter_ = dict(_date_filter(days) or {})
+    if extra_filter:
+        filter_.update(extra_filter)
+    rows: list[dict[str, Any]] = []
+    start = 0
+    for _ in range(_MAX_PAGES):
+        params: dict[str, Any] = {"order": {"DATE_CREATE": "DESC"}, "select": ["*", "UF_*"], "start": start}
+        if filter_:
+            params["filter"] = filter_
+        payload = await transport.call(method, params)
+        batch = payload.get("result", [])
+        rows.extend(batch)
+        nxt = payload.get("next")
+        if not batch or nxt is None:
+            break
+        if limit is not None and len(rows) >= limit:
+            break
+        start = nxt
+    return rows[:limit] if limit is not None else rows
+
+
+async def fetch_bitrix_leads(
+    *, transport: BitrixTransport, limit: int | None = 100, days: int | None = None, title_contains: str | None = None
+) -> list[dict[str, Any]]:
+    extra = {"%TITLE": title_contains} if title_contains else None
+    rows = await _fetch_paged(transport=transport, method="crm.lead.list", days=days, limit=limit, extra_filter=extra)
+    return [normalize_bitrix_lead(row) for row in rows]
 
 
 async def fetch_bitrix_statuses(*, transport: BitrixTransport, entity_id: str = "STATUS") -> list[dict[str, Any]]:

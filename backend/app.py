@@ -37,6 +37,7 @@ from .routers import planning as planning_router
 from .routers import targets as targets_router
 from .routers import tasks as tasks_router
 from .routers import telegram as telegram_router
+from .routers import vsl as vsl_router
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger(__name__)
@@ -229,6 +230,7 @@ for module in (
     agents_router,
     members_router,
     agent_status_router,
+    vsl_router,
 ):
     app.include_router(module.router)
 

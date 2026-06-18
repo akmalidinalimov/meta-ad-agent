@@ -178,6 +178,7 @@ async def campaign_kpis(campaignId: str | None = None, days: int = 30, force: bo
             "subscribes": int(subscribes),
             "clicks": int(totals.get("clicks", 0) or 0),
             "impressions": int(totals.get("impressions", 0) or 0),
+            "reach": int(totals.get("reach", 0) or 0),
             "costPerStart": round(spend / bot_starts, 2) if bot_starts else None,
         },
         "rates": {

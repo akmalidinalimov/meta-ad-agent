@@ -113,6 +113,7 @@ export type CampaignKpis = {
     subscribes: number
     clicks: number
     impressions: number
+    reach: number
     costPerStart: number | null
   }
   rates?: { visitRate: number; leadRate: number; startRate: number }
@@ -172,6 +173,50 @@ export async function getCampaignKpis(
     return (await response.json()) as CampaignKpis
   } catch {
     return { ok: false }
+  }
+}
+
+// Bitrix CRM stage distribution for the configured order/source. Safe empty shape on failure.
+export type CrmStageRow = { id: string; name: string; count: number }
+export type CrmStages = {
+  ok: boolean
+  source?: string
+  total: number
+  paid: number
+  paidStageIds: string[]
+  stages: CrmStageRow[]
+  days?: number
+  error?: string
+}
+export async function getCrmStages(days: number): Promise<CrmStages> {
+  const empty: CrmStages = { ok: false, total: 0, paid: 0, paidStageIds: [], stages: [] }
+  try {
+    const response = await fetch(apiUrl(`/api/crm/stages?days=${days}`))
+    if (!response.ok) return empty
+    return (await response.json()) as CrmStages
+  } catch {
+    return empty
+  }
+}
+
+// YouTube VSL watch-through. Safe "unconfigured" shape on failure.
+export type VslMetrics = {
+  ok: boolean
+  configured: boolean
+  views: number | null
+  viewsWatched50: number | null
+  watchRate50: number | null
+  hasRetention: boolean
+  error?: string
+}
+export async function getVsl(days: number): Promise<VslMetrics> {
+  const empty: VslMetrics = { ok: false, configured: false, views: null, viewsWatched50: null, watchRate50: null, hasRetention: false }
+  try {
+    const response = await fetch(apiUrl(`/api/vsl?days=${days}`))
+    if (!response.ok) return empty
+    return (await response.json()) as VslMetrics
+  } catch {
+    return empty
   }
 }
 

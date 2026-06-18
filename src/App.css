@@ -2671,6 +2671,8 @@
 
 /* Live funnel rates — full-width strip across the top of the Monitor screen. */
 .monitor-funnel-rates { grid-column: 1 / -1; }
+/* The simple funnel dashboard is the Monitor headline — span the full grid width. */
+.monitor-screen .simple-dash { grid-column: 1 / -1; }
 .monitor-funnel-rates > h5 {
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -2950,4 +2952,262 @@
   .office-desk.working .office-face,
   .office-strip .strip-agent.working,
   .office-list li.working .office-mini { animation: none; }
+}
+
+/* ============================================================
+   SIMPLE FUNNEL DASHBOARD (Monitor headline) — matches the reference
+   ============================================================ */
+.simple-dash {
+  display: grid;
+  gap: 16px;
+}
+.simple-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.simple-toolbar h5 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #172033;
+}
+.simple-note {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.simple-cards {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+.simple-rate-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid #e7edf4;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px -26px rgba(15, 23, 42, 0.4);
+}
+.simple-rate-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.simple-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+.simple-rate-card strong {
+  font-size: 2.2rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.simple-rate-sub {
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.simple-rate-card small {
+  color: #94a3b8;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+.simple-block {
+  padding: 18px;
+  border: 1px solid #e7edf4;
+  border-radius: 16px;
+  background: #ffffff;
+}
+.simple-block h5 {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #172033;
+}
+.simple-funnel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.simple-funnel-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 14px;
+}
+.simple-funnel-label {
+  color: #475569;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+.simple-funnel-track {
+  height: 30px;
+  border-radius: 8px;
+  background: #eef2f7;
+  overflow: hidden;
+}
+.simple-funnel-bar {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-width: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+.simple-funnel-bar em {
+  color: #ffffff;
+  font-style: normal;
+  font-weight: 800;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+.simple-funnel-pct {
+  justify-self: end;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-align: right;
+}
+.manual-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 14px 0 0;
+  border-top: 1px solid #eef2f7;
+}
+.manual-inputs label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.manual-inputs input {
+  width: 120px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #d9e1eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.simple-help {
+  display: block;
+  margin: 8px 0 0;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.simple-cost {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+.simple-cost-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.simple-cost-item strong {
+  font-size: 1.5rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+.simple-cost-item small {
+  color: #94a3b8;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.simple-spend {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 14px;
+}
+.simple-spend article {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.simple-spend strong {
+  color: #172033;
+  font-size: 1.1rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+.simple-spend small {
+  color: #94a3b8;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+.crm-stages {
+  display: grid;
+  gap: 8px;
+}
+.crm-stage-row {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 110px;
+  align-items: center;
+  gap: 12px;
+}
+.crm-stage-name {
+  overflow: hidden;
+  color: #475569;
+  font-size: 0.83rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crm-stage-track {
+  height: 22px;
+  border-radius: 6px;
+  background: #eef2f7;
+  overflow: hidden;
+}
+.crm-stage-bar {
+  height: 100%;
+  border-radius: 6px;
+  background: #64748b;
+}
+.crm-stage-row.paid .crm-stage-bar {
+  background: #0f766e;
+}
+.crm-stage-count {
+  justify-self: end;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.crm-stage-row.paid .crm-stage-count {
+  color: #0f766e;
+}
+@media (max-width: 1100px) {
+  .simple-cards,
+  .simple-cost {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .simple-spend {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .simple-funnel-row,
+  .crm-stage-row {
+    grid-template-columns: 110px minmax(0, 1fr) 92px;
+  }
 }
