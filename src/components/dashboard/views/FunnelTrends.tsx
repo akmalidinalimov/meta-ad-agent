@@ -179,8 +179,8 @@ export function FunnelTrends({ campaignId, days, refreshKey, selectedRate, onSel
             <>
               <strong>No daily VSL trend yet.</strong>
               <span>
-                YouTube only reports a lifetime total, so the VSL line builds up from daily snapshots — it needs 2+ days
-                and starts drawing tomorrow. For instant daily VSL history, connect YouTube Analytics (OAuth).
+                YouTube reports only a running total, so the VSL line builds from the daily view-count we record — it
+                needs 2+ days and starts drawing tomorrow.
               </span>
             </>
           ) : (

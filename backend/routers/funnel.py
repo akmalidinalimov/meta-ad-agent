@@ -93,22 +93,6 @@ async def _vsl_views_now(days: int) -> float | None:
         return None
 
 
-async def _vsl_daily_by_date(since: str, until: str) -> dict[str, int] | None:
-    """Real per-day VSL views from YouTube Analytics (OAuth). None when OAuth isn't
-    configured (caller then falls back to cumulative-snapshot deltas) or on failure."""
-    from ..youtube_client import HttpYouTubeTransport, build_vsl_daily, get_youtube_config
-
-    config = get_youtube_config()
-    if not config.has_oauth:
-        return None
-    try:
-        return await build_vsl_daily(
-            transport=HttpYouTubeTransport(config), config=config, since=since, until=until
-        )
-    except Exception:  # noqa: BLE001 - VSL is optional; fall back to snapshots
-        return None
-
-
 def _parse_day(value: str | None) -> date | None:
     try:
         return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
@@ -157,24 +141,13 @@ async def funnel_history(
     link_clicks_by_date = event_users_by_date(events, "telegram_link_click")
     crm_by_date = await _crm_leads_by_date(days)
 
-    # VSL daily: with YouTube OAuth we get REAL per-day views (backfilled) from Analytics;
-    # without it we accrue forward from a daily cumulative snapshot (delta of a running
-    # total). Either path feeds build_history_series; vslSource tells the UI which.
-    vsl_daily_by_date = await _vsl_daily_by_date(start_day.isoformat(), end_day.isoformat())
-    vsl_cumulative_by_date: dict[str, float] = {}
-    if vsl_daily_by_date is not None:
-        vsl_source: str | None = "youtube_analytics"
-        vsl_configured = True
-    else:
-        vsl_views_now = await _vsl_views_now(days)
-        if vsl_views_now is not None:
-            record_vsl_snapshot(date.today().isoformat(), vsl_views_now)
-            vsl_cumulative_by_date = load_vsl_snapshots()
-            vsl_source = "snapshot"
-            vsl_configured = True
-        else:
-            vsl_source = None
-            vsl_configured = False
+    # VSL daily views accrue from the YouTube view count: record today's cumulative count,
+    # then the day-over-day delta of the snapshots is the per-day views. (YouTube reports
+    # only a running total, so daily VSL history builds up from the first snapshot forward.)
+    vsl_views_now = await _vsl_views_now(days)
+    if vsl_views_now is not None:
+        record_vsl_snapshot(date.today().isoformat(), vsl_views_now)
+    vsl_cumulative_by_date = load_vsl_snapshots()
 
     dates = daterange(start_day, end_day)
     points = build_history_series(
@@ -184,7 +157,6 @@ async def funnel_history(
         link_clicks_by_date=link_clicks_by_date,
         crm_by_date=crm_by_date,
         vsl_cumulative_by_date=vsl_cumulative_by_date,
-        vsl_daily_by_date=vsl_daily_by_date,
         today=date.today().isoformat(),
     )
     return {
@@ -195,16 +167,11 @@ async def funnel_history(
         "since": start_day.isoformat(),
         "until": end_day.isoformat(),
         "campaignId": str(campaignId) if scoped else "all",
-        "vslConfigured": vsl_configured,
-        "vslSource": vsl_source,
+        "vslConfigured": vsl_views_now is not None,
         "points": points,
         "syncErrors": sync_errors,
         "notes": {
-            "vsl": (
-                "Real per-day VSL views from YouTube Analytics (backfilled)."
-                if vsl_source == "youtube_analytics"
-                else "VSL daily views accrue from the first daily snapshot forward — YouTube reports only a running total, so earlier days are blank. Connect YouTube Analytics OAuth for real, backfilled daily history."
-            ),
+            "vsl": "VSL daily views are the day-over-day change in YouTube's view count — it reports only a running total, so the daily line builds up from the first snapshot forward.",
             "botStarts": "Bot starts/button clicks are first-party daily uniques and are attributed account-wide (not per campaign).",
         },
     }

@@ -59,26 +59,6 @@ def parse_view_count(payload: dict[str, Any]) -> int:
         return 0
 
 
-def parse_daily_views(payload: dict[str, Any]) -> dict[str, int]:
-    """{date -> views} from a YouTube Analytics report with dimensions=day, mapped by
-    column name so column order never matters."""
-    headers = [h.get("name") for h in payload.get("columnHeaders", [])]
-    try:
-        di = headers.index("day")
-        vi = headers.index("views")
-    except ValueError:
-        return {}
-    out: dict[str, int] = {}
-    for row in payload.get("rows", []) or []:
-        if len(row) > max(di, vi):
-            day = str(row[di])[:10]
-            try:
-                out[day] = int(row[vi])
-            except (TypeError, ValueError):
-                continue
-    return out
-
-
 def parse_retention_rows(payload: dict[str, Any]) -> list[tuple[float, float]]:
     """(elapsedVideoTimeRatio, audienceWatchRatio) pairs from an Analytics report,
     mapped by column name so column order never matters."""
@@ -137,9 +117,6 @@ class YouTubeTransport(Protocol):
         ...
 
     async def fetch_retention_rows(self, video_id: str, days: int) -> list[tuple[float, float]]:
-        ...
-
-    async def fetch_daily_views(self, video_id: str, since: str, until: str) -> dict[str, int]:
         ...
 
 
@@ -208,22 +185,6 @@ class HttpYouTubeTransport:
         payload = await self._analytics_query(token, params)
         return parse_retention_rows(payload)
 
-    async def fetch_daily_views(self, video_id: str, since: str, until: str) -> dict[str, int]:
-        """Real per-day views for the video over [since, until] (YouTube Analytics, OAuth).
-        Lets the VSL trend show true daily history, including backfilled past days."""
-        token = await self._access_token()
-        params = {
-            "ids": "channel==MINE",
-            "startDate": since,
-            "endDate": until,
-            "metrics": "views",
-            "dimensions": "day",
-            "filters": f"video=={video_id}",
-            "sort": "day",
-        }
-        payload = await self._analytics_query(token, params)
-        return parse_daily_views(payload)
-
     async def _analytics_query(self, token: str, params: dict[str, str]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30, verify=get_ssl_context()) as client:
             response = await client.get(
@@ -248,13 +209,3 @@ async def build_vsl_report(*, transport: YouTubeTransport, config: YouTubeConfig
     metrics["hasRetention"] = ratio_half is not None
     metrics["source"] = "youtube_analytics" if config.has_oauth else "youtube_data"
     return metrics
-
-
-async def build_vsl_daily(
-    *, transport: YouTubeTransport, config: YouTubeConfig, since: str, until: str
-) -> dict[str, int] | None:
-    """Real per-day VSL views from YouTube Analytics (requires OAuth). Returns None when
-    OAuth isn't configured, so the caller falls back to cumulative-snapshot deltas."""
-    if not config.has_oauth:
-        return None
-    return await transport.fetch_daily_views(config.video_id, since, until)

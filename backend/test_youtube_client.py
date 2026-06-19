@@ -2,10 +2,8 @@ import asyncio
 
 from backend.youtube_client import (
     YouTubeConfig,
-    build_vsl_daily,
     build_vsl_metrics,
     build_vsl_report,
-    parse_daily_views,
     parse_retention_rows,
     parse_view_count,
     ratio_nearest_half,
@@ -47,20 +45,10 @@ def test_build_vsl_metrics_50pct_watch():
     assert clamp["viewsWatched50"] == 100 and clamp["watchRate50"] == 100.0
 
 
-def test_parse_daily_views_maps_columns_by_name():
-    payload = {
-        "columnHeaders": [{"name": "day"}, {"name": "views"}],
-        "rows": [["2026-06-17", 120], ["2026-06-18", 0], ["2026-06-19", 45]],
-    }
-    assert parse_daily_views(payload) == {"2026-06-17": 120, "2026-06-18": 0, "2026-06-19": 45}
-    assert parse_daily_views({"columnHeaders": [], "rows": []}) == {}
-
-
 class FakeYouTubeTransport:
-    def __init__(self, views, rows, daily=None):
+    def __init__(self, views, rows):
         self._views = views
         self._rows = rows
-        self._daily = daily or {}
         self.calls = []
 
     async def fetch_views(self, video_id):
@@ -70,10 +58,6 @@ class FakeYouTubeTransport:
     async def fetch_retention_rows(self, video_id, days):
         self.calls.append(("retention", video_id, days))
         return self._rows
-
-    async def fetch_daily_views(self, video_id, since, until):
-        self.calls.append(("daily", video_id, since, until))
-        return self._daily
 
 
 def _cfg(**kw):
@@ -101,18 +85,3 @@ def test_build_vsl_report_with_oauth_computes_50pct():
     assert report["watchRate50"] == 17.5
     assert report["hasRetention"] is True
     assert report["source"] == "youtube_analytics"
-
-
-def test_build_vsl_daily_needs_oauth():
-    cfg = _cfg()  # api_key only, no oauth
-    transport = FakeYouTubeTransport(2000, [], daily={"2026-06-18": 30})
-    assert asyncio.run(build_vsl_daily(transport=transport, config=cfg, since="2026-06-12", until="2026-06-18")) is None
-    assert ("daily", "vid123", "2026-06-12", "2026-06-18") not in transport.calls
-
-
-def test_build_vsl_daily_with_oauth_returns_per_day_views():
-    cfg = _cfg(oauth_client_id="c", oauth_client_secret="s", oauth_refresh_token="r")
-    transport = FakeYouTubeTransport(2000, [], daily={"2026-06-17": 120, "2026-06-18": 45})
-    out = asyncio.run(build_vsl_daily(transport=transport, config=cfg, since="2026-06-12", until="2026-06-18"))
-    assert out == {"2026-06-17": 120, "2026-06-18": 45}
-    assert ("daily", "vid123", "2026-06-12", "2026-06-18") in transport.calls

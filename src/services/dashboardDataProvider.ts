@@ -247,7 +247,6 @@ export type FunnelHistory = {
   until?: string
   campaignId?: string
   vslConfigured?: boolean
-  vslSource?: string | null
   points: FunnelHistoryPoint[]
   notes?: Record<string, string>
   error?: string
