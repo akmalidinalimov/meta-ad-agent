@@ -56,6 +56,9 @@ def test_history_builds_daily_points(monkeypatch):
     async def fake_insights(*a, **k):
         return rows
 
+    async def fake_entity_insights(config, object_id, **k):
+        return rows  # the campaign's own endpoint (rows are already this campaign's)
+
     async def fake_crm(days):
         return {yesterday.isoformat(): 3, today.isoformat(): 2}
 
@@ -63,7 +66,8 @@ def test_history_builds_daily_points(monkeypatch):
         return None
 
     monkeypatch.setattr(funnel_mod, "get_meta_config", lambda: _Cfg(True))
-    monkeypatch.setattr(funnel_mod, "safe_chunked_insights", fake_insights)
+    monkeypatch.setattr(funnel_mod, "get_insights", fake_insights)
+    monkeypatch.setattr(funnel_mod, "get_entity_insights", fake_entity_insights)
     monkeypatch.setattr(
         funnel_mod,
         "load_funnel_events",

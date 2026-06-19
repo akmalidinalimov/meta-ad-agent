@@ -103,6 +103,8 @@ export type CampaignKpis = {
   campaignId?: string
   campaignName?: string
   hasData?: boolean
+  conversionEvent?: string
+  conversionLabel?: string
   kpis?: {
     spend: number
     leads: number

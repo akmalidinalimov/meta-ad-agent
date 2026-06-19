@@ -20,8 +20,8 @@ from ..funnel_history import (
     load_vsl_snapshots,
     record_vsl_snapshot,
 )
-from ..meta_client import get_meta_config
-from ..meta_sync import normalize_sync_days, safe_chunked_insights
+from ..meta_client import MetaApiError, get_entity_insights, get_insights, get_meta_config
+from ..meta_sync import normalize_sync_days
 
 router = APIRouter()
 
@@ -135,9 +135,21 @@ async def funnel_history(
         days = normalize_sync_days(days)
     start_day = end_day - timedelta(days=days - 1)  # clamp to the supported max window
 
-    raw = await safe_chunked_insights(config, "funnel_history", None, days=days, end_date=end_day)
-    sync_errors = [row["sync_error"] for row in raw if isinstance(row, dict) and row.get("sync_error")]
-    meta_by_date = daily_meta_metrics(raw, campaignId if scoped else None)
+    # COMPLETE per-campaign daily insights: a selected campaign via its OWN endpoint, "all"
+    # at CAMPAIGN level — both avoid the account-wide ad-daily page cap that dropped
+    # smaller/newer campaigns (so a scoped trend isn't all zeros). rows are already scoped,
+    # so daily_meta_metrics groups by date only.
+    s_iso, u_iso = start_day.isoformat(), end_day.isoformat()
+    sync_errors: list[str] = []
+    try:
+        if scoped:
+            raw = await get_entity_insights(config, str(campaignId), since=s_iso, until=u_iso, time_increment=1)
+        else:
+            raw = await get_insights(config, level="campaign", since=s_iso, until=u_iso, time_increment=1)
+    except MetaApiError as exc:
+        raw = []
+        sync_errors = [str(exc)]
+    meta_by_date = daily_meta_metrics(raw, None)
 
     events = load_funnel_events()
     bot_starts_by_date = event_users_by_date(events, "bot_start")

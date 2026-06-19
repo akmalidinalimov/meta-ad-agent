@@ -127,7 +127,10 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
     <section className="simple-dash" aria-label="Live campaign funnel">
       <div className="simple-toolbar">
         <h5>{campaignName}</h5>
-        <span className="simple-note">{freshness}</span>
+        <span className="simple-note">
+          {freshness}
+          {kpis?.conversionEvent ? ` · 🎯 optimizing for ${kpis.conversionEvent}` : ''}
+        </span>
       </div>
 
       <div className="simple-cards">
@@ -158,6 +161,9 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
           }
           const selected = trendRate === card.key
           const toggle = () => setTrendRate((prev) => (prev === card.key ? null : (card.key as TrendRateKey)))
+          // The conversion card relabels to the campaign's OWN optimized event (Lead /
+          // Registration / View rate) so a registration/view campaign isn't mislabelled.
+          const cardLabel = card.key === 'lead' && kpis?.conversionLabel ? kpis.conversionLabel : card.label
           return (
             <article
               className={`simple-rate-card simple-rate-clickable${selected ? ' is-selected' : ''}`}
@@ -176,7 +182,7 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
             >
               <p className="simple-rate-label" style={{ color: card.color }}>
                 <span className="simple-dot" style={{ background: card.color }} />
-                {card.label}
+                {cardLabel}
               </p>
               <strong style={{ color: card.color }}>{value}</strong>
               <span className="simple-rate-sub">{sub}</span>

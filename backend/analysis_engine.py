@@ -41,6 +41,57 @@ ACTION_ALIASES = {
 }
 
 
+# Per-campaign conversion attribution. Each campaign optimizes for ONE event
+# (ad set promoted_object.custom_event_type, e.g. LEAD vs COMPLETE_REGISTRATION). Meta
+# reports that event's conversions under several overlapping action types, so we take the
+# MAX within the group (same dedup as action_count). This makes the funnel's conversion
+# stage UNIVERSAL: a "registration"/"view" campaign is measured by its own event, not by
+# the hardcoded `lead` action (which is 0 for it). Custom conversions (no standard event)
+# are matched by their custom_conversion_id via the "CUSTOM:<id>" marker.
+CONVERSION_EVENT_ALIASES: dict[str, set[str]] = {
+    "LEAD": {
+        "lead", "onsite_web_lead", "onsite_conversion.lead_grouped", "leadgen_grouped",
+        "offsite_conversion.fb_pixel_lead", "offsite_lead_add_20_s_calls", "offsite_lead",
+    },
+    "COMPLETE_REGISTRATION": {
+        "complete_registration", "onsite_conversion.complete_registration",
+        "offsite_conversion.fb_pixel_complete_registration", "offsite_complete_registration_add_meta_leads",
+    },
+    "PURCHASE": {"purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase", "onsite_web_purchase"},
+    "VIEW_CONTENT": {"view_content", "omni_view_content", "offsite_conversion.fb_pixel_view_content"},
+    "ADD_TO_CART": {"add_to_cart", "omni_add_to_cart", "offsite_conversion.fb_pixel_add_to_cart"},
+    "INITIATE_CHECKOUT": {"initiate_checkout", "omni_initiated_checkout", "offsite_conversion.fb_pixel_initiate_checkout"},
+    "ADD_PAYMENT_INFO": {"add_payment_info", "offsite_conversion.fb_pixel_add_payment_info"},
+    "SUBSCRIBE": {"subscribe", "onsite_conversion.subscribe_total", "offsite_conversion.fb_pixel_subscribe", "offsite_conversion.subscribe"},
+    "CONTACT": {"contact", "offsite_conversion.fb_pixel_contact", "onsite_conversion.messaging_conversation_started_7d"},
+    "SCHEDULE": {"schedule", "offsite_conversion.fb_pixel_schedule"},
+    "SEARCH": {"search", "offsite_conversion.fb_pixel_search"},
+    "DONATE": {"donate", "offsite_conversion.fb_pixel_donate"},
+    "START_TRIAL": {"start_trial", "offsite_conversion.fb_pixel_start_trial"},
+    "SUBMIT_APPLICATION": {"submit_application", "offsite_conversion.fb_pixel_submit_application"},
+    "LANDING_PAGE_VIEW": {"landing_page_view", "omni_landing_page_view"},
+}
+
+# Friendly card label per conversion event (the dashboard's 2nd rate card).
+CONVERSION_EVENT_LABELS: dict[str, str] = {
+    "LEAD": "Lead rate",
+    "COMPLETE_REGISTRATION": "Registration rate",
+    "PURCHASE": "Purchase rate",
+    "VIEW_CONTENT": "View rate",
+    "ADD_TO_CART": "Add-to-cart rate",
+    "INITIATE_CHECKOUT": "Checkout rate",
+    "ADD_PAYMENT_INFO": "Payment-info rate",
+    "SUBSCRIBE": "Subscribe rate",
+    "CONTACT": "Contact rate",
+    "SCHEDULE": "Schedule rate",
+    "SEARCH": "Search rate",
+    "DONATE": "Donate rate",
+    "START_TRIAL": "Trial rate",
+    "SUBMIT_APPLICATION": "Application rate",
+    "LANDING_PAGE_VIEW": "Landing-view rate",
+}
+
+
 def build_meta_analysis(raw: dict[str, Any], llm_summary: str | None = None) -> dict[str, Any]:
     base_rows = valid_rows(raw.get("insights", {}).get("base", []))
     age_gender_rows = raw.get("insights", {}).get("age_gender", [])
@@ -689,6 +740,36 @@ def action_count(row: dict[str, Any], alias: str) -> float:
 
 def video_views_3s(row: dict[str, Any]) -> float:
     return action_count(row, "video_3s")
+
+
+def count_conversion(row: dict[str, Any], event_type: str | None) -> float:
+    """The conversion count for a campaign's OPTIMIZED event, per insight row.
+
+    ``event_type`` is the ad set's promoted_object.custom_event_type (e.g. "LEAD",
+    "COMPLETE_REGISTRATION") or "CUSTOM:<custom_conversion_id>" for a custom conversion.
+    Takes the MAX over the event's overlapping action types (Meta repeats the same
+    conversion under several). Unknown/empty event → the generic lead+registration
+    definition, so behaviour is unchanged when a campaign's goal can't be determined.
+    """
+    key = str(event_type or "").strip().upper()
+    if key.startswith("CUSTOM:"):
+        custom_id = key.split(":", 1)[1].strip().lower()
+        wanted = f"offsite_conversion.custom.{custom_id}"
+        values = [as_float(a.get("value")) for a in row.get("actions") or [] if str(a.get("action_type") or "").lower() == wanted]
+        return max(values, default=0.0)
+    aliases = CONVERSION_EVENT_ALIASES.get(key)
+    if not aliases:
+        return action_count(row, "lead") + action_count(row, "registration")
+    values = [as_float(a.get("value")) for a in row.get("actions") or [] if a.get("action_type") in aliases]
+    return max(values, default=0.0)
+
+
+def conversion_label(event_type: str | None) -> str:
+    """Friendly card label for a campaign's conversion event ('Lead rate' default)."""
+    key = str(event_type or "").strip().upper()
+    if key.startswith("CUSTOM:"):
+        return "Conversion rate"
+    return CONVERSION_EVENT_LABELS.get(key, "Lead rate")
 
 
 def action_value(row: dict[str, Any], alias: str = "purchase") -> float:
