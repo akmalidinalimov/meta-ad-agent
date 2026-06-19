@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -13,8 +13,9 @@ from ..bitrix_client import (
     fetch_bitrix_leads,
     fetch_bitrix_statuses,
     get_bitrix_config,
+    get_bot_cell_tags,
 )
-from ..crm_funnel import build_crm_stage_breakdown
+from ..crm_funnel import build_crm_stage_breakdown, split_by_cell
 from ..crm_store import STORAGE_DIR as CRM_STORAGE_DIR
 from ..crm_store import list_crm_leads, save_crm_leads
 
@@ -75,11 +76,32 @@ def crm_leads() -> dict[str, Any]:
     return {"leads": list_crm_leads(storage_dir=CRM_STORAGE_DIR)}
 
 
+def _parse_day(value: str | None) -> date | None:
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
 @router.get("/api/crm/stages")
-async def crm_stages(days: int = 30, force: bool = False) -> dict[str, Any]:
+async def crm_stages(
+    days: int = 30,
+    since: str | None = None,
+    until: str | None = None,
+    cell: str = "all",
+    force: bool = False,
+) -> dict[str, Any]:
     """Bitrix lead stage distribution for the configured order/source (default: leads
-    titled 'AI Creators 5.0 buyurtmasi'). Read-only, additive, TTL-cached."""
+    titled 'AI Creators 5.0 buyurtmasi'). Read-only, additive, TTL-cached.
+
+    ``cell`` selects which origin to count: 'B' = Telegram-bot VSL form only (the bot
+    leads), 'A' = the same form used elsewhere, 'all' = both. The window is the last
+    ``days`` days, or an explicit ``since``..``until`` (YYYY-MM-DD) range. ``cellCounts``
+    always reports the A/B/all split for the window so the UI can show it."""
     config = get_bitrix_config()
+    cell = (cell or "all").strip().upper()
+    if cell not in ("A", "B", "ALL"):
+        cell = "ALL"
     if not config.is_configured:
         return {
             "ok": False,
@@ -89,10 +111,21 @@ async def crm_stages(days: int = 30, force: bool = False) -> dict[str, Any]:
             "paid": 0,
             "paidStageIds": [],
             "source": "",
+            "cell": cell,
+            "cellCounts": {"A": 0, "B": 0, "all": 0},
         }
 
     title = os.getenv("BITRIX_LEAD_SOURCE_TITLE", "AI Creators 5.0 buyurtmasi").strip()
-    cache_key = f"{title}:{days}"
+    # Resolve the window: an explicit since..until wins; else the last N days.
+    end_day = _parse_day(until) or date.today()
+    start_day = _parse_day(since)
+    if start_day and start_day <= end_day:
+        fetch_days = (date.today() - start_day).days + 1
+    else:
+        fetch_days = days
+        start_day = end_day - timedelta(days=days - 1)
+
+    cache_key = f"{title}:{start_day}:{end_day}:{cell}"
     now = datetime.now(timezone.utc)
     cached = _STAGES_CACHE.get(cache_key)
     if not force and cached and (now - cached["at"]).total_seconds() < _STAGES_TTL_SECONDS:
@@ -100,17 +133,31 @@ async def crm_stages(days: int = 30, force: bool = False) -> dict[str, Any]:
 
     transport = build_bitrix_transport(config)
     try:
-        leads = await fetch_bitrix_leads(transport=transport, days=days, limit=None, title_contains=title or None)
+        leads = await fetch_bitrix_leads(transport=transport, days=fetch_days, limit=None, title_contains=title or None)
         stages_raw = await fetch_bitrix_statuses(transport=transport, entity_id="STATUS")
     except Exception as exc:  # noqa: BLE001 - surface a sanitized 502
         raise HTTPException(status_code=502, detail=f"Bitrix24 stages read failed: {exc}") from exc
 
+    # Clamp to the requested window (fetch is >=start; trim anything created after `until`).
+    lo, hi = start_day.isoformat(), end_day.isoformat()
+    window = [lead for lead in leads if lo <= str(lead.get("createdAt") or "")[:10] <= hi]
+
+    descs, utms = get_bot_cell_tags()
+    split = split_by_cell(window, bot_source_descriptions=descs, bot_utm_contents=utms)
+    cell_counts = {"A": len(split["A"]), "B": len(split["B"]), "all": len(window)}
+    selected = split["B"] if cell == "B" else split["A"] if cell == "A" else window
+
     stages = [{"id": row["statusId"], "name": row["name"]} for row in stages_raw]
     paid_ids = [item.strip() for item in os.getenv("BITRIX_PAID_STATUS_IDS", "").split(",") if item.strip()]
-    payload = build_crm_stage_breakdown(leads, stages=stages, paid_status_ids=paid_ids or None)
+    payload = build_crm_stage_breakdown(selected, stages=stages, paid_status_ids=paid_ids or None)
     payload["ok"] = True
     payload["source"] = title
-    payload["days"] = days
+    payload["days"] = fetch_days
+    payload["since"] = lo
+    payload["until"] = hi
+    payload["cell"] = cell
+    payload["cellCounts"] = cell_counts
+    payload["botTags"] = {"sourceDescriptions": descs, "utmContents": utms}
     payload["refreshedAt"] = now.isoformat()
     _STAGES_CACHE[cache_key] = {"at": now, "payload": payload}
     return payload

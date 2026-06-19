@@ -2,11 +2,42 @@ from backend.crm_funnel import (
     build_audience_index,
     build_crm_funnel,
     count_bot_starts_by_audience,
+    lead_cell,
     normalize_aud,
     normalize_phone,
     normalize_username,
     resolve_paid_stage_ids,
+    split_by_cell,
 )
+
+
+# --- Cell A / Cell B attribution (Telegram-bot form vs same form elsewhere) ----------
+
+
+def test_lead_cell_marks_bot_leads_by_source_description():
+    assert lead_cell({"sourceDescription": "Landing B (VSL embed)"}) == "B"
+    assert lead_cell({"sourceDescription": "landing b"}) == "B"  # case-insensitive substring
+    assert lead_cell({"utmContent": "cellb"}) == "B"  # utm_content fallback
+    assert lead_cell({"sourceDescription": "", "utmContent": ""}) == "A"
+    assert lead_cell({"sourceDescription": "Landing A"}) == "A"
+
+
+def test_lead_cell_respects_configured_tags():
+    rec = {"sourceDescription": "TG Bot Form"}
+    assert lead_cell(rec) == "A"  # not a default tag
+    assert lead_cell(rec, bot_source_descriptions=["tg bot"]) == "B"
+
+
+def test_split_by_cell_partitions_leads():
+    leads = [
+        {"sourceDescription": "Landing B (VSL embed)", "stage": "NEW"},
+        {"utmContent": "cellb", "stage": "NEW"},
+        {"sourceDescription": "", "stage": "NEW"},
+        {"sourceDescription": "Landing A", "stage": "NEW"},
+    ]
+    split = split_by_cell(leads)
+    assert len(split["B"]) == 2
+    assert len(split["A"]) == 2
 
 
 # --- Task 1: normalization helpers -----------------------------------------

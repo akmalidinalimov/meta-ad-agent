@@ -58,6 +58,15 @@ def get_bitrix_config() -> BitrixConfig:
     )
 
 
+def get_bot_cell_tags() -> tuple[list[str], list[str]]:
+    """Markers (from env) that identify Telegram-bot (Cell B) leads in Bitrix:
+    SOURCE_DESCRIPTION substrings + utm_content values, comma-separated, with the observed
+    live defaults ('Landing B' / 'cellb')."""
+    descs = [s.strip() for s in os.getenv("BITRIX_BOT_SOURCE_DESCRIPTION", "Landing B").split(",") if s.strip()]
+    utms = [s.strip() for s in os.getenv("BITRIX_BOT_UTM_CONTENT", "cellb").split(",") if s.strip()]
+    return descs, utms
+
+
 def build_bitrix_webhook_url(config: BitrixConfig) -> str:
     if config.webhook_url:
         return config.webhook_url if config.webhook_url.endswith("/") else f"{config.webhook_url}/"
@@ -135,6 +144,10 @@ def normalize_bitrix_lead(row: dict[str, Any]) -> dict[str, Any]:
         "title": row.get("TITLE") or "",
         "stage": row.get("STATUS_ID") or row.get("STAGE_ID") or "",
         "source": row.get("SOURCE_ID") or "",
+        # SOURCE_DESCRIPTION carries the cell tag (e.g. "Landing B (VSL embed)" for the
+        # Telegram-bot VSL form) — the signal that separates bot leads from the same form
+        # used elsewhere. See lead_cell() in crm_funnel.
+        "sourceDescription": row.get("SOURCE_DESCRIPTION") or "",
         "phone": first_value(row.get("PHONE")),
         "visitorId": custom_value(row, "UF_CRM_VISITOR_ID", "VISITOR_ID", "visitor_id"),
         "telegramUserId": custom_value(row, "UF_CRM_TELEGRAM_USER_ID", "TELEGRAM_USER_ID", "telegram_user_id"),

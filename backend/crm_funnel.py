@@ -105,6 +105,51 @@ def _join_audience(record: dict[str, Any], by_phone: dict[str, str], by_username
     return aud if aud in KNOWN_AUDIENCES else ""
 
 
+# --- Cell A / Cell B attribution (Telegram-bot form vs the same form used elsewhere) ----
+# Cell B = the Telegram-bot VSL landing form. Bitrix tags those leads with a SOURCE_DESCRIPTION
+# like "Landing B (VSL embed)" (and/or utm_content "cellb"). Everything else is Cell A. The
+# tags are configurable (BITRIX_BOT_SOURCE_DESCRIPTION / BITRIX_BOT_UTM_CONTENT) since the
+# marker is set upstream and may change.
+DEFAULT_BOT_SOURCE_DESCRIPTIONS = ("landing b",)
+DEFAULT_BOT_UTM_CONTENTS = ("cellb",)
+
+
+def lead_cell(
+    record: dict[str, Any],
+    *,
+    bot_source_descriptions: Iterable[str] = DEFAULT_BOT_SOURCE_DESCRIPTIONS,
+    bot_utm_contents: Iterable[str] = DEFAULT_BOT_UTM_CONTENTS,
+) -> str:
+    """Classify a normalized Bitrix lead as Cell 'B' (Telegram-bot VSL form) or 'A' (other).
+
+    Cell B when SOURCE_DESCRIPTION contains any configured bot tag (case-insensitive
+    substring, e.g. 'landing b') OR utm_content equals a configured bot tag (e.g. 'cellb').
+    """
+    source_desc = str(record.get("sourceDescription") or "").lower()
+    utm_content = str(record.get("utmContent") or "").strip().lower()
+    descs = [d.strip().lower() for d in bot_source_descriptions if d and d.strip()]
+    utms = {u.strip().lower() for u in bot_utm_contents if u and u.strip()}
+    if (descs and any(tag in source_desc for tag in descs)) or (utm_content and utm_content in utms):
+        return "B"
+    return "A"
+
+
+def split_by_cell(
+    records: list[dict[str, Any]],
+    *,
+    bot_source_descriptions: Iterable[str] = DEFAULT_BOT_SOURCE_DESCRIPTIONS,
+    bot_utm_contents: Iterable[str] = DEFAULT_BOT_UTM_CONTENTS,
+) -> dict[str, list[dict[str, Any]]]:
+    """Partition normalized leads into {'A': [...], 'B': [...]} by lead_cell."""
+    out: dict[str, list[dict[str, Any]]] = {"A": [], "B": []}
+    descs = list(bot_source_descriptions)
+    utms = list(bot_utm_contents)
+    for record in records:
+        cell = lead_cell(record, bot_source_descriptions=descs, bot_utm_contents=utms)
+        out[cell].append(record)
+    return out
+
+
 def build_crm_stage_breakdown(
     records: list[dict[str, Any]],
     *,

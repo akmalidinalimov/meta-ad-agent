@@ -87,7 +87,7 @@ def test_campaign_kpis_scopes_live_to_one_campaign(monkeypatch):
     monkeypatch.setattr(campaigns_router, "get_meta_config", _cfg)
     _patch_funnel(monkeypatch)  # no first-party starts -> START falls back to Meta subscribe/leads
 
-    async def fake_insights(config, name, breakdowns, *, days=90):
+    async def fake_insights(config, name, breakdowns, *, days=90, end_date=None):
         return _INSIGHT_ROWS
 
     monkeypatch.setattr(campaigns_router, "safe_chunked_insights", fake_insights)
@@ -113,7 +113,7 @@ def test_campaign_kpis_uses_first_party_bot_starts_for_start_rate(monkeypatch):
     monkeypatch.setattr(campaigns_router, "get_meta_config", _cfg)
     _patch_funnel(monkeypatch, bot_starts=1630, link_clicks=1710)
 
-    async def fake_insights(config, name, breakdowns, *, days=90):
+    async def fake_insights(config, name, breakdowns, *, days=90, end_date=None):
         return [{"campaign_id": "c1", "campaign_name": "Alpha", "spend": "100",
                  "impressions": "1000", "clicks": "100", "actions": [{"action_type": "lead", "value": "1434"}]}]
 
@@ -130,7 +130,7 @@ def test_campaign_kpis_zero_delivery_is_honest_zeros(monkeypatch):
     monkeypatch.setattr(campaigns_router, "get_meta_config", _cfg)
     _patch_funnel(monkeypatch)
 
-    async def fake_insights(config, name, breakdowns, *, days=90):
+    async def fake_insights(config, name, breakdowns, *, days=90, end_date=None):
         return _INSIGHT_ROWS  # neither row matches the requested campaign
 
     monkeypatch.setattr(campaigns_router, "safe_chunked_insights", fake_insights)

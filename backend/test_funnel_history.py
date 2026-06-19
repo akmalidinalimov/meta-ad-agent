@@ -141,6 +141,18 @@ def test_build_history_series_flags_the_current_day_incomplete():
     assert points[1]["incomplete"] is True  # 06-18 is the in-progress server day
 
 
+def test_vsl_period_views_telescopes_snapshot_deltas():
+    from backend.routers.vsl import _period_views
+
+    snaps = {"2026-06-16": 500.0, "2026-06-17": 540.0, "2026-06-18": 574.0, "2026-06-19": 600.0}
+    # A single day = its delta vs the prior snapshot day.
+    assert _period_views(snaps, "2026-06-19", "2026-06-19") == 26  # 600 - 574
+    # A multi-day window telescopes: 574 (on/before 18) - 500 (before 17) = 74.
+    assert _period_views(snaps, "2026-06-17", "2026-06-18") == 74
+    # No baseline snapshot before the period → null (can't diff yet).
+    assert _period_views(snaps, "2026-06-16", "2026-06-16") is None
+
+
 def test_vsl_snapshot_store_keeps_daily_max_and_ignores_wobble(tmp_path):
     record_vsl_snapshot("2026-06-18", 130, storage_dir=tmp_path)
     assert load_vsl_snapshots(storage_dir=tmp_path) == {"2026-06-18": 130.0}

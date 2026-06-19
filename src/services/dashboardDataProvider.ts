@@ -157,16 +157,29 @@ export async function getLiveCampaigns(
   }
 }
 
+// The date scope for a card fetch: an explicit since..until range (e.g. Today) wins,
+// otherwise the last `days` days. `force` cache-busts on Refresh.
+export type CardWindow = { days: number; since?: string; until?: string; force?: boolean }
+
+function windowParams(w: CardWindow): URLSearchParams {
+  const params = new URLSearchParams()
+  if (w.since && w.until) {
+    params.set('since', w.since)
+    params.set('until', w.until)
+  } else {
+    params.set('days', String(w.days))
+  }
+  if (w.force) params.set('force', 'true')
+  return params
+}
+
 // Live KPIs + funnel rates for one campaign (or the whole account when 'all').
 // The campaignId param is omitted for 'all' so the backend scopes account-wide.
-export async function getCampaignKpis(
-  campaignId: string,
-  days: number,
-  force = false,
-): Promise<CampaignKpis> {
+export async function getCampaignKpis(campaignId: string, w: CardWindow): Promise<CampaignKpis> {
   try {
-    const scope = campaignId === 'all' ? '' : `campaignId=${encodeURIComponent(campaignId)}&`
-    const response = await fetch(apiUrl(`/api/campaigns/kpis?${scope}days=${days}&force=${force}`))
+    const params = windowParams(w)
+    if (campaignId && campaignId !== 'all') params.set('campaignId', campaignId)
+    const response = await fetch(apiUrl(`/api/campaigns/kpis?${params.toString()}`))
     if (!response.ok) {
       return { ok: false }
     }
@@ -177,6 +190,7 @@ export async function getCampaignKpis(
 }
 
 // Bitrix CRM stage distribution for the configured order/source. Safe empty shape on failure.
+// `cell` selects origin: 'B' = Telegram-bot VSL form only, 'A' = same form elsewhere, 'all' = both.
 export type CrmStageRow = { id: string; name: string; count: number }
 export type CrmStages = {
   ok: boolean
@@ -186,12 +200,18 @@ export type CrmStages = {
   paidStageIds: string[]
   stages: CrmStageRow[]
   days?: number
+  since?: string
+  until?: string
+  cell?: string
+  cellCounts?: { A: number; B: number; all: number }
   error?: string
 }
-export async function getCrmStages(days: number, force = false): Promise<CrmStages> {
+export async function getCrmStages(w: CardWindow & { cell?: 'A' | 'B' | 'all' }): Promise<CrmStages> {
   const empty: CrmStages = { ok: false, total: 0, paid: 0, paidStageIds: [], stages: [] }
   try {
-    const response = await fetch(apiUrl(`/api/crm/stages?days=${days}&force=${force}`))
+    const params = windowParams(w)
+    if (w.cell) params.set('cell', w.cell)
+    const response = await fetch(apiUrl(`/api/crm/stages?${params.toString()}`))
     if (!response.ok) return empty
     return (await response.json()) as CrmStages
   } catch {
@@ -199,7 +219,8 @@ export async function getCrmStages(days: number, force = false): Promise<CrmStag
   }
 }
 
-// YouTube VSL watch-through. Safe "unconfigured" shape on failure.
+// YouTube VSL watch-through. Safe "unconfigured" shape on failure. When the window is a
+// bounded range, `periodViews` is the views inside that range (lifetime `views` still set).
 export type VslMetrics = {
   ok: boolean
   configured: boolean
@@ -207,12 +228,16 @@ export type VslMetrics = {
   viewsWatched50: number | null
   watchRate50: number | null
   hasRetention: boolean
+  scoped?: boolean
+  periodViews?: number | null
+  since?: string
+  until?: string
   error?: string
 }
-export async function getVsl(days: number, force = false): Promise<VslMetrics> {
+export async function getVsl(w: CardWindow): Promise<VslMetrics> {
   const empty: VslMetrics = { ok: false, configured: false, views: null, viewsWatched50: null, watchRate50: null, hasRetention: false }
   try {
-    const response = await fetch(apiUrl(`/api/vsl?days=${days}&force=${force}`))
+    const response = await fetch(apiUrl(`/api/vsl?${windowParams(w).toString()}`))
     if (!response.ok) return empty
     return (await response.json()) as VslMetrics
   } catch {

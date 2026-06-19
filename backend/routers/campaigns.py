@@ -14,7 +14,7 @@ are deliberately NOT in app._AUTH_PUBLIC_PATHS).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter
@@ -27,7 +27,7 @@ from ..funnel_events import (
     telegram_starts_by_campaign_date,
 )
 from ..meta_client import get_meta_config
-from ..meta_sync import safe_chunked_insights
+from ..meta_sync import normalize_sync_days, safe_chunked_insights
 
 router = APIRouter()
 
@@ -113,17 +113,40 @@ async def campaigns_live(createdWithinDays: int | None = None, force: bool = Fal
     }
 
 
+def _parse_day(value: str | None) -> date | None:
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
 @router.get("/api/campaigns/kpis")
-async def campaign_kpis(campaignId: str | None = None, days: int = 30, force: bool = False) -> dict[str, Any]:
+async def campaign_kpis(
+    campaignId: str | None = None,
+    days: int = 30,
+    since: str | None = None,
+    until: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
     """Live KPI bundle for one campaign (or the whole account when campaignId is omitted
-    or "all"), over the last ``days`` days. Reuses analysis_engine.summarize_overall, so
-    every rate matches the rest of the app and is capped at 100%. ``force`` is accepted for
-    API symmetry with /live; insights are always fetched fresh (uncached)."""
+    or "all"). Reuses analysis_engine.summarize_overall, so every rate matches the rest of
+    the app and is capped at 100%. The window is the last ``days`` days, or an explicit
+    ``since``..``until`` (YYYY-MM-DD) range (e.g. today only). ``force`` is accepted for API
+    symmetry with /live; insights are always fetched fresh (uncached)."""
     config = get_meta_config()
     if not config.is_configured:
         return {"ok": False, "error": "Meta is not connected. Add META_ACCESS_TOKEN + META_AD_ACCOUNT_ID."}
 
-    raw = await safe_chunked_insights(config, "campaign_kpis", None, days=days)
+    # Resolve the window: an explicit since..until wins; else the last N days.
+    end_day = _parse_day(until) or date.today()
+    start_param = _parse_day(since)
+    if start_param and start_param <= end_day:
+        days = normalize_sync_days((end_day - start_param).days + 1)
+    else:
+        days = normalize_sync_days(days)
+    start_day = end_day - timedelta(days=days - 1)
+
+    raw = await safe_chunked_insights(config, "campaign_kpis", None, days=days, end_date=end_day)
     sync_errors = [row["sync_error"] for row in raw if isinstance(row, dict) and row.get("sync_error")]
     rows = valid_rows(raw)
 
@@ -145,17 +168,19 @@ async def campaign_kpis(campaignId: str | None = None, days: int = 30, force: bo
     # specific campaign is selected we use its attributed starts if any exist, else fall
     # back to the account-wide count (startScope tells the UI which). select_start_rate
     # prefers the first-party relay over Meta subscribe and the first-party click
-    # denominator over Meta leads, capped at 100%.
-    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    account_starts = count_bot_starts(since_iso=since_iso)
-    link_clicks = count_event_users("telegram_link_click", since_iso=since_iso)
+    # denominator over Meta leads, capped at 100%. The window is bounded [start_day, end_day]
+    # so a single-day ("today") scope doesn't leak later starts.
+    since_iso = start_day.isoformat()
+    until_iso = (end_day + timedelta(days=1)).isoformat()
+    account_starts = count_bot_starts(since_iso=since_iso, until_iso=until_iso)
+    link_clicks = count_event_users("telegram_link_click", since_iso=since_iso, until_iso=until_iso)
     bot_starts, start_scope = account_starts, "account"
     if scoped:
-        since_date = since_iso[:10]
+        since_date, end_date = start_day.isoformat(), end_day.isoformat()
         campaign_starts = sum(
             count
-            for (cid, date), count in telegram_starts_by_campaign_date().items()
-            if str(cid) == str(campaignId) and date >= since_date
+            for (cid, day), count in telegram_starts_by_campaign_date().items()
+            if str(cid) == str(campaignId) and since_date <= day <= end_date
         )
         if campaign_starts:
             bot_starts, start_scope = campaign_starts, "campaign"
@@ -165,6 +190,8 @@ async def campaign_kpis(campaignId: str | None = None, days: int = 30, force: bo
         "ok": True,
         "source": "live",
         "days": days,
+        "since": start_day.isoformat(),
+        "until": end_day.isoformat(),
         "campaignId": str(campaignId) if scoped else "all",
         "campaignName": name,
         "hasData": bool(rows),

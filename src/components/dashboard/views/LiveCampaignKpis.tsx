@@ -22,6 +22,9 @@ interface LiveCampaignKpisProps {
   campaignId: string
   campaignName: string
   days: number
+  since?: string
+  until?: string
+  periodLabel?: string
   refreshKey: number
 }
 
@@ -49,8 +52,9 @@ const COST_DEFS = [
 const EMPTY_CRM: CrmStages = { ok: false, total: 0, paid: 0, paidStageIds: [], stages: [] }
 const EMPTY_VSL: VslMetrics = { ok: false, configured: false, views: null, viewsWatched50: null, watchRate50: null, hasRetention: false }
 
-export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }: LiveCampaignKpisProps) {
-  const currentKey = `${campaignId}|${days}|${refreshKey}`
+export function LiveCampaignKpis({ campaignId, campaignName, days, since, until, periodLabel, refreshKey }: LiveCampaignKpisProps) {
+  const scoped = Boolean(since && until)
+  const currentKey = `${campaignId}|${days}|${since ?? ''}|${until ?? ''}|${refreshKey}`
   const [bundle, setBundle] = useState<{ kpis: CampaignKpis; crm: CrmStages; vsl: VslMetrics; loadedKey: string } | null>(null)
   // Which rate's trend chart is open (null = trends hidden). Set by clicking a rate card
   // below or the "Show trends" button inside FunnelTrends.
@@ -59,11 +63,18 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
   useEffect(() => {
     if (typeof fetch !== 'function') return
     let active = true
-    const key = `${campaignId}|${days}|${refreshKey}`
+    const key = `${campaignId}|${days}|${since ?? ''}|${until ?? ''}|${refreshKey}`
     // refreshKey>0 means the Refresh button was pressed → force a live, uncached pull on
     // every source (Meta insights, CRM stages, YouTube) and bust any browser cache.
     const force = refreshKey > 0
-    void Promise.all([getCampaignKpis(campaignId, days, force), getCrmStages(days, force), getVsl(days, force)])
+    const win = { days, since, until, force }
+    // CRM is fetched BOT-ONLY (cell 'B' = the Telegram-bot VSL form), so the CRM-fill rate
+    // counts only leads that came through the bot — not the same form used elsewhere.
+    void Promise.all([
+      getCampaignKpis(campaignId, win),
+      getCrmStages({ ...win, cell: 'B' }),
+      getVsl(win),
+    ])
       .then(([kpis, crm, vsl]) => {
         if (active) setBundle({ kpis, crm, vsl, loadedKey: key })
       })
@@ -73,7 +84,7 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
     return () => {
       active = false
     }
-  }, [campaignId, days, refreshKey])
+  }, [campaignId, days, since, until, refreshKey])
 
   const loading = bundle?.loadedKey !== currentKey
   const kpis = loading ? undefined : bundle?.kpis
@@ -81,28 +92,35 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
   const vsl = loading ? undefined : bundle?.vsl
   const live = Boolean(kpis?.ok && kpis?.hasData)
 
+  // VSL views for the active window: a bounded range uses the period delta (periodViews),
+  // an open "last N days" window uses YouTube's lifetime cumulative.
+  const vslViewsValue = scoped ? (vsl?.periodViews ?? null) : (vsl?.views ?? null)
+
   // Every input is LIVE — no manual entry. Bot starts come from the first-party Telegram
-  // relay (kpis.counts.botStarts), CRM leads from Bitrix (/api/crm/stages total), VSL
-  // views from YouTube (/api/vsl). All refresh together when Refresh is pressed.
+  // relay (kpis.counts.botStarts), CRM leads from Bitrix bot-only (Cell B), VSL views from
+  // YouTube. All refresh together when Refresh is pressed.
   const inputs: FunnelInputs = {
     linkClicks: kpis?.counts?.linkClicks ?? 0,
     landingViews: kpis?.counts?.landingPageViews ?? 0,
     leads: kpis?.counts?.leads ?? 0,
     botStarts: kpis?.counts?.botStarts ?? 0,
-    vslViews: vsl?.views ?? 0,
+    vslViews: vslViewsValue ?? 0,
     crmLeads: crm?.ok ? crm.total : 0,
     spend: kpis?.kpis?.spend ?? 0,
   }
   const out = computeSimpleFunnel(inputs)
   const maxBar = Math.max(inputs.linkClicks, 1)
   const vslNeedsConnect = Boolean(vsl && !vsl.configured)
+  // Configured, but a bounded range with no baseline snapshot yet → daily VSL still accruing.
+  const vslAccruing = Boolean(vsl?.configured && scoped && vslViewsValue == null)
 
+  const periodText = periodLabel ?? (scoped ? `${since} → ${until}` : `last ${days} days`)
   const freshness = loading
     ? 'Loading live data…'
     : live
-      ? `Live from Meta · last ${days} days`
+      ? `Live · ${periodText}`
       : kpis?.ok
-        ? 'Live · no delivery in this window yet'
+        ? `Live · no delivery · ${periodText}`
         : 'Connect Meta to see live KPIs.'
 
   return (
@@ -131,6 +149,9 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
           } else if (card.key === 'vslView' && vslNeedsConnect) {
             value = loading ? '…' : '—'
             sub = 'Connect YouTube to populate'
+          } else if (card.key === 'vslView' && vslAccruing) {
+            value = loading ? '…' : '—'
+            sub = 'VSL daily accrues — check back tomorrow'
           } else {
             value = loading ? '…' : `${out.rates[card.key as keyof typeof out.rates]}%`
             sub = card.sub(inputs)
@@ -208,31 +229,38 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, refreshKey }:
         </div>
       </div>
 
-      {crm && crm.ok && crm.total > 0 ? (
+      {crm && crm.ok ? (
         <div className="simple-block">
-          <h5>CRM stages — {crm.source ?? 'leads'}</h5>
+          <h5>CRM stages — Telegram bot only (Cell B)</h5>
           <p className="simple-help">
-            {formatNumber(crm.total)} leads · Bitrix24 · {formatNumber(crm.paid)} paid
+            <strong>{formatNumber(crm.total)}</strong> bot-form leads · Bitrix24 · {formatNumber(crm.paid)} paid
+            {crm.cellCounts
+              ? ` · ${formatNumber(crm.cellCounts.A)} from the same form elsewhere (Cell A) are excluded`
+              : ''}
           </p>
-          <div className="crm-stages">
-            {crm.stages
-              .filter((s) => s.count > 0)
-              .map((s) => {
-                const pct = Math.round((s.count / crm.total) * 100)
-                const isPaid = crm.paidStageIds.includes(s.id)
-                return (
-                  <div className={`crm-stage-row${isPaid ? ' paid' : ''}`} key={s.id}>
-                    <span className="crm-stage-name">{s.name}</span>
-                    <div className="crm-stage-track">
-                      <div className="crm-stage-bar" style={{ width: `${Math.max(2, pct)}%` }} />
+          {crm.total > 0 ? (
+            <div className="crm-stages">
+              {crm.stages
+                .filter((s) => s.count > 0)
+                .map((s) => {
+                  const pct = Math.round((s.count / crm.total) * 100)
+                  const isPaid = crm.paidStageIds.includes(s.id)
+                  return (
+                    <div className={`crm-stage-row${isPaid ? ' paid' : ''}`} key={s.id}>
+                      <span className="crm-stage-name">{s.name}</span>
+                      <div className="crm-stage-track">
+                        <div className="crm-stage-bar" style={{ width: `${Math.max(2, pct)}%` }} />
+                      </div>
+                      <span className="crm-stage-count">
+                        {formatNumber(s.count)} · {pct}%
+                      </span>
                     </div>
-                    <span className="crm-stage-count">
-                      {formatNumber(s.count)} · {pct}%
-                    </span>
-                  </div>
-                )
-              })}
-          </div>
+                  )
+                })}
+            </div>
+          ) : (
+            <p className="simple-help">No Telegram-bot (Cell B) form leads in this period yet.</p>
+          )}
         </div>
       ) : null}
 

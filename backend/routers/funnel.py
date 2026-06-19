@@ -57,10 +57,11 @@ def funnel_event_summary() -> dict[str, Any]:
 
 
 async def _crm_leads_by_date(days: int) -> dict[str, int]:
-    """Per-day CRM-lead counts from Bitrix for the configured source title (the same
-    source the CRM card uses). Best-effort: returns {} when Bitrix isn't configured or
-    the read fails, so a CRM hiccup never blanks the whole trend."""
-    from ..bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config
+    """Per-day CRM-lead counts from Bitrix, BOT-only (Cell B) — the same bot leads the CRM
+    card counts, so the trend's CRM-fill line matches the headline. Best-effort: returns {}
+    when Bitrix isn't configured or the read fails, so a CRM hiccup never blanks the trend."""
+    from ..bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config, get_bot_cell_tags
+    from ..crm_funnel import split_by_cell
 
     config = get_bitrix_config()
     if not config.is_configured:
@@ -72,7 +73,9 @@ async def _crm_leads_by_date(days: int) -> dict[str, int]:
         )
     except Exception:  # noqa: BLE001 - best-effort; CRM is one of several series
         return {}
-    return crm_leads_by_date(leads)
+    descs, utms = get_bot_cell_tags()
+    bot_leads = split_by_cell(leads, bot_source_descriptions=descs, bot_utm_contents=utms)["B"]
+    return crm_leads_by_date(bot_leads)
 
 
 async def _vsl_views_now(days: int) -> float | None:

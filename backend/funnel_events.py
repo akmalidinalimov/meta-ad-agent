@@ -105,9 +105,17 @@ def load_funnel_events(*, storage_dir: Path = STORAGE_DIR) -> list[dict[str, Any
     return events
 
 
-def count_event_users(event_name: str, *, since_iso: str | None = None, storage_dir: Path = STORAGE_DIR) -> int:
+def count_event_users(
+    event_name: str,
+    *,
+    since_iso: str | None = None,
+    until_iso: str | None = None,
+    storage_dir: Path = STORAGE_DIR,
+) -> int:
     """Unique users who fired ``event_name``, deduplicated by Telegram user (falling
-    back to visitor id). Optionally limited to events received on/after ``since_iso``.
+    back to visitor id). Optionally limited to events received on/after ``since_iso`` and
+    strictly before ``until_iso`` (so a bounded window — e.g. one past day — doesn't leak
+    in later events).
 
     Deduplicating by user means a person who repeats the same event is counted once,
     so any rate built on these counts can't be inflated by repeats.
@@ -116,7 +124,10 @@ def count_event_users(event_name: str, *, since_iso: str | None = None, storage_
     for event in load_funnel_events(storage_dir=storage_dir):
         if event.get("eventName") != event_name:
             continue
-        if since_iso and str(event.get("receivedAt") or "") < since_iso:
+        received = str(event.get("receivedAt") or "")
+        if since_iso and received < since_iso:
+            continue
+        if until_iso and received >= until_iso:
             continue
         identity = event.get("telegramUserId") or event.get("visitorId")
         if identity:
@@ -124,9 +135,11 @@ def count_event_users(event_name: str, *, since_iso: str | None = None, storage_
     return len(users)
 
 
-def count_bot_starts(*, since_iso: str | None = None, storage_dir: Path = STORAGE_DIR) -> int:
+def count_bot_starts(
+    *, since_iso: str | None = None, until_iso: str | None = None, storage_dir: Path = STORAGE_DIR
+) -> int:
     """Unique Telegram bot starts — the START-rate numerator. See count_event_users."""
-    return count_event_users("bot_start", since_iso=since_iso, storage_dir=storage_dir)
+    return count_event_users("bot_start", since_iso=since_iso, until_iso=until_iso, storage_dir=storage_dir)
 
 
 def select_start_rate(*, bot_starts: int, subscribes: int, link_clicks: int, leads: int) -> dict[str, Any]:
