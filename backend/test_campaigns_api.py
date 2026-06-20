@@ -72,16 +72,21 @@ _INSIGHT_ROWS = [
 ]
 
 
-def _patch_funnel(monkeypatch, *, bot_starts=0, link_clicks=0, by_campaign=None, adsets=None):
+def _patch_funnel(monkeypatch, *, bot_starts=0, link_clicks=0, by_campaign=None, adsets=None, form_submits=0):
     """Stub the first-party funnel-event helpers so the START-rate path is deterministic
-    (campaign_kpis reads bot-starts / link-clicks from funnel_events, not Meta subscribe),
-    plus the ad-set fetch used for per-campaign conversion-event detection (default: none →
-    the conversion stage falls back to the generic lead+registration definition)."""
+    (campaign_kpis reads bot-starts / link-clicks / form-submits from funnel_events, not
+    Meta), plus the ad-set fetch used for per-campaign conversion-event detection (default:
+    none → the conversion stage falls back to the generic lead+registration definition)."""
     monkeypatch.setattr(campaigns_router, "count_bot_starts", lambda **kw: bot_starts)
-    monkeypatch.setattr(
-        campaigns_router, "count_event_users",
-        lambda name, **kw: link_clicks if name == "telegram_link_click" else 0,
-    )
+
+    def _count_event_users(name, **kw):
+        if name == "telegram_link_click":
+            return link_clicks
+        if name == "crm_form_submit":
+            return form_submits
+        return 0
+
+    monkeypatch.setattr(campaigns_router, "count_event_users", _count_event_users)
     monkeypatch.setattr(campaigns_router, "telegram_starts_by_campaign_date", lambda **kw: by_campaign or {})
 
     async def _fake_adsets(config):
@@ -164,6 +169,17 @@ def test_campaign_kpis_uses_each_campaigns_own_conversion_event(monkeypatch):
     assert body["kpis"]["leads"] == 30  # the registration count, NOT 0 (no `lead` action)
     assert body["counts"]["leads"] == 30
     assert body["rates"]["leadRate"] == 15.0  # 30 registrations / 200 landing views
+
+
+def test_campaign_kpis_exposes_first_party_form_submits(monkeypatch):
+    # CRM fill numerator = first-party in-bot form submits (crm_form_submit relay), NOT the
+    # Bitrix Cell B tag. campaign_kpis surfaces it in counts.formSubmits.
+    monkeypatch.setattr(campaigns_router, "get_meta_config", _cfg)
+    _patch_funnel(monkeypatch, bot_starts=1000, form_submits=37)
+    _patch_insights(monkeypatch, _INSIGHT_ROWS)
+    body = TestClient(app).get("/api/campaigns/kpis?days=30").json()
+    assert body["counts"]["formSubmits"] == 37
+    assert body["counts"]["botStarts"] == 1000
 
 
 def test_campaign_kpis_zero_delivery_is_honest_zeros(monkeypatch):

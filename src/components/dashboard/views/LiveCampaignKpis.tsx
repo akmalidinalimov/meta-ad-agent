@@ -37,7 +37,7 @@ const RATE_CARDS = [
   { key: 'lead', label: 'Lead rate', color: '#0d9488', desc: '% of visitors who clicked the CTA', sub: (i: FunnelInputs) => `${formatNumber(i.leads)} leads ÷ ${formatNumber(i.landingViews)} views` },
   { key: 'start', label: 'Start rate', color: '#7c3aed', desc: '% of button-clickers who started the bot', sub: (i: FunnelInputs) => `${formatNumber(i.botStarts)} starts ÷ ${formatNumber(i.leads)} leads` },
   { key: 'vslView', label: 'VSL view rate', color: '#ea580c', desc: '% of bot-starters who watched the VSL', sub: (i: FunnelInputs) => `${formatNumber(i.vslViews)} VSL views ÷ ${formatNumber(i.botStarts)} starts` },
-  { key: 'crmFill', label: 'CRM fill rate', color: '#db2777', desc: '% of bot-starters who filled the form', sub: (i: FunnelInputs) => `${formatNumber(i.crmLeads)} CRM leads ÷ ${formatNumber(i.botStarts)} starts` },
+  { key: 'crmFill', label: 'CRM fill rate', color: '#db2777', desc: '% of bot-starters who filled the in-bot form', sub: (i: FunnelInputs) => `${formatNumber(i.crmLeads)} form submits ÷ ${formatNumber(i.botStarts)} starts` },
 ] as const
 
 const FUNNEL_COLORS: Record<string, string> = { linkClicks: '#2563eb', landingViews: '#2563eb', leads: '#0d9488', botStarts: '#7c3aed', vslViews: '#ea580c', crmLeads: '#db2777' }
@@ -99,13 +99,18 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
   // Every input is LIVE — no manual entry. Bot starts come from the first-party Telegram
   // relay (kpis.counts.botStarts), CRM leads from Bitrix bot-only (Cell B), VSL views from
   // YouTube. All refresh together when Refresh is pressed.
+  // CRM fill = people who filled the form INSIDE the Telegram bot, measured by the
+  // first-party crm_form_submit event (a ChatPlace relay, like bot_start) — NOT the Bitrix
+  // "Cell B" tag, which is the no-bot direct-landing form. formSubmits is account-wide.
+  const formSubmits = kpis?.counts?.formSubmits ?? 0
+  const crmNotTracked = Boolean(kpis?.ok && formSubmits === 0)
   const inputs: FunnelInputs = {
     linkClicks: kpis?.counts?.linkClicks ?? 0,
     landingViews: kpis?.counts?.landingPageViews ?? 0,
     leads: kpis?.counts?.leads ?? 0,
     botStarts: kpis?.counts?.botStarts ?? 0,
     vslViews: vslViewsValue ?? 0,
-    crmLeads: crm?.ok ? crm.total : 0,
+    crmLeads: formSubmits,
     spend: kpis?.kpis?.spend ?? 0,
   }
   const out = computeSimpleFunnel(inputs)
@@ -155,6 +160,9 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
           } else if (card.key === 'vslView' && vslAccruing) {
             value = loading ? '…' : '—'
             sub = 'VSL daily accrues — check back tomorrow'
+          } else if (card.key === 'crmFill' && crmNotTracked) {
+            value = loading ? '…' : '—'
+            sub = 'Awaiting the in-bot form-submit relay (see below)'
           } else {
             value = loading ? '…' : `${out.rates[card.key as keyof typeof out.rates]}%`
             sub = card.sub(inputs)
@@ -218,7 +226,7 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
         </div>
         <small className="simple-help">
           Each row’s % is that step’s conversion vs the stage above it. Everything auto-refreshes — Meta volumes from live
-          insights, bot starts from the Telegram relay, CRM leads from Bitrix, VSL views from YouTube.
+          insights, bot starts + in-bot form submits from the Telegram relay, VSL views from YouTube.
           {vslNeedsConnect ? ' VSL views read 0 until YouTube is connected (set YOUTUBE_VSL_VIDEO_ID + YOUTUBE_API_KEY).' : ''}
         </small>
       </div>
@@ -237,12 +245,10 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
 
       {crm && crm.ok ? (
         <div className="simple-block">
-          <h5>CRM stages — Telegram bot only (Cell B)</h5>
+          <h5>CRM order stages — Bitrix (Landing B / direct form)</h5>
           <p className="simple-help">
-            <strong>{formatNumber(crm.total)}</strong> bot-form leads · Bitrix24 · {formatNumber(crm.paid)} paid
-            {crm.cellCounts
-              ? ` · ${formatNumber(crm.cellCounts.A)} from the same form elsewhere (Cell A) are excluded`
-              : ''}
+            <strong>{formatNumber(crm.total)}</strong> orders · Bitrix24 · {formatNumber(crm.paid)} paid
+            {crm.cellCounts ? ` · ${formatNumber(crm.cellCounts.A)} via the other landing (Cell A)` : ''}
           </p>
           {crm.total > 0 ? (
             <div className="crm-stages">
@@ -265,7 +271,7 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
                 })}
             </div>
           ) : (
-            <p className="simple-help">No Telegram-bot (Cell B) form leads in this period yet.</p>
+            <p className="simple-help">No Bitrix orders for this form in this period yet.</p>
           )}
         </div>
       ) : null}

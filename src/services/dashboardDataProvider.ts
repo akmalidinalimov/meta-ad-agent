@@ -126,6 +126,7 @@ export type CampaignKpis = {
     subscribes: number
     botStarts?: number
     telegramLinkClicks?: number
+    formSubmits?: number
   }
   startSource?: string
   startDenominatorSource?: string

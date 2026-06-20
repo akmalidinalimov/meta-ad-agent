@@ -238,6 +238,10 @@ async def campaign_kpis(
     until_iso = (end_day + timedelta(days=1)).isoformat()
     account_starts = count_bot_starts(since_iso=since_iso, until_iso=until_iso)
     link_clicks = count_event_users("telegram_link_click", since_iso=since_iso, until_iso=until_iso)
+    # First-party "filled the form inside the bot" signal (a ChatPlace relay fires
+    # crm_form_submit, like bot_start). This is the CORRECT CRM-fill numerator — the bot's
+    # in-chat form — not the Bitrix "Cell B" tag (which is the no-bot direct landing form).
+    form_submits = count_event_users("crm_form_submit", since_iso=since_iso, until_iso=until_iso)
     bot_starts, start_scope = account_starts, "account"
     if scoped:
         since_date, end_date = start_day.isoformat(), end_day.isoformat()
@@ -290,6 +294,7 @@ async def campaign_kpis(
             "subscribes": int(subscribes),
             "botStarts": int(bot_starts),
             "telegramLinkClicks": int(link_clicks),
+            "formSubmits": int(form_submits),
         },
         "startSource": start["numeratorSource"],
         "startDenominatorSource": start["denominatorSource"],
