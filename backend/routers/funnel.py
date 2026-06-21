@@ -28,8 +28,14 @@ router = APIRouter()
 
 @router.post("/api/funnel/events")
 def ingest_funnel_event(request: FunnelEventRequest) -> dict[str, Any]:
+    # Append-only. Do NOT compute build_funnel_summary() here: this is the highest-volume
+    # endpoint (the landing tracker fires it constantly and ignores the response body), and
+    # the summary re-reads + JSON-parses the ENTIRE ever-growing event log (twice). Doing
+    # that per ingest is O(total events) per request and ratchets RSS up under concurrency
+    # until the VM swap-thrashes (prod outage 2026-06-21). The summary is available on demand
+    # at GET /api/funnel/summary.
     event = save_funnel_event(request.event)
-    return {"ok": True, "event": event, "summary": build_funnel_summary()}
+    return {"ok": True, "event": event}
 
 
 @router.post("/api/chatplace/events")
@@ -41,13 +47,14 @@ async def ingest_chatplace_event(payload: dict[str, Any], request: Request) -> d
 
     event_payload = normalize_chatplace_event(payload)
     event = save_funnel_event(event_payload)
+    # Append-only — no per-ingest build_funnel_summary() (see ingest_funnel_event above for
+    # why: full-history reparse per request is the memory-wedge driver).
     return {
         "ok": True,
         "tracking_status": "saved",
         "visitor_id": event.get("visitorId"),
         "event_name": event.get("eventName"),
         "telegram_user_id": event.get("telegramUserId"),
-        "summary": build_funnel_summary(),
     }
 
 
