@@ -22,6 +22,7 @@ from fastapi import APIRouter
 
 from ..analysis_engine import conversion_label, count_conversion, summarize_overall, valid_rows
 from ..funnel_events import (
+    bot_start_health,
     count_bot_starts,
     count_event_users,
     select_start_rate,
@@ -255,6 +256,10 @@ async def campaign_kpis(
     # START-rate fallback denominator stays the generic Meta lead (people who could start
     # the bot), independent of which conversion the campaign optimizes for.
     start = select_start_rate(bot_starts=bot_starts, subscribes=subscribes, link_clicks=link_clicks, leads=generic_leads)
+    # Data-health guard: flag when the START rate is starved by a bot_start collection gap
+    # (clicks flowing but the ChatPlace relay logged no starts) so the UI can warn "data
+    # incomplete" instead of showing a misleadingly low number as if it were real.
+    start_health = bot_start_health(since_iso=since_iso, until_iso=until_iso)
 
     return {
         "ok": True,
@@ -299,5 +304,6 @@ async def campaign_kpis(
         "startSource": start["numeratorSource"],
         "startDenominatorSource": start["denominatorSource"],
         "startScope": start_scope,
+        "startHealth": start_health,
         "syncErrors": sync_errors,
     }

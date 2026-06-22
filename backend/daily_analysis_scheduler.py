@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -64,9 +64,24 @@ def run_intraday_anomaly_check(*, storage_dir: Path = STORAGE_DIR) -> dict[str, 
     debounced per Stockholm day so a persistent condition doesn't ping every 4h. Sync (uses
     asyncio.run); call via asyncio.to_thread from the async loop."""
     from .daily_analyst import intraday_anomaly_alerts
+    from .funnel_events import bot_start_health
     from .telegram_outbound import send_telegram_message_sync
 
-    alerts = asyncio.run(intraday_anomaly_alerts())
+    alerts = list(asyncio.run(intraday_anomaly_alerts()))
+    # Collection-health guard: landing→Telegram clicks flowing but bot_starts absent in the
+    # last few hours = the ChatPlace bot_start relay likely went dark. Surface it immediately
+    # (the per-day debounce keeps it from repeating every cycle).
+    try:
+        now_utc = datetime.now(timezone.utc)
+        health = bot_start_health(
+            since_iso=(now_utc - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S"),
+            until_iso=now_utc.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
+        if health.get("stalled"):
+            alerts.append({"kind": "bot_start_stalled",
+                           "message": health.get("message") or "bot_start collection stalled."})
+    except Exception:  # noqa: BLE001
+        logger.exception("bot_start health check failed")
     today = datetime.now(TZ).date().isoformat()
     payload = read_json(storage_dir / ANOMALY_RUN_FILE, None)
     already = set(payload.get("kinds", [])) if isinstance(payload, dict) and payload.get("date") == today else set()

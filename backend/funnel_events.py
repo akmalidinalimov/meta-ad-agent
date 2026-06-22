@@ -142,6 +142,88 @@ def count_bot_starts(
     return count_event_users("bot_start", since_iso=since_iso, until_iso=until_iso, storage_dir=storage_dir)
 
 
+# A bot_start collection gap = an hour with real landing→Telegram click traffic but ZERO
+# bot_start events. That is the signature of a disconnected ChatPlace relay (the funnel keeps
+# logging telegram_link_click from the landing page, but the bot never reports the start), and
+# it silently understates the START rate. These thresholds tune the detector.
+START_HEALTH_MIN_CLICKS = 5      # ignore trivially-trafficked hours (noise)
+START_HEALTH_RECENT_HOURS = 2    # how many recent trafficked hours define "currently stalled"
+
+
+def assess_bot_start_health(
+    buckets: list[dict[str, Any]],
+    *,
+    min_clicks: int = START_HEALTH_MIN_CLICKS,
+    recent_hours: int = START_HEALTH_RECENT_HOURS,
+) -> dict[str, Any]:
+    """Detect a bot_start collection gap from chronological hourly buckets, each
+    ``{"hour", "clicks", "starts"}``. Pure — no I/O.
+
+    - A *gap hour* has ``clicks >= min_clicks`` but ``starts == 0`` (relay likely down then).
+    - ``stalled`` = the most recent ``recent_hours`` *trafficked* hours are ALL gaps → the relay
+      looks disconnected right now.
+    - ``collectedStartRate`` = START rate over only the hours that WERE collecting, so the
+      operator sees the true rate behind a starved window (we never silently rewrite the rate).
+    """
+    def _is_gap(b: dict[str, Any]) -> bool:
+        return (b.get("clicks") or 0) >= min_clicks and (b.get("starts") or 0) == 0
+
+    gap = [b for b in buckets if _is_gap(b)]
+    collected = [b for b in buckets if not _is_gap(b)]
+    cc = sum((b.get("clicks") or 0) for b in collected)
+    cs = sum((b.get("starts") or 0) for b in collected)
+    collected_rate = round(cs / cc * 100, 1) if cc else None
+    trafficked = [b for b in buckets if (b.get("clicks") or 0) >= min_clicks]
+    recent = trafficked[-recent_hours:]
+    stalled = bool(recent) and all((b.get("starts") or 0) == 0 for b in recent)
+    clicks_in_gap = sum((b.get("clicks") or 0) for b in gap)
+
+    message: str | None = None
+    if stalled:
+        message = (
+            "bot_start collection appears STALLED — landing→Telegram clicks are arriving but no "
+            "bot-starts are. The ChatPlace bot_start relay may be disconnected."
+        )
+    elif gap:
+        rate_note = f" True START rate while collecting ≈ {collected_rate}%." if collected_rate is not None else ""
+        message = (
+            f"bot_start data is INCOMPLETE for this window: {len(gap)} hour(s) had {clicks_in_gap} "
+            f"landing→Telegram clicks but 0 bot-starts (relay gap).{rate_note}"
+        )
+    return {
+        "stalled": stalled,
+        "gapHours": len(gap),
+        "clicksDuringGap": clicks_in_gap,
+        "collectedStartRate": collected_rate,
+        "message": message,
+    }
+
+
+def bot_start_health(
+    *, since_iso: str | None = None, until_iso: str | None = None, storage_dir: Path = STORAGE_DIR
+) -> dict[str, Any]:
+    """Bucket telegram_link_click + bot_start by date+hour over [since_iso, until_iso) and run
+    assess_bot_start_health on them. The dashboard/intra-day path uses this to flag a starved
+    START rate instead of presenting a misleadingly low number as if it were real."""
+    clicks: dict[str, int] = {}
+    starts: dict[str, int] = {}
+    for event in load_funnel_events(storage_dir=storage_dir):
+        received = str(event.get("receivedAt") or "")
+        if since_iso and received < since_iso:
+            continue
+        if until_iso and received >= until_iso:
+            continue
+        hour = received[:13]  # YYYY-MM-DDTHH
+        name = event.get("eventName")
+        if name == "telegram_link_click":
+            clicks[hour] = clicks.get(hour, 0) + 1
+        elif name == "bot_start":
+            starts[hour] = starts.get(hour, 0) + 1
+    hours = sorted(set(clicks) | set(starts))
+    buckets = [{"hour": h, "clicks": clicks.get(h, 0), "starts": starts.get(h, 0)} for h in hours]
+    return assess_bot_start_health(buckets)
+
+
 def select_start_rate(*, bot_starts: int, subscribes: int, link_clicks: int, leads: int) -> dict[str, Any]:
     """Compute the dashboard START rate from the cleanest available signals, capped 100%.
 

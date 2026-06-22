@@ -205,3 +205,53 @@ def test_telegram_starts_by_campaign_date_counts_bot_starts(tmp_path):
 
 def test_telegram_starts_by_campaign_date_empty_when_no_events(tmp_path):
     assert telegram_starts_by_campaign_date(storage_dir=tmp_path / "storage") == {}
+
+
+def test_assess_bot_start_health_flags_current_stall():
+    from backend.funnel_events import assess_bot_start_health
+    # Relay healthy early, then the last 2 trafficked hours have clicks but ZERO starts.
+    buckets = [
+        {"hour": "2026-06-22T10", "clicks": 70, "starts": 58},
+        {"hour": "2026-06-22T11", "clicks": 111, "starts": 104},
+        {"hour": "2026-06-22T12", "clicks": 102, "starts": 0},
+        {"hour": "2026-06-22T13", "clicks": 45, "starts": 0},
+    ]
+    h = assess_bot_start_health(buckets)
+    assert h["stalled"] is True and h["gapHours"] == 2
+    assert h["collectedStartRate"] == round((58 + 104) / (70 + 111) * 100, 1)
+    assert "relay" in h["message"].lower()
+
+
+def test_assess_bot_start_health_window_gap_not_currently_stalled():
+    # A gap earlier in the day, but recent hours are healthy -> incomplete, not stalled.
+    from backend.funnel_events import assess_bot_start_health
+    buckets = [
+        {"hour": "2026-06-22T02", "clicks": 81, "starts": 0},
+        {"hour": "2026-06-22T03", "clicks": 76, "starts": 0},
+        {"hour": "2026-06-22T10", "clicks": 70, "starts": 58},
+        {"hour": "2026-06-22T11", "clicks": 111, "starts": 104},
+    ]
+    h = assess_bot_start_health(buckets)
+    assert h["stalled"] is False and h["gapHours"] == 2
+    assert "incomplete" in h["message"].lower()
+
+
+def test_assess_bot_start_health_healthy_is_quiet():
+    from backend.funnel_events import assess_bot_start_health
+    buckets = [
+        {"hour": "2026-06-22T12", "clicks": 100, "starts": 88},
+        {"hour": "2026-06-22T13", "clicks": 45, "starts": 40},
+    ]
+    h = assess_bot_start_health(buckets)
+    assert h["stalled"] is False and h["gapHours"] == 0 and h["message"] is None
+
+
+def test_assess_bot_start_health_ignores_trivial_traffic():
+    # An hour with only 1-2 clicks and 0 starts is noise, not a gap.
+    from backend.funnel_events import assess_bot_start_health
+    buckets = [
+        {"hour": "2026-06-22T12", "clicks": 100, "starts": 90},
+        {"hour": "2026-06-22T13", "clicks": 2, "starts": 0},
+    ]
+    h = assess_bot_start_health(buckets)
+    assert h["gapHours"] == 0 and h["stalled"] is False
