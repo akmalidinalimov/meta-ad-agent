@@ -119,6 +119,14 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
   // Configured, but a bounded range with no baseline snapshot yet → daily VSL still accruing.
   const vslAccruing = Boolean(vsl?.configured && scoped && vslViewsValue == null)
 
+  // VSL reach rate: YouTube views ÷ bot-starts. Uses period views when scoped, lifetime
+  // otherwise. Can exceed 100% (public YouTube includes rewatches + non-bot viewers; YouTube
+  // Studio data lags ~48 h so there is also an API lag effect).
+  const reachViews = vsl?.periodViews ?? vsl?.views ?? null
+  const botStartsForReach = kpis?.counts?.botStarts ?? 0
+  const reachRate: number | null =
+    botStartsForReach > 0 && reachViews != null ? (reachViews / botStartsForReach) * 100 : null
+
   const periodText = periodLabel ?? (scoped ? `${since} → ${until}` : `last ${days} days`)
   const freshness = loading
     ? 'Loading live data…'
@@ -171,7 +179,7 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
             sub = 'VSL daily accrues — check back tomorrow'
           } else if (card.key === 'crmFill' && crmNotTracked) {
             value = loading ? '…' : '—'
-            sub = 'Awaiting the in-bot form-submit relay (see below)'
+            sub = 'In-bot form-submit relay not connected — add it in ChatPlace to populate this.'
           } else {
             value = loading ? '…' : `${out.rates[card.key as keyof typeof out.rates]}%`
             sub = card.sub(inputs)
@@ -230,6 +238,11 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
                 {startHealthWarning && startHealthMessage ? startHealthMessage : sub}
               </span>
               <small>{card.desc}</small>
+              {card.key === 'vslView' && !loading && (
+                <small title="YouTube views ÷ bot-starts. May exceed 100% — public YouTube counts rewatches and non-bot viewers; Studio data lags ~48 h.">
+                  VSL reach: {reachRate != null ? `${reachRate.toFixed(1)}%` : '—'} <span style={{ opacity: 0.65 }}>(YouTube views ÷ bot-starts)</span>
+                </small>
+              )}
               <span className="simple-rate-trend-hint">📈 {selected ? 'trend shown' : 'view trend'}</span>
             </article>
           )
