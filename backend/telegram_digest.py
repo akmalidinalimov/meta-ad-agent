@@ -459,8 +459,11 @@ def build_daily_analyst_message(analysis: dict) -> str:
 
     for i, a in enumerate(analysis.get("audiences", [])[:5], 1):
         acpl = f"${a['cpl']}" if a.get("cpl") is not None else "—"
+        # Show the audience's OWN result unit so cheap click-leads aren't confused with
+        # pricier (deeper) registrations — their CPLs are not comparable.
+        unit = "regs" if "Registration" in (a.get("conversionLabel") or "") else "leads"
         lines.append(
-            f"{i}. {a['adsetName']}  {a['leads']} leads · CPL {acpl} · quality {a['quality']}"
+            f"{i}. {a['adsetName']}  {a['leads']} {unit} · CPL {acpl} · quality {a['quality']}"
         )
         top = a.get("creatives", {}).get("top", [])
         if top:

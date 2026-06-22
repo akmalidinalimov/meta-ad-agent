@@ -63,10 +63,17 @@ async def run_daily_analysis() -> dict[str, Any]:
     event_buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in enriched:
         event_buckets[row["_event"]].append(row)
+    # Aggregate per conversion event AND compute norms PER event, so a registration-optimized
+    # audience (a deeper, structurally pricier event) is judged against its own peers — not the
+    # cheap click campaign's median, which would false-flag every registration as "expensive".
     adset_rows: list[dict[str, Any]] = []
+    norms_by_event: dict[str, dict[str, float]] = {}
     for evt, bucket in event_buckets.items():
-        adset_rows.extend(aggregate_adsets(bucket, conversion_event=evt))
-    norms = account_norms(adset_rows)
+        rows = aggregate_adsets(bucket, conversion_event=evt)
+        norms_by_event[evt] = account_norms(rows)
+        for r in rows:
+            r["conversionEvent"] = evt
+        adset_rows.extend(rows)
 
     # count_bot_starts / count_event_users called with no window kwargs — full history
     # consistent with how the dashboard's account-wide START rate is computed.
@@ -81,11 +88,14 @@ async def run_daily_analysis() -> dict[str, Any]:
 
     audiences: list[dict[str, Any]] = []
     for adset in adset_rows:
+        evt = adset.get("conversionEvent", default_event)
+        norms = norms_by_event.get(evt, {})
         scored = {**adset, "startRate": account_start_rate}
         # quality_score(metric, norms, *, account_start_rate) — account_start_rate is a
         # percent (0-100); guard against 0 denominator in the score's START component.
         quality = quality_score(scored, norms, account_start_rate=account_start_rate or 1.0)
         audiences.append({**scored, "quality": quality,
+                          "conversionLabel": conversion_label(evt),
                           "creatives": rank_creatives(by_adset.get(adset["adsetId"], []), norms=norms)})
     audiences.sort(key=lambda a: (a["quality"], a["leads"]), reverse=True)
 

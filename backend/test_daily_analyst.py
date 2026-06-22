@@ -99,3 +99,38 @@ def test_multi_campaign_uses_each_campaigns_own_event(monkeypatch):
     by_id = {a["adsetId"]: a for a in out["audiences"]}
     assert by_id["as1"]["leads"] == 20            # counted via LEAD
     assert by_id["as2"]["leads"] == 12            # counted via its OWN event, not 0
+
+
+def test_per_event_norms_dont_flag_registration_as_expensive(monkeypatch):
+    # Cheap click campaign (CPL ~$0.07) + a registration campaign (CPL ~$0.50). The
+    # registration creative must NOT be flagged "expensive": it is judged against its OWN
+    # event's median, not the click campaign's cheap median (the within-campaign fix).
+    ads = [
+        {"campaign_id": "c1", "adset_id": "asL1", "adset_name": "Clicks1", "ad_id": "l1", "ad_name": "c1",
+         "spend": "7", "impressions": "1000", "frequency": "1.1", "ctr": "3",
+         "actions": [{"action_type": "lead", "value": "100"}]},   # cpl 0.07
+        {"campaign_id": "c1", "adset_id": "asL2", "adset_name": "Clicks2", "ad_id": "l2", "ad_name": "c2",
+         "spend": "7", "impressions": "1000", "frequency": "1.1", "ctr": "3",
+         "actions": [{"action_type": "lead", "value": "100"}]},   # cpl 0.07
+        {"campaign_id": "c2", "adset_id": "asR", "adset_name": "Regs", "ad_id": "r1", "ad_name": "reg_a",
+         "spend": "10", "impressions": "1000", "frequency": "1.1", "ctr": "3",
+         "actions": [{"action_type": "offsite_complete_registration_add_meta_leads", "value": "20"}]},  # cpl 0.5
+    ]
+    monkeypatch.setattr(da, "get_meta_config", lambda: SimpleNamespace(is_configured=True, ad_account_id="act_1"))
+    async def fake_insights(config, **kw):
+        return ads
+    monkeypatch.setattr(da, "get_insights", fake_insights)
+    async def fake_map(config):
+        return {"c1": "LEAD", "c2": "COMPLETE_REGISTRATION"}
+    monkeypatch.setattr(da, "_campaign_event_map", fake_map)
+    monkeypatch.setattr(da, "count_bot_starts", lambda **kw: 0)
+    monkeypatch.setattr(da, "count_event_users", lambda name, **kw: 0)
+    monkeypatch.setattr(da, "load_targets", lambda: {})
+    async def fake_crm():
+        return {"leads": 0, "stages": {}}
+    monkeypatch.setattr(da, "_crm_today", fake_crm)
+    out = asyncio.run(da.run_daily_analysis())
+    reg = next(a for a in out["audiences"] if a["adsetId"] == "asR")
+    flags = [f for c in reg["creatives"]["all"] for f in c.get("flags", [])]
+    assert "expensive" not in flags                       # not judged vs the cheap click median
+    assert reg.get("conversionLabel") == "Registration rate"
