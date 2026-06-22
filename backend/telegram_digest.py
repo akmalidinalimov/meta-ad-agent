@@ -418,3 +418,66 @@ def send_kpi_digest() -> dict[str, Any]:
 
     text = compose_kpi_digest_text()
     return send_telegram_message_sync(text, parse_mode="HTML")
+
+
+# --- Daily Funnel Analyst report -------------------------------------------------------
+
+
+def build_daily_analyst_message(analysis: dict) -> str:
+    """Build a plain-text Telegram message from a daily analysis dict.
+
+    Designed to be brief and operator-actionable: headline rates, top audiences
+    ranked by quality (engagement proxy until per-audience CRM attribution is live),
+    top/dead creatives per audience, and up to 3 prioritised recommendations.
+    """
+    if not analysis.get("ok"):
+        return (
+            f"📊 Daily Funnel Analyst\n"
+            f"Could not run analysis: {analysis.get('error', 'unknown error')}"
+        )
+
+    r = analysis["rates"]
+    targets = analysis.get("targets", {})
+
+    cpl = f"${r['cpl']}" if r.get("cpl") is not None else "—"
+    if r.get("cpl") is not None and targets.get("maxCpl") is not None:
+        cpl_mark = " ✅" if r["cpl"] <= targets["maxCpl"] else " ⚠️"
+    else:
+        cpl_mark = ""
+
+    lines = [
+        f"📊 Daily Funnel Analyst · {analysis['date']} · Goal: quality > volume",
+        "",
+        "WHERE WE ARE",
+        (
+            f"Spend ${r['spend']} · Leads {r['leads']} · "
+            f"CPL {cpl}{cpl_mark} · START {r['startRate']}% · CRM {r['crmLeads']}"
+        ),
+        "",
+        "🏆 AUDIENCES (by quality*, then volume)",
+    ]
+
+    for i, a in enumerate(analysis.get("audiences", [])[:5], 1):
+        acpl = f"${a['cpl']}" if a.get("cpl") is not None else "—"
+        lines.append(
+            f"{i}. {a['adsetName']}  {a['leads']} leads · CPL {acpl} · quality {a['quality']}"
+        )
+        top = a.get("creatives", {}).get("top", [])
+        if top:
+            best = top[0]
+            hold_pct = round((best.get("holdRate") or 0) * 100)
+            lines.append(f"   ✅ {best['adName']} (CPL ${best.get('cpl')}, hold {hold_pct}%)")
+        dead = [c for c in a.get("creatives", {}).get("all", []) if "zero_result" in c.get("flags", [])]
+        if dead:
+            lines.append(f"   ❌ {dead[0]['adName']} (0 leads past floor)")
+
+    recs = analysis.get("recommendations", [])
+    if recs:
+        lines += ["", "▶️ WHAT TO DO NEXT"]
+        for i, rec in enumerate(recs[:3], 1):
+            lines.append(f"{i}. [{rec['action']}] {rec['rationale']} ({rec['confidence']})")
+
+    if analysis.get("qualityIsProxy"):
+        lines += ["", "* quality = engagement proxy until per-audience CRM attribution is live"]
+
+    return "\n".join(lines)
