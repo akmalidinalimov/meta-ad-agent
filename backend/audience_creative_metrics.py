@@ -56,7 +56,7 @@ def aggregate_adsets(ad_rows: list[dict[str, Any]], *, conversion_event: str) ->
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in ad_rows:
         m = ad_metrics(row, conversion_event=conversion_event)
-        groups.setdefault(m["adsetId"], []).append({**m, "_raw": row})
+        groups.setdefault(m["adsetId"], []).append(m)
     out: list[dict[str, Any]] = []
     for adset_id, members in groups.items():
         spend = sum(m["spend"] for m in members)
@@ -87,13 +87,15 @@ def account_norms(adset_rows: list[dict[str, Any]]) -> dict[str, float]:
     """Median CTR / CPL / hold across the audiences, so quality is judged against THIS
     account's own norms (Uzbek CPMs are a fraction of Western — never generic benchmarks)."""
     ctrs = [r["ctr"] for r in adset_rows if r["ctr"] > 0] or [0.0]
-    cpls = [r["cpl"] for r in adset_rows if r["cpl"]] or [0.0]
+    cpls = [r["cpl"] for r in adset_rows if r["cpl"] is not None] or [0.0]
     holds = [r["holdRate"] for r in adset_rows if r["holdRate"] > 0] or [0.0]
     return {"medianCtr": median(ctrs), "medianCpl": median(cpls), "medianHold": median(holds)}
 
 
 # Data-sufficiency floor before a creative may be called a failure (Uzbek low-CPM tuned).
 FLOORS = {"minImpressions": 500, "minSpendUsd": 2.0, "fatigueFrequency": 3.0}
+
+_WORST_CPL = 9_000.0  # CPL=None sorts to the bottom (treated as worst possible)
 
 
 def _clamp01(x: float) -> float:
@@ -103,7 +105,8 @@ def _clamp01(x: float) -> float:
 def quality_score(metric: dict[str, Any], norms: dict[str, float], *, account_start_rate: float) -> int:
     """0-100 ENGAGEMENT-PROXY quality (until per-audience CRM attribution is live). Weights:
     hold-rate 0.40 (depth = best proxy), CTR-vs-norm 0.25, low-frequency 0.15, START-vs-acct 0.20.
-    Image ads (no hold) fold hold's weight into CTR so they aren't unfairly zeroed."""
+    Image ads (no hold) fold hold's weight into CTR so they aren't unfairly zeroed.
+    Image-ad weights (holdRate == 0): CTR 0.65, frequency 0.15, START 0.20 (hold's 0.40 folded into CTR)."""
     median_ctr = norms.get("medianCtr") or 1.0
     median_hold = norms.get("medianHold") or 0.3
     hold = _clamp01((metric.get("holdRate") or 0.0) / (median_hold * 1.5)) if metric.get("holdRate") else None
@@ -119,14 +122,15 @@ def quality_score(metric: dict[str, Any], norms: dict[str, float], *, account_st
 
 def _flags(ad: dict[str, Any], norms: dict[str, float]) -> list[str]:
     flags: list[str] = []
-    sufficient = ad["impressions"] >= FLOORS["minImpressions"] and ad["spend"] >= FLOORS["minSpendUsd"]
-    if sufficient and ad["leads"] == 0:
+    sufficient = ad.get("impressions", 0) >= FLOORS["minImpressions"] and ad.get("spend", 0) >= FLOORS["minSpendUsd"]
+    if sufficient and ad.get("leads", 0) == 0:
         flags.append("zero_result")
     if (ad.get("frequency") or 0) >= FLOORS["fatigueFrequency"]:
         flags.append("fatigue")
-    if norms.get("medianCtr") and ad["ctr"] < 0.5 * norms["medianCtr"]:
+    if norms.get("medianCtr") and ad.get("ctr", 0) < 0.5 * norms["medianCtr"]:
         flags.append("weak_hook")
-    if sufficient and ad["cpl"] and norms.get("medianCpl") and ad["cpl"] > 2 * norms["medianCpl"]:
+    cpl = ad.get("cpl")
+    if sufficient and cpl is not None and norms.get("medianCpl") and cpl > 2 * norms["medianCpl"]:
         flags.append("expensive")
     return flags
 
@@ -135,5 +139,5 @@ def rank_creatives(ad_metric_rows: list[dict[str, Any]], *, norms: dict[str, flo
     """Rank an audience's creatives by leads (volume proxy of delivery) then CPL; attach flags.
     Returns top-5 and the full annotated list."""
     annotated = [{**ad, "flags": _flags(ad, norms)} for ad in ad_metric_rows]
-    ranked = sorted(annotated, key=lambda a: (a["leads"], -(a["cpl"] or 9e9)), reverse=True)
+    ranked = sorted(annotated, key=lambda a: (a["leads"], -(a["cpl"] or _WORST_CPL)), reverse=True)
     return {"top": ranked[:5], "all": annotated}

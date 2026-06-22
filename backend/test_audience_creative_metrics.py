@@ -78,3 +78,40 @@ def test_rank_creatives_flags_zero_result_spender():
     assert ranked["top"][0]["adId"] == "good"
     dead = next(a for a in ranked["all"] if a["adId"] == "dead")
     assert "zero_result" in dead["flags"] and "fatigue" in dead["flags"]
+
+
+def test_aggregate_adsets_impression_weights_ctr():
+    # as1 = ad a (ctr 5 @ 1000 impr) + ad b (ctr 3 @ 600 impr)
+    # weighted = (5*1000 + 3*600) / 1600 = 4.25
+    rows = aggregate_adsets(_ADS, conversion_event="LEAD")
+    as1 = next(r for r in rows if r["adsetId"] == "as1")
+    assert as1["ctr"] == 4.25
+    assert as1["frequency"] == 1.16  # (1.2*1000 + 1.1*600)/1600 rounded 2dp
+
+
+def test_account_norms_pins_median_values():
+    rows = aggregate_adsets(_ADS, conversion_event="LEAD")
+    norms = account_norms(rows)
+    # as1 cpl = round(16/24, 2) = 0.67; as2 cpl = round(8/16, 2) = 0.5
+    # median([0.67, 0.5]) = 0.585
+    assert norms["medianCpl"] == 0.585
+
+
+def test_rank_creatives_flags_weak_hook_and_expensive():
+    norms = {"medianCtr": 4.0, "medianCpl": 0.5, "medianHold": 0.3}
+    ads = [
+        {"adId": "weak", "adName": "v1", "spend": 8.0, "impressions": 900, "leads": 3, "cpl": 2.67,
+         "ctr": 1.0, "frequency": 1.2, "holdRate": 0.4, "hasVideo": True},  # ctr 1.0 < 0.5*4.0; cpl 2.67 > 2*0.5
+    ]
+    ranked = rank_creatives(ads, norms=norms)
+    flags = ranked["all"][0]["flags"]
+    assert "weak_hook" in flags and "expensive" in flags
+
+
+def test_quality_score_image_ad_uses_ctr_path():
+    norms = {"medianCtr": 3.0, "medianCpl": 0.6, "medianHold": 0.3}
+    high_ctr = {"ctr": 5.0, "frequency": 1.1, "holdRate": 0.0, "startRate": 80.0}   # no video
+    low_ctr = {"ctr": 1.0, "frequency": 1.1, "holdRate": 0.0, "startRate": 80.0}
+    hi = quality_score(high_ctr, norms, account_start_rate=70.0)
+    lo = quality_score(low_ctr, norms, account_start_rate=70.0)
+    assert 0 <= lo <= hi <= 100 and hi > lo   # image path exercised, CTR dominates
