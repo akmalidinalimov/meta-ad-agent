@@ -113,6 +113,14 @@ async def _monitoring_loop() -> None:
         except Exception:
             agent_end("planner")
             logger.exception("Scheduled opportunity iteration failed")
+        # Daily Funnel Analyst — its own 18:00 Europe/Stockholm once-per-day gate.
+        try:
+            from .daily_analysis_scheduler import run_scheduled_daily_analysis
+            daily_result = await asyncio.to_thread(run_scheduled_daily_analysis)
+            if isinstance(daily_result, dict) and not daily_result.get("skipped"):
+                logger.info("Daily analyst report sent")
+        except Exception:
+            logger.exception("Daily analyst iteration failed")
         await asyncio.sleep(interval)
 
 
