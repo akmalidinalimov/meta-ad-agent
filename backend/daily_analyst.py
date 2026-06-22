@@ -4,8 +4,13 @@ current ad-account day, run the pure metric + decision engines, and return one a
 object. Best-effort per source - a failing source degrades its section, never the report."""
 from __future__ import annotations
 
+import asyncio
+from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
+
+# today + 3 trailing days for trend context
+TRAILING_DAYS = 3
 
 from .analysis_engine import conversion_label
 from .audience_creative_metrics import (
@@ -27,7 +32,8 @@ async def _crm_today() -> dict[str, Any]:
         config = get_bitrix_config()
         if not config.is_configured:
             return {"leads": 0, "stages": {}}
-        leads = await fetch_bitrix_leads(transport=HttpBitrixTransport(config), days=1, limit=None)
+        leads = await asyncio.wait_for(
+            fetch_bitrix_leads(transport=HttpBitrixTransport(config), days=1, limit=None), timeout=10.0)
         return {"leads": len(leads), "stages": {}}
     except Exception:  # noqa: BLE001 - CRM is one of several sources
         return {"leads": 0, "stages": {}}
@@ -39,7 +45,7 @@ async def run_daily_analysis() -> dict[str, Any]:
         return {"ok": False, "error": "Meta not connected.", "audiences": [], "recommendations": []}
 
     until = date.today()
-    since = until - timedelta(days=3)  # today + trailing context
+    since = until - timedelta(days=TRAILING_DAYS)
     try:
         ads = await get_insights(config, level="ad", since=since.isoformat(), until=until.isoformat(), time_increment=None)
     except Exception as exc:  # noqa: BLE001
@@ -53,7 +59,12 @@ async def run_daily_analysis() -> dict[str, Any]:
     for row in ads:
         event = event_map.get(str(row.get("campaign_id")), default_event)
         enriched.append({**row, "_event": event})
-    adset_rows = aggregate_adsets(enriched, conversion_event=default_event)
+    event_buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in enriched:
+        event_buckets[row["_event"]].append(row)
+    adset_rows: list[dict[str, Any]] = []
+    for evt, bucket in event_buckets.items():
+        adset_rows.extend(aggregate_adsets(bucket, conversion_event=evt))
     norms = account_norms(adset_rows)
 
     # count_bot_starts / count_event_users called with no window kwargs — full history
@@ -69,12 +80,12 @@ async def run_daily_analysis() -> dict[str, Any]:
 
     audiences: list[dict[str, Any]] = []
     for adset in adset_rows:
-        adset["startRate"] = account_start_rate
+        scored = {**adset, "startRate": account_start_rate}
         # quality_score(metric, norms, *, account_start_rate) — account_start_rate is a
         # percent (0-100); guard against 0 denominator in the score's START component.
-        adset["quality"] = quality_score(adset, norms, account_start_rate=account_start_rate or 1.0)
-        adset["creatives"] = rank_creatives(by_adset.get(adset["adsetId"], []), norms=norms)
-        audiences.append(adset)
+        quality = quality_score(scored, norms, account_start_rate=account_start_rate or 1.0)
+        audiences.append({**scored, "quality": quality,
+                          "creatives": rank_creatives(by_adset.get(adset["adsetId"], []), norms=norms)})
     audiences.sort(key=lambda a: (a["quality"], a["leads"]), reverse=True)
 
     total_spend = sum(a["spend"] for a in audiences)
