@@ -117,11 +117,17 @@ async def _monitoring_loop() -> None:
         # Daily Funnel Analyst — its own 18:00 Europe/Stockholm once-per-day gate.
         try:
             from .daily_analysis_scheduler import run_scheduled_daily_analysis
-            daily_result = await asyncio.to_thread(run_scheduled_daily_analysis)
+            daily_result = await asyncio.wait_for(asyncio.to_thread(run_scheduled_daily_analysis), timeout=300)
             if isinstance(daily_result, dict) and not daily_result.get("skipped"):
                 logger.info("Daily analyst report sent")
         except Exception:
             logger.exception("Daily analyst iteration failed")
+        # Intra-day anomaly guardrail (every cycle; debounced + silent when healthy).
+        try:
+            from .daily_analysis_scheduler import run_intraday_anomaly_check
+            await asyncio.wait_for(asyncio.to_thread(run_intraday_anomaly_check), timeout=120)
+        except Exception:
+            logger.exception("Intraday anomaly check failed")
         await asyncio.sleep(interval)
 
 

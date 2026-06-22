@@ -12,11 +12,12 @@ from typing import Any
 # today + 3 trailing days for trend context
 TRAILING_DAYS = 3
 
-from .analysis_engine import conversion_label
+from .analysis_engine import conversion_label, count_conversion
 from .audience_creative_metrics import (
     account_norms, aggregate_adsets, ad_metrics, quality_score, rank_creatives,
+    safe_float,
 )
-from .daily_recommendations import recommend
+from .daily_recommendations import detect_anomalies, recommend
 from .funnel_events import count_bot_starts, count_event_users
 from .meta_client import get_insights, get_meta_config
 from .routers.campaigns import _campaign_event_map
@@ -103,3 +104,32 @@ async def run_daily_analysis() -> dict[str, Any]:
     recs = recommend(audiences, total_conversions=total_leads, targets=targets)
     return {"ok": True, "date": until.isoformat(), "rates": rates, "targets": targets,
             "audiences": audiences, "recommendations": recs, "qualityIsProxy": True}
+
+
+async def intraday_anomaly_alerts() -> list[dict[str, Any]]:
+    """Account-level intra-day guardrail for the 4-hourly loop: today's CPL/spend/leads vs a
+    7-day baseline CPL + the operator's targets. Best-effort -> [] on any failure/not-configured."""
+    config = get_meta_config()
+    if not config.is_configured:
+        return []
+    try:
+        today_rows = await get_insights(config, level="account", date_preset="today", time_increment=None)
+        base_rows = await get_insights(config, level="account", date_preset="last_7d", time_increment=None)
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        event_map = await _campaign_event_map(config)
+    except Exception:  # noqa: BLE001
+        event_map = {}
+    default_event = next(iter(event_map.values()), "LEAD") if event_map else "LEAD"
+
+    def _agg(rows: list[dict[str, Any]]) -> tuple[float, int]:
+        spend = sum(safe_float(r.get("spend")) for r in rows)
+        leads = int(sum(count_conversion(r, default_event) for r in rows))
+        return spend, leads
+
+    t_spend, t_leads = _agg(today_rows)
+    b_spend, b_leads = _agg(base_rows)
+    today = {"cpl": round(t_spend / t_leads, 2) if t_leads else None, "spend": round(t_spend, 2), "leads": t_leads}
+    baseline = {"cpl": round(b_spend / b_leads, 2) if b_leads else None}
+    return detect_anomalies(today, baseline, targets=load_targets())

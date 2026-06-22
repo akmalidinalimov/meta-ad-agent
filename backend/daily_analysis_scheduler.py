@@ -54,3 +54,29 @@ def run_scheduled_daily_analysis(*, force: bool = False, storage_dir: Path = STO
         logger.exception("Failed to send daily analyst report")
     write_json_atomic(storage_dir / RUN_FILE, {"date": now.date().isoformat(), "ok": analysis.get("ok")})
     return {"skipped": False, "ok": analysis.get("ok"), "sent": True}
+
+
+ANOMALY_RUN_FILE = "intraday_anomaly_run.json"
+
+
+def run_intraday_anomaly_check(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
+    """Run the account-level anomaly check and Telegram-alert only on NEW anomaly kinds,
+    debounced per Stockholm day so a persistent condition doesn't ping every 4h. Sync (uses
+    asyncio.run); call via asyncio.to_thread from the async loop."""
+    from .daily_analyst import intraday_anomaly_alerts
+    from .telegram_outbound import send_telegram_message_sync
+
+    alerts = asyncio.run(intraday_anomaly_alerts())
+    today = datetime.now(TZ).date().isoformat()
+    payload = read_json(storage_dir / ANOMALY_RUN_FILE, None)
+    already = set(payload.get("kinds", [])) if isinstance(payload, dict) and payload.get("date") == today else set()
+    fresh = [a for a in alerts if a["kind"] not in already]
+    if fresh:
+        message = "⚠️ Intra-day alert:\n" + "\n".join(f"• {a['message']}" for a in fresh)
+        try:
+            send_telegram_message_sync(message)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to send intra-day anomaly alert")
+        write_json_atomic(storage_dir / ANOMALY_RUN_FILE,
+                          {"date": today, "kinds": sorted(already | {a["kind"] for a in fresh})})
+    return {"alerts": len(alerts), "new": len(fresh)}

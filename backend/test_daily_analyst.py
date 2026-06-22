@@ -57,6 +57,22 @@ def test_meta_exception_returns_error(monkeypatch):
     assert out["ok"] is False and "meta down" in out["error"]
 
 
+def test_intraday_anomaly_alerts_flags_cpl_spike(monkeypatch):
+    monkeypatch.setattr(da, "get_meta_config", lambda: SimpleNamespace(is_configured=True, ad_account_id="act_1"))
+    async def fake_insights(config, *, level=None, date_preset=None, time_increment=None, **kw):
+        if date_preset == "today":
+            return [{"spend": "40", "actions": [{"action_type": "lead", "value": "25"}]}]   # cpl 1.6
+        return [{"spend": "60", "actions": [{"action_type": "lead", "value": "100"}]}]        # baseline cpl 0.6
+    monkeypatch.setattr(da, "get_insights", fake_insights)
+    async def fake_map(config):
+        return {"c1": "LEAD"}
+    monkeypatch.setattr(da, "_campaign_event_map", fake_map)
+    monkeypatch.setattr(da, "load_targets", lambda: {"maxCpl": 0.8})
+    alerts = asyncio.run(da.intraday_anomaly_alerts())
+    kinds = {a["kind"] for a in alerts}
+    assert "cpl_spike" in kinds and "cpl_over_target" in kinds
+
+
 def test_multi_campaign_uses_each_campaigns_own_event(monkeypatch):
     ads = [
         {"campaign_id": "c1", "adset_id": "as1", "adset_name": "LAL", "ad_id": "a", "ad_name": "v1",
