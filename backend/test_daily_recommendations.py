@@ -42,3 +42,18 @@ def test_detect_anomalies_zero_result_burn():
 
 def test_detect_anomalies_quiet_when_healthy():
     assert detect_anomalies({"cpl": 0.55, "spend": 30.0, "leads": 55}, {"cpl": 0.6}, targets={"maxCpl": 0.8}) == []
+
+
+def test_refresh_creative_fires_alone_for_fatigue_without_zero_result():
+    auds = [{"adsetId": "as1", "adsetName": "LAL", "leads": 60, "cpl": 0.5, "quality": 78,
+             "creatives": {"all": [{"adId": "tired", "adName": "v3", "leads": 5, "spend": 9.0,
+                                    "impressions": 1200, "flags": ["fatigue"]}]}}]
+    recs = recommend(auds, total_conversions=200, targets={})
+    actions = [r["action"] for r in recs]
+    assert "refresh_creative" in actions and "pause_creative" not in actions
+
+
+def test_detect_anomalies_cpl_over_target_alone():
+    # cpl 0.9 is over the 0.8 target but NOT a 2x spike vs baseline 0.6 (needs >=1.2)
+    alerts = detect_anomalies({"cpl": 0.9, "spend": 30.0, "leads": 33}, {"cpl": 0.6}, targets={"maxCpl": 0.8})
+    assert {a["kind"] for a in alerts} == {"cpl_over_target"}

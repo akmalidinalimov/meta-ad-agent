@@ -19,6 +19,7 @@ def _rec(action: str, target: str, rationale: str, goal_link: str, confidence: s
 
 
 def recommend(audiences: list[dict[str, Any]], *, total_conversions: int, targets: dict[str, Any]) -> list[dict[str, Any]]:
+    """Audiences -> recommendations. Honours quality-over-volume; while in Meta's learning phase (total_conversions < LEARNING_CONVERSIONS) it emits leave_and_test and NEVER pause_creative."""
     learning = total_conversions < LEARNING_CONVERSIONS
     recs: list[dict[str, Any]] = []
 
@@ -40,7 +41,7 @@ def recommend(audiences: list[dict[str, Any]], *, total_conversions: int, target
                 "Quality over volume: concentrate spend on the audience most likely to convert deep.",
                 "medium" if learning else "high"))
         for aud in ranked_q:
-            if aud.get("quality", 99) <= QUALITY_LOW and best.get("quality", 0) >= QUALITY_HIGH and aud is not best:
+            if aud.get("quality") is not None and aud["quality"] <= QUALITY_LOW and best.get("quality", 0) >= QUALITY_HIGH and aud["adsetId"] != best["adsetId"]:
                 recs.append(_rec(
                     "downweight_audience", aud["adsetId"],
                     f"{aud['adsetName']} is cheap (CPL ${aud.get('cpl')}) but low quality "
