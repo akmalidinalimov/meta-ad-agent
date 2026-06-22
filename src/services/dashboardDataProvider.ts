@@ -131,6 +131,13 @@ export type CampaignKpis = {
   startSource?: string
   startDenominatorSource?: string
   startScope?: string
+  startHealth?: {
+    stalled: boolean
+    gapHours: number
+    clicksDuringGap: number
+    collectedStartRate: number | null
+    message: string | null
+  }
   syncErrors?: string[]
   error?: string
 }

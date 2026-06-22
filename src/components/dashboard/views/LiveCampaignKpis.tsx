@@ -145,6 +145,11 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
           // rather than the client-side starts÷leads. The other four stay client-computed.
           let value: string
           let sub: string
+          // startHealthWarning: non-null when the backend signals a bot_start collection
+          // gap. 'stalled' = relay currently down (red); 'gap' = gap in history but
+          // collecting again now (amber). We do NOT change the displayed rate — flag only.
+          let startHealthWarning: 'stalled' | 'gap' | null = null
+          let startHealthMessage: string | null = null
           if (card.key === 'start') {
             value = loading ? '…' : kpis?.rates ? `${kpis.rates.startRate}%` : '—'
             const starts = formatNumber(kpis?.counts?.botStarts ?? 0)
@@ -154,6 +159,10 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
                 : `${formatNumber(kpis?.counts?.leads ?? 0)} leads`
             const scopeNote = kpis?.startScope === 'account' && campaignId !== 'all' ? ' · account-wide' : ''
             sub = `${starts} starts ÷ ${denom}${scopeNote}`
+            if (!loading && kpis?.startHealth?.message) {
+              startHealthWarning = kpis.startHealth.stalled ? 'stalled' : 'gap'
+              startHealthMessage = kpis.startHealth.message
+            }
           } else if (card.key === 'vslView' && vslNeedsConnect) {
             value = loading ? '…' : '—'
             sub = 'Connect YouTube to populate'
@@ -192,8 +201,34 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
                 <span className="simple-dot" style={{ background: card.color }} />
                 {cardLabel}
               </p>
-              <strong style={{ color: card.color }}>{value}</strong>
-              <span className="simple-rate-sub">{sub}</span>
+              <strong style={{ color: card.color }}>
+                {value}
+                {startHealthWarning && (
+                  <span
+                    aria-label="Data incomplete"
+                    style={{
+                      marginLeft: '0.35em',
+                      fontSize: '0.85em',
+                      color: startHealthWarning === 'stalled' ? 'var(--color-danger, #dc2626)' : 'var(--color-warning, #d97706)',
+                    }}
+                  >
+                    ⚠️
+                  </span>
+                )}
+              </strong>
+              <span
+                className="simple-rate-sub"
+                style={
+                  startHealthWarning
+                    ? {
+                        color: startHealthWarning === 'stalled' ? 'var(--color-danger, #dc2626)' : 'var(--color-warning, #d97706)',
+                        fontStyle: 'italic',
+                      }
+                    : undefined
+                }
+              >
+                {startHealthWarning && startHealthMessage ? startHealthMessage : sub}
+              </span>
               <small>{card.desc}</small>
               <span className="simple-rate-trend-hint">📈 {selected ? 'trend shown' : 'view trend'}</span>
             </article>
