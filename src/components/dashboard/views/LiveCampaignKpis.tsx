@@ -68,11 +68,14 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
     // every source (Meta insights, CRM stages, YouTube) and bust any browser cache.
     const force = refreshKey > 0
     const win = { days, since, until, force }
-    // CRM is fetched BOT-ONLY (cell 'B' = the Telegram-bot VSL form), so the CRM-fill rate
-    // counts only leads that came through the bot — not the same form used elsewhere.
+    // CRM stages cover ALL leads that landed in Bitrix for the window (cell 'all'). NOTE:
+    // cell 'B' = "Landing B / the no-bot direct form" — a tiny/empty bucket; the real bot +
+    // alikhanova.cloud form leads land in cell A, so 'all' is what the orders count and the
+    // cost-per-CRM-lead use. (The CRM-fill RATE uses the first-party crm_form_submit relay,
+    // not these Bitrix stages.)
     void Promise.all([
       getCampaignKpis(campaignId, win),
-      getCrmStages({ ...win, cell: 'B' }),
+      getCrmStages({ ...win, cell: 'all' }),
       getVsl(win),
     ])
       .then(([kpis, crm, vsl]) => {
@@ -293,10 +296,10 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
 
       {crm && crm.ok ? (
         <div className="simple-block">
-          <h5>CRM order stages — Bitrix (Landing B / direct form)</h5>
+          <h5>CRM order stages — Bitrix24 (all leads)</h5>
           <p className="simple-help">
             <strong>{formatNumber(crm.total)}</strong> orders · Bitrix24 · {formatNumber(crm.paid)} paid
-            {crm.cellCounts ? ` · ${formatNumber(crm.cellCounts.A)} via the other landing (Cell A)` : ''}
+            {crm.cellCounts ? ` · Cell A ${formatNumber(crm.cellCounts.A)} · Cell B ${formatNumber(crm.cellCounts.B)} (no-bot form)` : ''}
           </p>
           {crm.total > 0 ? (
             <div className="crm-stages">
