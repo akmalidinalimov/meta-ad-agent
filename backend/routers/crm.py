@@ -83,6 +83,27 @@ def _parse_day(value: str | None) -> date | None:
         return None
 
 
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def _account_spend(since_iso: str, until_iso: str) -> float:
+    """Account-wide Meta spend for [since, until]. Best-effort -> 0.0 on any failure, so a
+    Meta hiccup never blocks the CRM stages read."""
+    try:
+        from ..meta_client import get_insights, get_meta_config
+        config = get_meta_config()
+        if not config.is_configured:
+            return 0.0
+        rows = await get_insights(config, level="account", since=since_iso, until=until_iso, time_increment=None)
+        return round(sum(_safe_float(row.get("spend")) for row in rows), 2)
+    except Exception:  # noqa: BLE001 - spend is additive; CRM stages still return without it
+        return 0.0
+
+
 @router.get("/api/crm/stages")
 async def crm_stages(
     days: int = 30,
@@ -158,6 +179,22 @@ async def crm_stages(
     payload["cell"] = cell
     payload["cellCounts"] = cell_counts
     payload["botTags"] = {"sourceDescriptions": descs, "utmContents": utms}
+
+    # Cost per REAL CRM lead = account Meta spend (same window) ÷ ALL CRM leads that landed.
+    # Account-level by design: Bitrix leads carry no campaign key, so this can't be split per
+    # campaign (the date filter still applies fully). costPerSale uses paid leads — the truest
+    # cost metric per the funnel playbook. Both use the ALL-leads window, independent of `cell`.
+    all_total = cell_counts["all"]
+    all_paid = payload["paid"] if cell == "ALL" else build_crm_stage_breakdown(
+        window, stages=stages, paid_status_ids=paid_ids or None
+    )["paid"]
+    spend = await _account_spend(lo, hi)
+    payload["spend"] = spend
+    payload["leadsAll"] = all_total
+    payload["paidAll"] = all_paid
+    payload["costPerLead"] = round(spend / all_total, 2) if all_total else None
+    payload["costPerSale"] = round(spend / all_paid, 2) if all_paid else None
+
     payload["refreshedAt"] = now.isoformat()
     _STAGES_CACHE[cache_key] = {"at": now, "payload": payload}
     return payload
