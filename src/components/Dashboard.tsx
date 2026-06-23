@@ -72,29 +72,36 @@ const CAMPAIGN_LIST_DAYS = 90
 type PeriodKind = 'today' | 'yesterday' | '7d' | '14d' | '30d' | 'custom'
 type Period = { kind: PeriodKind; since?: string; until?: string }
 
+// Format a Date's UTC wall-clock as YYYY-MM-DD.
 function ymd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
 }
 
-// Resolve a period to the live-card window: an explicit since..until (Today / Yesterday /
-// Custom) or the last N days. Dates are the viewer's local day.
+// Tashkent (UTC+5, no DST) is the operator's business day. Shift the current instant +5h and
+// read its UTC fields to get the Tashkent calendar date — so "today" is the Tashkent day no
+// matter which timezone the dashboard is opened in (phone, laptop, or the server).
+const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000
+function tashkentDay(daysAgo = 0): Date {
+  return new Date(Date.now() + TASHKENT_OFFSET_MS - daysAgo * 86_400_000)
+}
+
+// Resolve a period to the live-card window: an explicit since..until (every preset now sends
+// one) on Tashkent (UTC+5) day boundaries, so the dashboard's day matches how leads are
+// counted in Bitrix.
 function resolvePeriod(p: Period): { days: number; since?: string; until?: string; label: string } {
-  const today = new Date()
   if (p.kind === 'today') {
-    const t = ymd(today)
+    const t = ymd(tashkentDay(0))
     return { days: 1, since: t, until: t, label: 'Today' }
   }
   if (p.kind === 'yesterday') {
-    const y = new Date(today)
-    y.setDate(y.getDate() - 1)
-    const s = ymd(y)
+    const s = ymd(tashkentDay(1))
     return { days: 2, since: s, until: s, label: 'Yesterday' }
   }
   if (p.kind === 'custom' && p.since && p.until) {
     return { days: 30, since: p.since, until: p.until, label: `${p.since} → ${p.until}` }
   }
   const days = p.kind === '7d' ? 7 : p.kind === '14d' ? 14 : 30
-  return { days, label: `Last ${days} days` }
+  return { days, since: ymd(tashkentDay(days - 1)), until: ymd(tashkentDay(0)), label: `Last ${days} days` }
 }
 
 // The synced account-history disclosure still uses the coarse DateRange; map the period to it.
