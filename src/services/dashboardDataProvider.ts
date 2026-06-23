@@ -214,6 +214,11 @@ export type CrmStages = {
   until?: string
   cell?: string
   cellCounts?: { A: number; B: number; all: number }
+  spend?: number
+  leadsAll?: number
+  paidAll?: number
+  costPerLead?: number | null
+  costPerSale?: number | null
   error?: string
 }
 export async function getCrmStages(w: CardWindow & { cell?: 'A' | 'B' | 'all' }): Promise<CrmStages> {

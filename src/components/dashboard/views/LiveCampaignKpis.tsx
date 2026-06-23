@@ -321,6 +321,30 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
           ) : (
             <p className="simple-help">No Bitrix orders for this form in this period yet.</p>
           )}
+          <div className="simple-cost" style={{ marginTop: '0.75rem' }}>
+            <article className="simple-cost-item">
+              <strong style={{ color: '#db2777' }}>
+                {loading ? '…' : crm.costPerLead != null ? money(crm.costPerLead) : '—'}
+              </strong>
+              <small>Cost per CRM lead</small>
+              <small className="simple-rate-sub">
+                {loading ? '' : crm.spend != null && crm.leadsAll != null
+                  ? `${money(crm.spend)} spend ÷ ${formatNumber(crm.leadsAll)} leads · account-level`
+                  : 'account-level'}
+              </small>
+            </article>
+            <article className="simple-cost-item">
+              <strong style={{ color: '#be185d' }}>
+                {loading ? '…' : crm.costPerSale != null ? money(crm.costPerSale) : '—'}
+              </strong>
+              <small>Cost per sale</small>
+              <small className="simple-rate-sub">
+                {loading ? '' : crm.spend != null && crm.paidAll != null
+                  ? `${money(crm.spend)} spend ÷ ${formatNumber(crm.paidAll)} paid · account-level`
+                  : 'account-level'}
+              </small>
+            </article>
+          </div>
         </div>
       ) : null}
 
