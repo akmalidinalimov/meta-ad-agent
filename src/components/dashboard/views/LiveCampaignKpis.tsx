@@ -287,7 +287,18 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
         <div className="simple-cost">
           {COST_DEFS.map((c) => (
             <article className="simple-cost-item" key={c.key}>
-              <strong style={{ color: c.color }}>{loading ? '…' : money(out.cost[c.key as keyof typeof out.cost])}</strong>
+              <strong style={{ color: c.color }}>
+                {loading
+                  ? '…'
+                  : c.key === 'perCrmLead'
+                    ? // The cost ladder's CRM-lead step uses the REAL Bitrix lead count (same as
+                      // the CRM block below), NOT the first-party crm_form_submit count (≈0 until
+                      // that relay is wired) — otherwise it divides by ~0 and reads $0.00.
+                      crm?.costPerLead != null
+                      ? money(crm.costPerLead)
+                      : '—'
+                    : money(out.cost[c.key as keyof typeof out.cost])}
+              </strong>
               <small>{c.label}</small>
             </article>
           ))}
