@@ -27,7 +27,7 @@ def build_proactive_insights(knowledge: dict[str, Any] | None) -> list[dict[str,
 
     insights: list[dict[str, Any]] = []
 
-    creative = findings["creative"]
+    creative = findings.get("creative") or {}
     weak_buyer = creative.get("weakBuyer")
     if weak_buyer:
         keys = weak_buyer.get("keys", {}) or {}
@@ -43,7 +43,7 @@ def build_proactive_insights(knowledge: dict[str, Any] | None) -> list[dict[str,
             )
         )
 
-    funnel = findings["funnel"]
+    funnel = findings.get("funnel") or {}
     for risk in funnel.get("risks", []):
         if "purchases" in risk.lower():
             continue  # handled as a single tracking insight below
@@ -51,7 +51,7 @@ def build_proactive_insights(knowledge: dict[str, Any] | None) -> list[dict[str,
             _insight("high", "funnel", "Funnel leak detected", risk, "Diagnose this step before increasing any budget.")
         )
 
-    placement = findings["placement"]
+    placement = findings.get("placement") or {}
     best, weak = placement.get("best"), placement.get("weak")
     if best and weak and best is not weak:
         insights.append(
@@ -64,7 +64,7 @@ def build_proactive_insights(knowledge: dict[str, Any] | None) -> list[dict[str,
             )
         )
 
-    audience = findings["audience"]
+    audience = findings.get("audience") or {}
     audience_best = audience.get("best")
     if audience_best and not as_float(audience_best.get("purchases")):
         insights.append(
@@ -77,7 +77,7 @@ def build_proactive_insights(knowledge: dict[str, Any] | None) -> list[dict[str,
             )
         )
 
-    summary = findings["audit"].get("summary", {})
+    summary = (findings.get("audit") or {}).get("summary", {})
     if as_float(summary.get("leads")) and not as_float(summary.get("purchases")):
         insights.append(
             _insight(

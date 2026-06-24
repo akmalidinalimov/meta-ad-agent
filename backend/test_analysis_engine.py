@@ -1,3 +1,13 @@
+from backend.analysis_engine import (
+    action_count,
+    action_value,
+    analyze_interests,
+    build_meta_analysis,
+    finalize_metrics,
+    quality_score,
+    rank_audiences_for_next_campaign,
+    summarize_overall,
+)
 from backend.dashboard_service import map_creative, map_metric_row
 
 
@@ -49,3 +59,376 @@ def test_map_metric_row_uses_meta_creative_id_when_available():
     assert metric["adSetId"] == "adset_1"
     assert metric["adId"] == "ad_1"
     assert metric["creativeId"] == "creative_meta_1"
+
+
+def test_action_count_dedupes_overlapping_lead_aliases():
+    # Meta reports the SAME lead under several action types. They must not be summed.
+    row = {
+        "actions": [
+            {"action_type": "onsite_web_lead", "value": "120"},
+            {"action_type": "lead", "value": "120"},
+            {"action_type": "offsite_conversion.fb_pixel_lead", "value": "120"},
+        ]
+    }
+    assert action_count(row, "lead") == 120
+
+
+def test_top_campaigns_carry_config_block_from_synced_raw():
+    # A campaign with no campaign-level budget but an ad set that carries the budget,
+    # an offsite-conversion optimization goal, a pixel promoted_object, and a bid
+    # strategy. The config block must surface these for later "mirror past winners".
+    raw = {
+        "campaigns": [
+            {
+                "id": "cmp_1",
+                "name": "Winning VSL",
+                "objective": "OUTCOME_LEADS",
+                "buying_type": "AUCTION",
+                "special_ad_categories": [],
+            }
+        ],
+        "adsets": [
+            {
+                "id": "as_1",
+                "campaign_id": "cmp_1",
+                "optimization_goal": "OFFSITE_CONVERSIONS",
+                "billing_event": "IMPRESSIONS",
+                "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                "daily_budget": "5000",
+                "promoted_object": {"pixel_id": "pixel_123", "custom_event_type": "LEAD"},
+            }
+        ],
+        "insights": {
+            "base": [
+                {
+                    "campaign_id": "cmp_1",
+                    "campaign_name": "Winning VSL",
+                    "spend": "100",
+                    "impressions": "10000",
+                    "clicks": "500",
+                    "actions": [{"action_type": "lead", "value": "60"}],
+                }
+            ]
+        },
+    }
+
+    result = build_meta_analysis(raw)
+    top = result["analysis"]["topCampaigns"]
+    assert top, "expected at least one ranked campaign"
+    config = top[0]["config"]
+    assert config["objective"] == "OUTCOME_LEADS"
+    assert config["buyingType"] == "AUCTION"
+    assert config["optimizationGoal"] == "OFFSITE_CONVERSIONS"
+    assert config["billingEvent"] == "IMPRESSIONS"
+    assert config["bidStrategy"] == "LOWEST_COST_WITHOUT_CAP"
+    # Budget lives on the ad set, not the campaign -> ABO.
+    assert config["budgetMode"] == "ABO"
+    assert config["promotedObjectPixelId"] == "pixel_123"
+
+
+def test_top_campaigns_config_is_null_ish_without_config_fields():
+    # Old/partial fixtures (no campaign/adset config) must not crash; config is
+    # present but null-ish.
+    raw = {
+        "insights": {
+            "base": [
+                {
+                    "campaign_id": "cmp_x",
+                    "campaign_name": "Bare campaign",
+                    "spend": "10",
+                    "impressions": "1000",
+                    "clicks": "50",
+                    "actions": [{"action_type": "lead", "value": "5"}],
+                }
+            ]
+        }
+    }
+
+    result = build_meta_analysis(raw)
+    config = result["analysis"]["topCampaigns"][0]["config"]
+    assert config["objective"] is None
+    assert config["budgetMode"] is None
+    assert config["optimizationGoal"] is None
+    assert config["promotedObjectPixelId"] is None
+
+
+def test_top_campaigns_config_detects_cbo_campaign_budget():
+    raw = {
+        "campaigns": [
+            {
+                "id": "cmp_cbo",
+                "name": "CBO campaign",
+                "objective": "OUTCOME_SALES",
+                "bid_strategy": "COST_CAP",
+                "lifetime_budget": "200000",
+            }
+        ],
+        "adsets": [{"id": "as_2", "campaign_id": "cmp_cbo", "optimization_goal": "OFFSITE_CONVERSIONS"}],
+        "insights": {
+            "base": [
+                {
+                    "campaign_id": "cmp_cbo",
+                    "campaign_name": "CBO campaign",
+                    "spend": "100",
+                    "impressions": "5000",
+                    "clicks": "200",
+                    "actions": [{"action_type": "purchase", "value": "4"}],
+                }
+            ]
+        },
+    }
+
+    config = build_meta_analysis(raw)["analysis"]["topCampaigns"][0]["config"]
+    assert config["budgetMode"] == "CBO"
+    assert config["bidStrategy"] == "COST_CAP"
+
+
+def test_map_metric_row_does_not_quadruple_count_leads():
+    row = {
+        "date_start": "2026-05-20",
+        "campaign_id": "campaign_1",
+        "adset_id": "adset_1",
+        "ad_id": "ad_1",
+        "spend": "9",
+        "impressions": "1000",
+        "clicks": "100",
+        "actions": [
+            {"action_type": "onsite_web_lead", "value": "4442"},
+            {"action_type": "lead", "value": "4442"},
+            {"action_type": "offsite_conversion.fb_pixel_lead", "value": "4442"},
+            {"action_type": "offsite_lead_add_20_s_calls", "value": "4442"},
+        ],
+    }
+    metric = map_metric_row(row, 0)
+    assert metric["leads"] == 4442
+
+
+def test_map_metric_row_populates_purchase_revenue_from_action_values():
+    row = {
+        "date_start": "2026-05-20",
+        "ad_id": "ad_1",
+        "spend": "100",
+        "impressions": "5000",
+        "clicks": "200",
+        "actions": [{"action_type": "purchase", "value": "5"}],
+        "action_values": [{"action_type": "purchase", "value": "750.50"}],
+    }
+    metric = map_metric_row(row, 0)
+    assert metric["purchases"] == 5
+    assert metric["purchaseRevenueUsd"] == 750.50
+
+
+def test_action_value_reads_purchase_revenue():
+    row = {"action_values": [{"action_type": "omni_purchase", "value": "320"}]}
+    assert action_value(row, "purchase") == 320
+
+
+def test_finalize_metrics_computes_roas_aov_cpm_frequency_linkctr():
+    item = {
+        "spend": 100.0,
+        "impressions": 10000.0,
+        "reach": 4000.0,
+        "clicks": 500.0,
+        "linkClicks": 250.0,
+        "leads": 50.0,
+        "purchases": 4.0,
+        "revenue": 400.0,
+    }
+    finalize_metrics(item)
+    assert item["roas"] == 4.0                      # 400 / 100
+    assert item["aov"] == 100.0                     # 400 / 4
+    assert item["cpm"] == 10.0                      # 100 / 10000 * 1000
+    assert item["frequency"] == 2.5                 # 10000 / 4000
+    assert item["linkCtr"] == 2.5                   # 250 / 10000 * 100
+
+
+def test_quality_score_no_longer_dominated_by_lead_rate_and_rewards_volume():
+    thin = {"leadRateFromClick": 60.0, "ctr": 2.5, "clicks": 80, "purchases": 0}
+    high_volume = {"leadRateFromClick": 60.0, "ctr": 2.5, "clicks": 20000, "purchases": 0}
+    # Same rates, but the high-volume segment must outrank the thin one.
+    assert quality_score(high_volume) > quality_score(thin)
+    # Without purchases, score is capped at the delivery ceiling (<= 70).
+    assert quality_score(high_volume) <= 70.0
+
+
+def test_quality_score_clamps_double_counted_lead_rate():
+    # A >100% lead rate (double-count symptom) must not score higher than a clean 100%.
+    inflated = {"leadRateFromClick": 250.0, "ctr": 2.5, "clicks": 1000, "purchases": 0}
+    clean = {"leadRateFromClick": 100.0, "ctr": 2.5, "clicks": 1000, "purchases": 0}
+    assert quality_score(inflated) == quality_score(clean)
+
+
+def test_finalize_metrics_flags_lead_double_count_risk():
+    item = {"clicks": 100.0, "leads": 150.0, "impressions": 1000.0}
+    finalize_metrics(item)
+    assert item["leadDoubleCountRisk"] is True
+
+
+def test_analyze_interests_flags_shared_attribution_for_stacked_interests():
+    adsets = [
+        {
+            "id": "as_multi",
+            "targeting": {"interests": [{"name": "Artificial intelligence"}, {"name": "Freelancing"}]},
+        },
+        {
+            "id": "as_single",
+            "targeting": {"interests": [{"name": "Graphic design"}]},
+        },
+    ]
+    base_rows = [
+        {"adset_id": "as_multi", "spend": "100", "impressions": "5000", "clicks": "300", "actions": [{"action_type": "lead", "value": "40"}]},
+        {"adset_id": "as_single", "spend": "80", "impressions": "4000", "clicks": "250", "actions": [{"action_type": "lead", "value": "30"}]},
+    ]
+    interests = analyze_interests(adsets, base_rows)
+    by_label = {item["label"]: item for item in interests}
+
+    ai = by_label["Artificial intelligence"]
+    freelancing = by_label["Freelancing"]
+    design = by_label["Graphic design"]
+
+    # Stacked interests share attribution and tie on inherited metrics.
+    assert ai["sharedAttribution"] is True
+    assert ai["independentlyRanked"] is False
+    assert "present in winning ad sets" in ai["attributionCaveat"]
+    assert ai["leads"] == freelancing["leads"]  # inherited identical metric
+
+    # The single-interest ad set is independently attributable.
+    assert design["sharedAttribution"] is False
+    assert design["independentlyRanked"] is True
+
+
+def test_finalize_metrics_buyer_economics_with_purchases():
+    item = {"spend": 400.0, "clicks": 1000.0, "leads": 100.0, "purchases": 10.0, "impressions": 5000.0}
+    finalize_metrics(item)
+    assert item["leadToPurchaseCvr"] == 10.0      # 10 / 100 * 100
+    assert item["costPerAcquisition"] == 40.0     # 400 / 10
+    assert item["cacIsProxy"] is False
+    assert item["cacBasis"] == "purchase"
+
+
+def test_finalize_metrics_buyer_economics_falls_back_to_cpl_proxy():
+    item = {"spend": 200.0, "clicks": 1000.0, "leads": 100.0, "purchases": 0.0, "impressions": 5000.0}
+    finalize_metrics(item)
+    assert item["leadToPurchaseCvr"] is None
+    assert item["costPerAcquisition"] == 2.0      # CPL proxy = 200 / 100
+    assert item["cacIsProxy"] is True
+    assert item["cacBasis"] == "cpl_proxy"
+
+
+def test_summarize_overall_exposes_buyer_economics_proxy_label():
+    rows = [{"spend": "200", "impressions": "5000", "clicks": "1000", "actions": [{"action_type": "lead", "value": "100"}]}]
+    summary = summarize_overall(rows)
+    assert summary["cacIsProxy"] is True
+    assert summary["costPerAcquisition"] == 2.0
+    assert summary["leadToPurchaseCvr"] is None
+
+
+def test_finalize_metrics_computes_hook_and_hold_rate_from_video_fields():
+    item = {
+        "spend": 100.0,
+        "impressions": 10000.0,
+        "clicks": 500.0,
+        "video3sViews": 3000.0,
+        "videoThruplays": 1500.0,
+        "videoP25": 2500.0,
+        "videoP50": 1800.0,
+        "videoP75": 1200.0,
+        "videoP100": 900.0,
+    }
+    finalize_metrics(item)
+    assert item["hookRate"] == 30.0          # 3000 / 10000 * 100
+    assert item["thruplayRate"] == 15.0      # 1500 / 10000 * 100
+    assert item["holdRate"] is not None and 0 < item["holdRate"] < 100
+
+
+def test_finalize_metrics_leaves_video_rates_none_without_video_fields():
+    item = {"spend": 10.0, "impressions": 1000.0, "clicks": 50.0}
+    finalize_metrics(item)
+    assert item["hookRate"] is None
+    assert item["holdRate"] is None
+
+
+def test_action_count_reads_video_fields_from_top_level_list():
+    row = {"video_p25_watched_actions": [{"action_type": "video_p25_watched_actions", "value": "800"}]}
+    assert action_count(row, "video_p25") == 800
+
+
+def test_summarize_overall_exposes_roas_when_revenue_present():
+    rows = [
+        {
+            "spend": "50",
+            "impressions": "2000",
+            "reach": "1000",
+            "clicks": "100",
+            "actions": [{"action_type": "purchase", "value": "2"}],
+            "action_values": [{"action_type": "purchase", "value": "200"}],
+        }
+    ]
+    summary = summarize_overall(rows)
+    assert summary["revenue"] == 200
+    assert summary["roas"] == 4.0
+    assert summary["aov"] == 100.0
+
+
+def test_map_metric_row_defaults_telegram_subscribers_to_zero():
+    row = {"date_start": "2026-05-20", "campaign_id": "cmp_1", "ad_id": "ad_1"}
+    metric = map_metric_row(row, 0)
+    assert metric["telegramSubscribers"] == 0
+
+
+def test_map_metric_row_injects_telegram_starts_for_matching_campaign_date():
+    starts = {("cmp_1", "2026-05-20"): 9, ("cmp_2", "2026-05-20"): 3}
+    matched = map_metric_row({"date_start": "2026-05-20", "campaign_id": "cmp_1", "ad_id": "ad_1"}, 0, telegram_starts=starts)
+    assert matched["telegramSubscribers"] == 9
+    # A different date for the same campaign has no START rows joined.
+    other_day = map_metric_row({"date_start": "2026-05-21", "campaign_id": "cmp_1", "ad_id": "ad_2"}, 1, telegram_starts=starts)
+    assert other_day["telegramSubscribers"] == 0
+
+
+def _analysis_with_audiences():
+    return {
+        "audience": {
+            "ageGender": [{"label": "25-34 / female", "qualityScore": 58}],
+            "regions": [{"label": "Tashkent Region", "qualityScore": 62}, {"label": "Fergana", "qualityScore": 44}],
+            "interests": [
+                {"label": "Graphic design", "qualityScore": 66, "spend": 260, "leads": 330},
+                {"label": "Artificial intelligence", "qualityScore": 57, "spend": 220, "leads": 260},
+                {"label": "Digital marketing", "qualityScore": 50, "spend": 120, "leads": 90},
+                {"label": "Online education", "qualityScore": 40, "spend": 60, "leads": 30},
+            ],
+        }
+    }
+
+
+def test_rank_audiences_returns_at_most_n_and_excludes_labels():
+    audiences = rank_audiences_for_next_campaign(
+        _analysis_with_audiences(),
+        exclude_labels=["graphic design"],  # case-insensitive exclusion
+        n=3,
+    )
+    assert len(audiences) <= 3
+    labels = [a["label"] for a in audiences]
+    assert "Graphic design" not in labels
+    # Highest remaining quality (Artificial intelligence) ranks first.
+    assert labels[0] == "Artificial intelligence"
+    # Broad demographic/geo hints are attached from the best-ranked signals.
+    assert audiences[0]["ageRange"] == "25-34"
+    assert audiences[0]["gender"] == "female"
+    assert audiences[0]["locations"] == ["Tashkent Region", "Fergana"]
+    assert audiences[0]["interests"] == ["Artificial intelligence"]
+
+
+def test_rank_audiences_prefers_live_telegram_start_signal():
+    analysis = _analysis_with_audiences()
+    # A lower-quality interest that carries a live Telegram-START signal must outrank a
+    # higher-quality interest with no START signal.
+    analysis["audience"]["interests"][3]["telegramSubscribers"] = 120
+    audiences = rank_audiences_for_next_campaign(analysis, n=3)
+    assert audiences[0]["label"] == "Online education"
+    assert audiences[0]["telegramSubscribers"] == 120
+    assert "Telegram-START" in audiences[0]["rationale"]
+
+
+def test_rank_audiences_is_defensive_on_empty_analysis():
+    assert rank_audiences_for_next_campaign({}, n=3) == []
+    assert rank_audiences_for_next_campaign(None, exclude_labels=None, n=3) == []

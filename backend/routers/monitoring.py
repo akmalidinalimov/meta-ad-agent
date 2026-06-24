@@ -41,3 +41,14 @@ def scheduled_monitoring(request: ScheduledMonitoringRequest) -> dict[str, Any]:
         send_alert=send_telegram_message_sync,
         force=request.force,
     )
+
+
+@router.post("/api/monitoring/digest")
+def send_digest() -> dict[str, Any]:
+    """Compose the KPI heartbeat digest and push it to Telegram now (for testing the
+    cadence on demand). Returns the rendered text so the result can be verified."""
+    from ..telegram_digest import compose_kpi_digest_text
+
+    text = compose_kpi_digest_text()
+    result = send_telegram_message_sync(text, parse_mode="HTML")
+    return {"ok": bool(result.get("ok")), "text": text, "result": result}

@@ -35,6 +35,20 @@ def test_run_strategy_council_builds_multi_round_agent_session():
     assert session["finalPlan"]["executionDecision"]["canPublish"] is False
 
 
+def test_council_without_evidence_does_not_name_fake_winners():
+    # No knowledge synced: the council must not present hardcoded demo entities as
+    # proven winners, and must flag itself as needs_refinement.
+    session = run_strategy_council(
+        "Run a strategy council for the next VSL campaign.",
+        knowledge=None,
+        playbooks=[],
+    )
+    assert session["hasEvidence"] is False
+    assert session["quality"]["status"] == "needs_refinement"
+    assert session["finalPlan"]["creativeDecision"]["topCreative"] == "no synced evidence"
+    assert session["finalPlan"]["placementDecision"]["primary"] == "no synced evidence"
+
+
 def test_agent_council_api_returns_visualizable_session(monkeypatch):
     monkeypatch.setattr(agents_module, "load_knowledge_base", sample_knowledge)
     monkeypatch.setattr(agents_module, "load_playbooks", lambda: [sample_playbook()])

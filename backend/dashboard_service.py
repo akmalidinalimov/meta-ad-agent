@@ -10,10 +10,16 @@ from __future__ import annotations
 import threading
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from .analysis_engine import action_count, as_float, extract_interests, valid_rows
+from .analysis_engine import action_count, action_value, as_float, extract_interests, ratio, valid_rows
 from .campaign_watch import build_campaign_watch
+from .funnel_events import (
+    STORAGE_DIR as FUNNEL_STORAGE_DIR,
+    build_funnel_summary,
+    telegram_starts_by_campaign_date,
+)
 from .knowledge_base import KNOWLEDGE_BASE_PATH, load_knowledge_base
 from .meta_client import get_meta_config
 from .monitoring_runner import ALERTS_PATH, list_monitoring_alerts
@@ -114,7 +120,9 @@ def derive_kpis(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
+def dashboard_from_knowledge_base(
+    knowledge: dict[str, Any], *, funnel_storage_dir: Path = FUNNEL_STORAGE_DIR
+) -> dict[str, Any]:
     raw = knowledge.get("raw", {})
     analysis = knowledge.get("analysis", {})
     snapshot = knowledge.get("snapshot", {})
@@ -131,7 +139,14 @@ def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
     adsets_real = [map_adset(row) for row in raw_adsets[:150]]
     analyses_real = build_creative_analyses(analysis)
     enrich_metric_rows_with_ads(metric_rows, raw_ads)
-    metrics_real = [map_metric_row(row, index) for index, row in enumerate(metric_rows)]
+    # Join ingested Telegram START (bot_start) events back onto the per-(campaign, date)
+    # rows so the account's primary success metric is live in the dashboard + monitoring.
+    telegram_starts = telegram_starts_by_campaign_date(storage_dir=funnel_storage_dir)
+    funnel_summary = build_funnel_summary(storage_dir=funnel_storage_dir)
+    metrics_real = [
+        map_metric_row(row, index, telegram_starts=telegram_starts)
+        for index, row in enumerate(metric_rows)
+    ]
     ads_real = complete_ads([map_ad(row) for row in raw_ads], metrics_real)
     creatives_real = complete_creatives([map_creative(row) for row in raw_ads], metrics_real, analysis)
     audience_real = build_audience_scores(analysis)
@@ -156,6 +171,7 @@ def dashboard_from_knowledge_base(knowledge: dict[str, Any]) -> dict[str, Any]:
         "insights": insights_real,
         "experiments": experiments_real,
         "trackingHealth": tracking_real,
+        "funnelSummary": funnel_summary,
         "monitoringAlerts": list_monitoring_alerts(),
         "campaignWatch": build_campaign_watch(
             {
@@ -241,17 +257,27 @@ def map_creative(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def map_metric_row(row: dict[str, Any], index: int) -> dict[str, Any]:
+def map_metric_row(
+    row: dict[str, Any],
+    index: int,
+    telegram_starts: dict[tuple[str, str], int] | None = None,
+) -> dict[str, Any]:
     clicks = as_float(row.get("clicks"))
     link_clicks = action_count(row, "link_click")
     landing_visits = action_count(row, "landing_visit")
     leads = action_count(row, "lead") + action_count(row, "registration")
     purchases = action_count(row, "purchase")
+    revenue = action_value(row, "purchase")
     ad_id = str(row.get("ad_id") or f"unknown_ad_{index}")
     creative_id = row.get("creative_id") or (row.get("creative") or {}).get("id")
+    date = row.get("date_start") or row.get("date_stop") or "2026-01-01"
+    campaign_id = str(row.get("campaign_id") or "")
+    # Telegram START is not a Meta action, so it can only come from the funnel join.
+    # Without it (no funnel events / direct callers) this stays 0 as before.
+    telegram_subscribers = telegram_starts.get((campaign_id, date), 0) if telegram_starts else 0
     return {
-        "date": row.get("date_start") or row.get("date_stop") or "2026-01-01",
-        "campaignId": str(row.get("campaign_id") or ""),
+        "date": date,
+        "campaignId": campaign_id,
         "adSetId": str(row.get("adset_id") or ""),
         "adId": ad_id,
         "creativeId": creative_id_for_ad(ad_id, creative_id),
@@ -261,10 +287,10 @@ def map_metric_row(row: dict[str, Any], index: int) -> dict[str, Any]:
         "clicks": int(clicks),
         "landingPageViews": int(landing_visits or link_clicks or clicks),
         "leads": int(leads),
-        "telegramSubscribers": 0,
+        "telegramSubscribers": telegram_subscribers,
         "webinarAttendees": 0,
         "purchases": int(purchases),
-        "purchaseRevenueUsd": 0,
+        "purchaseRevenueUsd": round(revenue, 2),
     }
 
 
@@ -502,8 +528,31 @@ def derive_real_kpis(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     spend = summary.get("spend", 0)
     leads = summary.get("leads", 0)
     purchases = summary.get("purchases", 0)
+    revenue = summary.get("revenue", 0)
+    roas = summary.get("roas", 0) or ratio(revenue, spend)
+    # ROAS/MER is the #1 media-buying KPI. When no purchase revenue is attributed we
+    # say so explicitly rather than implying a real return exists.
+    if revenue > 0:
+        roas_card = {
+            "label": "ROAS",
+            "value": f"{roas:.2f}x",
+            "change": f"{money(revenue)} revenue",
+            "helper": f"Blended MER on {money(spend)} spend",
+            "tone": "good" if roas >= 1 else "danger",
+            "icon": "trendingUp",
+        }
+    else:
+        roas_card = {
+            "label": "ROAS",
+            "value": "No revenue",
+            "change": "Lead-quality only",
+            "helper": "No purchase revenue attributed — connect purchase tracking",
+            "tone": "warning",
+            "icon": "trendingUp",
+        }
     return [
         {"label": "Meta Spend", "value": money(spend), "change": f"{summary.get('clicks', 0):,.0f} clicks", "helper": "Real synced Meta data", "tone": "neutral", "icon": "dollar"},
+        roas_card,
         {"label": "Leads", "value": f"{leads:,.0f}", "change": f"{money(summary.get('cpl', 0))} CPL", "helper": "Meta lead/registration events", "tone": "good" if leads else "warning", "icon": "users"},
         {"label": "Purchases", "value": f"{purchases:,.0f}", "change": "Tracking gap" if not purchases else f"{money(summary.get('cpp', 0))} CPP", "helper": "Attributed purchases", "tone": "warning" if not purchases else "good", "icon": "target"},
         {"label": "Quality Score", "value": f"{summary.get('qualityScore', 0):.1f}", "change": f"{summary.get('ctr', 0):.2f}% CTR", "helper": "Lead/click quality proxy", "tone": "warning", "icon": "check"},
@@ -677,7 +726,20 @@ def knowledge_chat_preview(knowledge: dict[str, Any]) -> dict[str, Any]:
     summary = analysis.get("summary", {})
     tracking = tracking_calculations_from_knowledge(knowledge)
     days = knowledge.get("snapshot", {}).get("days") or 90
+    # Full campaign list with live status + objective + daily budget so the agent can
+    # answer factual questions like "what campaigns are active?" precisely.
+    raw_campaigns = valid_rows(knowledge.get("raw", {}).get("campaigns", []))
+    campaigns_overview = [
+        {
+            "name": row.get("name"),
+            "status": row.get("status") or row.get("effective_status"),
+            "objective": row.get("objective"),
+            "dailyBudget": row.get("daily_budget"),
+        }
+        for row in raw_campaigns
+    ][:60]
     return {
+        "campaigns": campaigns_overview,
         "role": "canonical_meta_ads_knowledge_base",
         "analysisWindowDays": days,
         "instructions": [
@@ -808,6 +870,47 @@ def answer_funnel(data: dict[str, Any]) -> str:
         f"The weakest funnel step is {weakest['step']} at {weakest['rate']}. "
         f"That is the first place I would diagnose before scaling spend. "
         f"Watch landing visit rate, landing lead rate, Telegram START rate, and CRM quality together. {warning_text}"
+    )
+
+
+def answer_measurement(data: dict[str, Any]) -> str:
+    tracking = data.get("trackingHealth", []) or []
+    broken = [item for item in tracking if item.get("status") != "healthy"]
+    buyers = sum(as_float(row.get("purchases")) for row in data.get("metrics", []) or [])
+    broken_text = "; ".join(f"{item.get('name')} is {item.get('status')} at {item.get('matchRate', 0)}% match" for item in broken) or "no broken events flagged"
+    verdict = "NOT trusted — scaling is premature" if (broken or not buyers) else "acceptable for cautious scaling"
+    return (
+        f"Measurement readiness: {verdict}. Attributed purchases in the model: {buyers:,.0f}. "
+        f"Event health: {broken_text}. "
+        "Leads are reported under several Meta action types (lead/registration), so treat lead volume as a quality proxy and dedup before trusting it. "
+        "Pick one canonical conversion per objective and confirm Pixel/CAPI + Telegram START before any budget scale."
+    )
+
+
+def answer_budget_pacing(data: dict[str, Any]) -> str:
+    campaigns = data.get("campaigns", []) or []
+    total_budget = sum(as_float(c.get("dailyBudgetUsd")) for c in campaigns)
+    spend = sum(as_float(row.get("spendUsd")) for row in data.get("metrics", []) or [])
+    utilization = (spend / total_budget * 100) if total_budget else 0
+    pacing = "under-delivering (<70% of budget)" if 0 < utilization < 70 else "pacing normally" if utilization else "no daily-budget data yet"
+    return (
+        f"Budget pacing: {pacing}" + (f" at {utilization:.0f}% utilization." if total_budget else ".") + " "
+        "Use ABO while testing (so each ad set gets enough budget to exit the learning phase) and switch to CBO once a winner is proven. "
+        "Do not scale an ad set still in learning or one without the primary success metric (qualified lead / Telegram START); cap steps at ~20%."
+    )
+
+
+def answer_landing_cro(data: dict[str, Any]) -> str:
+    funnel_steps = data.get("funnel", [])[1:]
+    if funnel_steps:
+        weakest = min(funnel_steps, key=lambda item: parse_percent(item.get("rate", "0%")))
+        leak = f"The biggest landing/funnel leak is {weakest['step']} at {weakest['rate']}."
+    else:
+        leak = "No funnel data is synced yet, so the leak location is unconfirmed."
+    return (
+        f"{leak} As the CRO owner I would: (1) check message-match between the ad's promise and the landing/VSL headline, "
+        "(2) check page-speed and VSL early drop-off, (3) reduce form/Telegram handoff friction. "
+        "Then run one controlled CRO test on that single step before asking for more traffic."
     )
 
 

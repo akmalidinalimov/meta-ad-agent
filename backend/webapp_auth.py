@@ -1,0 +1,133 @@
+"""App-level session auth for the dashboard + Telegram Mini App.
+
+One signed session cookie gates the dashboard data API. Two ways to mint it:
+- Browser: POST /api/auth/login with the admin password.
+- Telegram Mini App: POST /api/telegram/webapp-auth with the signed initData,
+  which we validate via HMAC with the bot token (Telegram's documented scheme)
+  and check against the operator allowlist.
+
+The session guard is OFF unless DASHBOARD_SESSION_AUTH=true, so tests/dev are
+unaffected; production turns it on at the same time Caddy's basic-auth is removed.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import logging
+import os
+import time
+from typing import Any
+from urllib.parse import parse_qsl
+
+logger = logging.getLogger(__name__)
+
+COOKIE_NAME = "session"
+_DEFAULT_TTL = 7 * 24 * 3600
+
+
+def dashboard_auth_enabled() -> bool:
+    return os.getenv("DASHBOARD_SESSION_AUTH", "").strip().lower() == "true"
+
+
+def _bot_token() -> str:
+    return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
+
+def _session_secret() -> bytes:
+    secret = os.getenv("SESSION_SECRET", "").strip()
+    if secret:
+        return secret.encode()
+    # Always have a secret: derive one from the bot token so sessions can't be
+    # forged even if SESSION_SECRET is unset.
+    return hashlib.sha256(("session-v1:" + _bot_token()).encode()).digest()
+
+
+def validate_init_data(init_data: str, *, max_age_seconds: int = 86400) -> dict[str, Any] | None:
+    """Validate Telegram WebApp initData; return the parsed user dict or None.
+
+    secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token); the data hash is
+    HMAC_SHA256(key=secret_key, msg=data_check_string) over the sorted k=v lines.
+    """
+    token = _bot_token()
+    if not init_data:
+        logger.warning("webapp-auth validation failed: missing initData")
+        return None
+    if not token:
+        logger.warning("webapp-auth validation failed: missing bot token (TELEGRAM_BOT_TOKEN unset)")
+        return None
+    pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+    received_hash = pairs.pop("hash", None)
+    if not received_hash:
+        logger.warning("webapp-auth validation failed: missing hash in initData")
+        return None
+    # Telegram computes the HMAC `hash` over ALL remaining fields, INCLUDING the
+    # newer Ed25519 `signature` field — only `hash` itself is excluded. (An earlier
+    # version dropped `signature`, which broke real Mini App logins; verified live
+    # that Telegram includes it in the data-check-string.)
+    data_check_string = "\n".join(f"{key}={pairs[key]}" for key in sorted(pairs))
+    secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+    computed = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(computed, received_hash):
+        logger.warning("webapp-auth validation failed: bad hash (HMAC mismatch)")
+        return None
+    try:
+        auth_date = int(pairs.get("auth_date", "0"))
+    except ValueError:
+        logger.warning("webapp-auth validation failed: stale auth_date (unparseable)")
+        return None
+    if max_age_seconds and (time.time() - auth_date) > max_age_seconds:
+        logger.warning("webapp-auth validation failed: stale auth_date (older than %ss)", max_age_seconds)
+        return None
+    try:
+        user = json.loads(pairs.get("user", "{}"))
+    except json.JSONDecodeError:
+        logger.warning("webapp-auth validation failed: malformed user payload")
+        return None
+    if not user:
+        logger.warning("webapp-auth validation failed: empty user payload")
+        return None
+    return user
+
+
+def user_allowed(user: dict[str, Any]) -> bool:
+    """Mini App users must be on the same allowlist the bot uses (no list = allow)."""
+    from .telegram_service import allowed_telegram_values
+
+    allowed = allowed_telegram_values("TELEGRAM_ALLOWED_USER_IDS")
+    admin = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+    user_id = str(user.get("id"))
+    # The configured admin must never be locked out, even if an allowlist is set
+    # that omits them.
+    if admin and user_id == admin:
+        return True
+    if admin:
+        allowed.add(admin)
+    if not allowed:
+        return True
+    return user_id in allowed
+
+
+def make_session(sub: str, *, ttl_seconds: int = _DEFAULT_TTL) -> str:
+    exp = int(time.time()) + ttl_seconds
+    payload = f"{sub}.{exp}"
+    signature = hmac.new(_session_secret(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def valid_session(token: str | None) -> bool:
+    if not token:
+        return False
+    try:
+        sub, exp, signature = token.rsplit(".", 2)
+    except ValueError:
+        return False
+    payload = f"{sub}.{exp}"
+    expected = hmac.new(_session_secret(), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return False
+    try:
+        return int(exp) > time.time()
+    except ValueError:
+        return False

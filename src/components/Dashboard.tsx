@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type ComponentType, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import {
   AlertTriangle,
   BarChart3,
-  BookOpen,
   Bot,
   Send,
   CheckCircle2,
   CircleDollarSign,
   ClipboardCheck,
   Film,
-  Gauge,
   LayoutDashboard,
   ListChecks,
   MousePointerClick,
@@ -18,8 +16,6 @@ import {
   Settings,
   ShieldAlert,
   SlidersHorizontal,
-  Target,
-  TrendingDown as TrendingDownIcon,
   TrendingUp,
   Users,
   XCircle,
@@ -31,6 +27,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   Pie,
@@ -39,72 +36,86 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { COLORS, iconMap } from './dashboard/constants'
+import { RankingsView } from './dashboard/views/RankingsView'
+import { SettingsView } from './dashboard/views/SettingsView'
 import { ChartFrame } from './dashboard/shared/ChartFrame'
+import { ChatMessageContent } from './dashboard/shared/ChatMessageContent'
+import { EmptyState } from './dashboard/shared/EmptyState'
 import { MediaThumb } from './dashboard/shared/MediaThumb'
+import { MiniMetric } from './dashboard/shared/MiniMetric'
 import { PanelHeading } from './dashboard/shared/PanelHeading'
 import {
   deriveCreativeScores,
   deriveFunnel,
   derivePlacementScores,
-  deriveRankingRows,
   deriveTrend,
   filterMetricsForDashboard,
   formatNumber,
   getCampaignOptions,
   getDateWindow,
 } from '../lib/analytics'
-import { buildOperatorAttention } from '../lib/operatorAttention'
 import {
-  buildEmptySegment,
-  buildPlaybookDraft,
-  parseCsvList,
-  summarizePlaybookReadiness,
-} from '../lib/playbookBuilder'
-import { askAgent, runAgentCouncil } from '../services/agentChatProvider'
-import { createAgentTask, getAgentCommandCenter } from '../services/agentTaskProvider'
+  chartTooltipFormatter,
+  formatAxisCurrency,
+  formatChartCurrency,
+  formatChartNumber,
+} from '../lib/chartConfig'
+import {
+  formatCurrency,
+  formatDateTime,
+  formatPercent,
+  formatRate,
+  getDashboardAnchorDate,
+  labelPlacement,
+  labelRawSetting,
+  shortCampaignLabel,
+  shortText,
+  sumBy,
+} from '../lib/format'
+import { buildOperatorAttention } from '../lib/operatorAttention'
+import { askAgent } from '../services/agentChatProvider'
+import { getAgentCommandCenter } from '../services/agentTaskProvider'
 import { getMetaStatus, type MetaStatus } from '../services/metaStatusProvider'
 import type {
   AgentSpec,
   AgentCouncilSession,
   AgentTask,
-  CampaignPlaybook,
-  CampaignPlaybookSegment,
   ApprovalRequest,
+  ProactiveOpportunity,
   Creative,
   DashboardData,
   DashboardFilters,
   DashboardKpi,
   DailyAdMetric,
-  FunnelEventSummary,
-  IconName,
-  MetaSnapshot,
-  MetaSettingsAudit,
-  Placement,
-  RankingRow,
-  SystemChecklist,
+  Tone,
   TrackingHealthItem,
 } from '../types/marketing'
 
-const COLORS = ['#1f9d8a', '#3b82f6', '#f59e0b', '#ef4444', '#7c3aed', '#0f766e']
-
-const iconMap: Record<IconName, ComponentType<{ size?: number }>> = {
-  alert: AlertTriangle,
-  bot: Bot,
-  check: CheckCircle2,
-  dollar: CircleDollarSign,
-  target: Target,
-  trendingDown: TrendingDownIcon,
-  users: Users,
-}
-
 const navItems = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'commandCenter', label: 'Command Center', icon: Bot },
+  { id: 'chat', label: 'Chat', icon: Send },
+  { id: 'overview', label: 'Monitor', icon: LayoutDashboard },
   { id: 'rankings', label: 'Rankings', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings },
 ] as const
 
 type ViewId = (typeof navItems)[number]['id']
+
+// The single <h1> must describe the current view so screen-reader users (and
+// the document outline) reflect where they are, not a fixed title.
+function viewHeading(view: ViewId): string {
+  switch (view) {
+    case 'chat':
+      return 'Set up a campaign by chatting'
+    case 'rankings':
+      return 'Performance Rankings'
+    case 'settings':
+      return 'Settings & Data Sources'
+    case 'overview':
+    default:
+      return 'Campaign Audit Dashboard'
+  }
+}
 
 interface DashboardProps {
   data: DashboardData
@@ -123,7 +134,7 @@ const defaultFilters: DashboardFilters = {
 }
 
 export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardProps) {
-  const [activeView, setActiveView] = useState<ViewId>('overview')
+  const [activeView, setActiveView] = useState<ViewId>('chat')
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -136,7 +147,6 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
   const [chatInput, setChatInput] = useState('')
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [filters, setFilters] = useState<DashboardFilters>(defaultFilters)
-  const [latestCouncil, setLatestCouncil] = useState<AgentCouncilSession | null>(null)
 
   const filteredMetrics = useMemo(() => {
     const window = getDateWindow(filters.dateRange, getDashboardAnchorDate(data))
@@ -188,9 +198,6 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
 
     try {
       const response = await askAgent(cleanMessage)
-      if (response.agentCouncil) {
-        setLatestCouncil(response.agentCouncil)
-      }
       setChatMessages((current) => [
         ...current,
         {
@@ -221,6 +228,12 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
     }
   }
 
+  // Jump from the decision surface into the agent chat, pre-seeded with the question.
+  const askAgentsAbout = (message: string) => {
+    setActiveView('chat')
+    void sendChatMessage(message)
+  }
+
   useEffect(() => {
     void getMetaStatus()
       .then(setMetaStatus)
@@ -234,7 +247,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
       <header className="topbar">
         <div>
           <p className="eyebrow">Meta Ad Agent</p>
-          <h1>Campaign Audit Dashboard</h1>
+          <h1>{viewHeading(activeView)}</h1>
         </div>
         <div className="topbar-actions">
           <div className={`status-pill ${dataSourceTone}`}>
@@ -257,6 +270,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
             <button
               type="button"
               className={activeView === item.id ? 'active' : ''}
+              aria-current={activeView === item.id ? 'page' : undefined}
               onClick={() => setActiveView(item.id)}
               key={item.id}
             >
@@ -267,39 +281,46 @@ export function Dashboard({ data, isRefreshing = false, onRefresh }: DashboardPr
         })}
       </nav>
 
-      <Filters data={data} filters={filters} onChange={setFilters} />
-
-      {!hasData ? (
-        <EmptyState onReset={() => setFilters(defaultFilters)} />
-      ) : (
-        <>
-          {activeView === 'overview' && (
-            <Overview
-              data={data}
-              kpis={filteredKpis}
-              creativeScores={creativeScores}
-              funnel={funnel}
-              trend={trend}
-              placements={placements}
-              metrics={filteredMetrics}
-            />
-          )}
-          {activeView === 'commandCenter' && (
-            <CommandCenterView
-              data={data}
-              latestCouncil={latestCouncil}
-              onCouncilReady={setLatestCouncil}
-              chatMessages={chatMessages}
-              chatInput={chatInput}
-              isChatLoading={isChatLoading}
-              onChatInputChange={setChatInput}
-              onChatSend={sendChatMessage}
-            />
-          )}
-          {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
-          {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} onDashboardRefresh={onRefresh} />}
-        </>
+      {data.dataSource?.backendUnreachable && (
+        <div className="data-banner danger" role="status">
+          <AlertTriangle size={16} />
+          <span>Backend not reachable — showing local sample data. These numbers are NOT live; connect the backend before making decisions.</span>
+        </div>
       )}
+
+      {activeView !== 'chat' && <Filters data={data} filters={filters} onChange={setFilters} />}
+
+      {/* Chat-first front door: set up a campaign by chatting; the agent drafts a
+          paused packet and the approval cards execute it — all on one screen. */}
+      {activeView === 'chat' && (
+        <CampaignChatView
+          data={data}
+          chatMessages={chatMessages}
+          chatInput={chatInput}
+          isChatLoading={isChatLoading}
+          onChatInputChange={setChatInput}
+          onChatSend={sendChatMessage}
+        />
+      )}
+
+      {/* Empty state is scoped to the data-driven Overview only, so an over-narrow
+          filter never hides Settings (reconnect) or Command Center (ask the agent). */}
+      {activeView === 'overview' &&
+        (hasData ? (
+          <Overview
+            data={data}
+            kpis={filteredKpis}
+            creativeScores={creativeScores}
+            funnel={funnel}
+            trend={trend}
+            placements={placements}
+            onAskWhy={askAgentsAbout}
+          />
+        ) : (
+          <EmptyState onReset={() => setFilters(defaultFilters)} />
+        ))}
+      {activeView === 'rankings' && <RankingsView data={data} metrics={filteredMetrics} />}
+      {activeView === 'settings' && <SettingsView data={data} metaStatus={metaStatus} onDashboardRefresh={onRefresh} />}
     </main>
   )
 }
@@ -520,6 +541,146 @@ function Filters({
   )
 }
 
+const CHAT_STARTER_PROMPTS = [
+  'Draft a paused campaign using my best audiences and creatives',
+  'Plan a 3-VSL launch at $100/day optimized for Telegram START',
+  'Which audience should I scale next, and why?',
+  'What are my best creatives right now?',
+]
+
+function CampaignChatView({
+  data,
+  chatMessages,
+  chatInput,
+  isChatLoading,
+  onChatInputChange,
+  onChatSend,
+}: {
+  data: DashboardData
+  chatMessages: ChatMessage[]
+  chatInput: string
+  isChatLoading: boolean
+  onChatInputChange: (value: string) => void
+  onChatSend: (message: string) => void
+}) {
+  const [tasks, setTasks] = useState<AgentTask[]>([])
+  const [agents, setAgents] = useState<AgentSpec[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    void getAgentCommandCenter()
+      .then((result) => {
+        if (!cancelled) {
+          setTasks(result.tasks)
+          setAgents(result.agents)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTasks([])
+          setAgents([])
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const approvalAgents = agents.filter((agent) => agent.requiresApproval).length
+  const pendingTasks = tasks.filter((task) => task.status === 'planning' || task.status === 'needs_approval').length
+
+  return (
+    <section className="campaign-chat-view">
+      <section className="panel campaign-chat-intro">
+        <PanelHeading eyebrow="Front door" title="Set up a campaign by chatting" icon={Send} />
+        {typeof data.funnelSummary?.rates?.telegramStartRate === 'number' && (
+          <span className="provenance-chip rule funnel-context-chip">
+            Live funnel · Telegram START rate {formatRate(data.funnelSummary.rates.telegramStartRate)}
+          </span>
+        )}
+        <p>
+          Describe what you want and the agent drafts an approval-safe, paused campaign — reusing your
+          best audiences and winning creatives. Review it in the approval card below, then create it in
+          Meta. Nothing goes live without your explicit approval.
+        </p>
+        <div className="campaign-chat-starters">
+          {CHAT_STARTER_PROMPTS.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              className="sync-button secondary"
+              disabled={isChatLoading}
+              onClick={() => onChatSend(prompt)}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <AgentChatPanel
+        messages={chatMessages}
+        input={chatInput}
+        isLoading={isChatLoading}
+        onInputChange={onChatInputChange}
+        onSend={onChatSend}
+      />
+
+      <ApprovalQueue data={data} />
+
+      <details className="overview-details">
+        <summary>Agent activity</summary>
+        <article className="panel">
+          <PanelHeading eyebrow="Task Queue" title="Recent orchestrator work" icon={ListChecks} />
+          <div className="builder-summary command-summary">
+            <MiniMetric label="Tasks" value={tasks.length.toString()} />
+            <MiniMetric label="Pending" value={pendingTasks.toString()} />
+            <MiniMetric label="Agents" value={agents.length.toString()} />
+            <MiniMetric label="Approval agents" value={approvalAgents.toString()} />
+          </div>
+          <div className="task-list">
+            {tasks.length > 0 ? tasks.slice(0, 8).map((task) => (
+              <div className={`task-item ${task.status}`} key={task.id}>
+                <div>
+                  <strong>{task.requestedAction || 'Untitled task'}</strong>
+                  <p>{task.plan?.answer ? shortText(task.plan.answer, 180) : 'The orchestrator has captured this task.'}</p>
+                  <small>{task.source} / {task.activeAgent ?? 'orchestrator'} / {formatDateTime(task.updatedAt)}</small>
+                  {task.approvalId && <small>Approval: {task.approvalId}</small>}
+                  {task.approvalStatus && <small>Approval status: {labelRawSetting(task.approvalStatus)}</small>}
+                  {task.approvalDecision?.rejectionReason && <small>Rejected: {task.approvalDecision.rejectionReason}</small>}
+                  {task.approvalDecision?.changeRequestNote && <small>Needs changes: {task.approvalDecision.changeRequestNote}</small>}
+                </div>
+                <span>{labelRawSetting(task.status)}</span>
+              </div>
+            )) : (
+              <EmptyState compact />
+            )}
+          </div>
+        </article>
+
+        <article className="panel">
+          <PanelHeading eyebrow="Agent Availability" title="Specialists and execution safety" icon={ShieldAlert} />
+          <div className="agent-status-grid">
+            {agents.map((agent) => (
+              <div className={`agent-status-card ${agentStatusTone(agent)}`} key={agent.id}>
+                <div>
+                  <strong>{agent.name}</strong>
+                  <p>{agent.purpose}</p>
+                </div>
+                <span>{agent.readinessStatus ? labelRawSetting(agent.readinessStatus) : agent.requiresApproval ? 'Approval required' : 'Analysis ready'}</span>
+                {agent.blockedReasons && agent.blockedReasons.length > 0 && (
+                  <small>{agent.blockedReasons.map(labelRawSetting).join(', ')}</small>
+                )}
+              </div>
+            ))}
+            {agents.length === 0 && <EmptyState compact />}
+          </div>
+        </article>
+      </details>
+    </section>
+  )
+}
+
 function AgentChatPanel({
   messages,
   input,
@@ -551,7 +712,20 @@ function AgentChatPanel({
       <div className="agent-chat-messages">
         {messages.map((message) => (
           <div className={`chat-message ${message.role}`} key={message.id}>
-            <p>{message.content}</p>
+            {message.role === 'agent' && message.sources && message.sources.length > 0 && (
+              <span
+                className={`provenance-chip ${
+                  message.sources.includes('openai') ? 'llm' : message.sources.includes('error') ? 'error' : 'rule'
+                }`}
+              >
+                {message.sources.includes('openai')
+                  ? 'Live + LLM'
+                  : message.sources.includes('error')
+                    ? 'Unavailable'
+                    : 'Rule-based'}
+              </span>
+            )}
+            <ChatMessageContent content={message.content} />
             {message.activeAgent && <small>Agent: {labelRawSetting(message.activeAgent)}{message.routeReason ? ` · ${message.routeReason}` : ''}</small>}
             {message.quality && <small>Quality: {message.quality.score}/100 · {labelRawSetting(message.quality.status)}</small>}
             {message.agentCouncil && (
@@ -613,7 +787,7 @@ function Overview({
   funnel,
   trend,
   placements,
-  metrics,
+  onAskWhy,
 }: {
   data: DashboardData
   kpis: DashboardKpi[]
@@ -621,28 +795,39 @@ function Overview({
   funnel: ReturnType<typeof deriveFunnel>
   trend: ReturnType<typeof deriveTrend>
   placements: ReturnType<typeof derivePlacementScores>
-  metrics: DailyAdMetric[]
+  onAskWhy: (message: string) => void
 }) {
   return (
     <>
-      <DecisionHero data={data} />
+      {/* DECIDE: hero, KPIs, and the "what's wrong" diagnosis row */}
+      <DecisionHero data={data} onAskWhy={onAskWhy} />
       <KpiGrid kpis={kpis} />
       <section className="overview-command-grid">
         <FunnelPanel funnel={funnel} />
         <TopProblemsPanel data={data} />
-        <OverviewRankingPreview data={data} metrics={metrics} placements={placements} />
       </section>
-      <section className="dashboard-grid">
+
+      {/* TRENDS: primary charts, lifted directly under the KPIs */}
+      <section className="overview-primary-grid">
         <TrendPanel trend={trend} />
-        <CreativeTablePanel creativeScores={creativeScores} />
-        <PlacementPanel placements={placements} />
-        <AudiencePanel data={data} />
         <SpendPanel trend={trend} />
       </section>
-      <section className="bottom-grid">
-        <InsightsPanel data={data} />
+
+      {/* REVIEW: approvals surfaced high — acting on suggestions is the point */}
+      <section className="overview-review-grid">
         <ApprovalQueue data={data} />
+        <InsightsPanel data={data} />
       </section>
+
+      {/* DETAIL: dense breakdowns deferred, collapsed by default */}
+      <details className="overview-details">
+        <summary>Show detailed breakdowns</summary>
+        <section className="dashboard-grid">
+          <CreativeTablePanel creativeScores={creativeScores} />
+          <PlacementPanel placements={placements} />
+          <AudiencePanel data={data} />
+        </section>
+      </details>
     </>
   )
 }
@@ -675,35 +860,45 @@ function FunnelPanel({ funnel }: { funnel: ReturnType<typeof deriveFunnel> }) {
     <article className="panel panel-wide">
       <PanelHeading eyebrow="Funnel" title="Meta click to course buyer path" icon={MousePointerClick} />
       <div className="funnel-list">
-        {funnel.map((item, index) => (
-          <div className="funnel-row" key={item.step}>
-            <div>
-              <span>{item.step}</span>
-              <strong>{formatNumber(item.value)}</strong>
+        {funnel.map((item) => {
+          // Width must reflect the actual data (share of the top-of-funnel
+          // value), not the row index. A small floor keeps tiny stages legible.
+          const topValue = funnel[0]?.value ?? 0
+          const widthPercent = topValue > 0 ? Math.max(7, (item.value / topValue) * 100) : 7
+          return (
+            <div className="funnel-row" key={item.step}>
+              <div>
+                <span>{item.step}</span>
+                <strong>{formatNumber(item.value)}</strong>
+              </div>
+              <div className="funnel-track">
+                <div className="funnel-fill" style={{ width: `${widthPercent}%` }} />
+              </div>
+              <em>{item.rate}</em>
             </div>
-            <div className="funnel-track">
-              <div className="funnel-fill" style={{ width: `${Math.max(7, 100 - index * 13)}%` }} />
-            </div>
-            <em>{item.rate}</em>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </article>
   )
 }
 
 function TrendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
+  const totalLeads = sumBy(trend, (point) => point.leads)
+  const totalBuyers = sumBy(trend, (point) => point.buyers)
+  const summary = `Daily trend over ${trend.length} days: ${formatChartNumber(totalLeads)} leads and ${formatChartNumber(totalBuyers)} buyers total.`
   return (
     <article className="panel">
       <PanelHeading eyebrow="Trend" title="Spend, leads, buyers" icon={TrendingUp} />
-      <ChartFrame>
+      <ChartFrame summary={summary}>
         <LineChart data={trend}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="day" tickLine={false} axisLine={false} />
-          <YAxis tickLine={false} axisLine={false} />
-          <Tooltip />
-          <Line type="monotone" dataKey="leads" stroke="#1f9d8a" strokeWidth={3} dot={false} />
-          <Line type="monotone" dataKey="buyers" stroke="#ef4444" strokeWidth={3} dot={false} />
+          <YAxis tickLine={false} axisLine={false} tickFormatter={formatChartNumber} />
+          <Tooltip formatter={chartTooltipFormatter} />
+          <Legend />
+          <Line type="monotone" dataKey="leads" name="Leads" stroke={COLORS[0]} strokeWidth={3} dot={false} />
+          <Line type="monotone" dataKey="buyers" name="Buyers" stroke={COLORS[3]} strokeWidth={3} dot={false} />
         </LineChart>
       </ChartFrame>
     </article>
@@ -735,7 +930,7 @@ function TopProblemsPanel({ data }: { data: DashboardData }) {
   )
 }
 
-function DecisionHero({ data }: { data: DashboardData }) {
+function DecisionHero({ data, onAskWhy }: { data: DashboardData; onAskWhy: (message: string) => void }) {
   const attentionItems = buildOperatorAttention(data)
   const topItem = attentionItems[0]
   const hasDanger = attentionItems.some((item) => item.tone === 'danger')
@@ -766,106 +961,22 @@ function DecisionHero({ data }: { data: DashboardData }) {
           <small>Risk if ignored</small>
           <strong>{risk}</strong>
         </div>
-        <button className="sync-button secondary" type="button">
+        <button
+          className="sync-button secondary"
+          type="button"
+          onClick={() =>
+            onAskWhy(
+              topItem
+                ? `Why is "${topItem.title}" the top priority right now, and what exactly should I do about it?`
+                : 'What is the most important thing to do with my campaigns right now, and why?',
+            )
+          }
+        >
           <Bot size={16} />
           Ask agents why
         </button>
       </div>
     </section>
-  )
-}
-
-function OverviewRankingPreview({
-  data,
-  metrics,
-  placements,
-}: {
-  data: DashboardData
-  metrics: DailyAdMetric[]
-  placements: ReturnType<typeof derivePlacementScores>
-}) {
-  const campaigns = deriveRankingRows(
-    metrics,
-    data.campaigns.map((campaign) => ({
-      id: campaign.id,
-      name: campaign.name,
-      category: 'campaign',
-      metricIds: new Set([campaign.id]),
-    })),
-  ).slice(0, 3)
-  const creatives = deriveRankingRows(
-    metrics,
-    data.creatives.map((creative) => ({
-      id: creative.id,
-      name: creative.name,
-      category: 'creative',
-      metricIds: new Set([creative.id]),
-    })),
-  ).slice(0, 3)
-  const audiences = deriveRankingRows(
-    metrics,
-    data.adSets.map((adSet) => ({
-      id: adSet.id,
-      name: adSet.name,
-      category: 'audience',
-      metricIds: new Set([adSet.id]),
-    })),
-  ).slice(0, 3)
-  const placementRows = placements.slice(0, 3).map((placement) => ({
-    id: placement.name,
-    name: labelPlacement(placement.name as Placement),
-    metric: `${placement.value}% spend`,
-    helper: `${formatNumber(placement.buyers)} buyers`,
-  }))
-
-  return (
-    <article className="panel panel-wide overview-ranking-preview">
-      <PanelHeading eyebrow="Decision Rankings" title="Best current levers" icon={BarChart3} />
-      <div className="overview-ranking-grid">
-        <MiniRanking title="Campaigns" rows={campaigns.map(formatMiniRankingRow)} />
-        <MiniRanking title="Creatives" rows={creatives.map(formatMiniRankingRow)} />
-        <MiniRanking title="Audiences" rows={audiences.map(formatMiniRankingRow)} />
-        <MiniRanking title="Placements" rows={placementRows} />
-      </div>
-    </article>
-  )
-}
-
-function formatMiniRankingRow(row: RankingRow) {
-  const metric = row.costPerTelegramStart > 0
-    ? `${formatCurrency(row.costPerTelegramStart)} / TG start`
-    : row.cpl > 0
-      ? `${formatCurrency(row.cpl)} CPL`
-      : `${row.qualityScore}/100`
-  return {
-    id: row.id,
-    name: row.name,
-    metric,
-    helper: `${formatNumber(row.leads)} leads · ${formatNumber(row.telegramSubscribers)} TG`,
-  }
-}
-
-function MiniRanking({
-  title,
-  rows,
-}: {
-  title: string
-  rows: Array<{ id: string; name: string; metric: string; helper: string }>
-}) {
-  return (
-    <div className="mini-ranking">
-      <strong>{title}</strong>
-      {rows.length ? rows.map((row, index) => (
-        <div className="ranking-mini-row" key={row.id}>
-          <span>{index + 1}</span>
-          <div>
-            <b>{row.name}</b>
-            <small>{row.helper}</small>
-          </div>
-          <em>{row.metric}</em>
-        </div>
-      )) : <small>No ranked data yet.</small>}
-    </div>
   )
 }
 
@@ -922,17 +1033,21 @@ function CreativeTable({
 }
 
 function PlacementPanel({ placements }: { placements: ReturnType<typeof derivePlacementScores> }) {
+  const topPlacement = placements[0]
+  const summary = topPlacement
+    ? `Spend share across ${placements.length} placements; ${topPlacement.name} leads at ${topPlacement.value}%.`
+    : 'Spend share by placement channel.'
   return (
     <article className="panel">
       <PanelHeading eyebrow="Placement" title="Spend share by channel" icon={RadioTower} />
-      <ChartFrame>
+      <ChartFrame summary={summary}>
         <PieChart>
           <Pie data={placements} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88}>
             {placements.map((entry, index) => (
               <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
             ))}
           </Pie>
-          <Tooltip />
+          <Tooltip formatter={(value, name) => [`${Array.isArray(value) ? value[0] : value}% spend`, String(name ?? '')]} />
         </PieChart>
       </ChartFrame>
       <ChartLegend placements={placements} />
@@ -954,17 +1069,21 @@ function ChartLegend({ placements }: { placements: ReturnType<typeof derivePlace
 }
 
 function AudiencePanel({ data }: { data: DashboardData }) {
+  const totalSubs = sumBy(data.audience, (segment) => segment.subs)
+  const totalBuyers = sumBy(data.audience, (segment) => segment.buyers)
+  const summary = `Subscribers vs buyers across ${data.audience.length} audience segments: ${formatChartNumber(totalSubs)} subscribers and ${formatChartNumber(totalBuyers)} buyers total.`
   return (
     <article className="panel panel-wide">
       <PanelHeading eyebrow="Audience Quality" title="Purchasing power by segment" icon={Users} />
-      <ChartFrame tall>
+      <ChartFrame tall summary={summary}>
         <BarChart data={data.audience}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="segment" tickLine={false} axisLine={false} />
-          <YAxis tickLine={false} axisLine={false} />
-          <Tooltip />
-          <Bar dataKey="subs" fill="#3b82f6" radius={[5, 5, 0, 0]} />
-          <Bar dataKey="buyers" fill="#1f9d8a" radius={[5, 5, 0, 0]} />
+          <YAxis tickLine={false} axisLine={false} tickFormatter={formatChartNumber} />
+          <Tooltip formatter={chartTooltipFormatter} />
+          <Legend />
+          <Bar dataKey="subs" name="Subscribers" fill={COLORS[1]} radius={[5, 5, 0, 0]} />
+          <Bar dataKey="buyers" name="Buyers" fill={COLORS[0]} radius={[5, 5, 0, 0]} />
         </BarChart>
       </ChartFrame>
     </article>
@@ -972,817 +1091,22 @@ function AudiencePanel({ data }: { data: DashboardData }) {
 }
 
 function SpendPanel({ trend }: { trend: ReturnType<typeof deriveTrend> }) {
+  const totalSpend = sumBy(trend, (point) => point.spend)
+  const summary = `Daily spend curve over ${trend.length} days totaling ${formatChartCurrency(totalSpend)}.`
   return (
     <article className="panel">
       <PanelHeading eyebrow="Spend Curve" title="Budget pressure" icon={CircleDollarSign} />
-      <ChartFrame>
+      <ChartFrame summary={summary}>
         <AreaChart data={trend}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="day" tickLine={false} axisLine={false} />
-          <YAxis tickLine={false} axisLine={false} />
-          <Tooltip />
-          <Area type="monotone" dataKey="spend" stroke="#7c3aed" fill="#ddd6fe" strokeWidth={3} />
+          <YAxis tickLine={false} axisLine={false} tickFormatter={formatAxisCurrency} />
+          <Tooltip formatter={chartTooltipFormatter} />
+          <Area type="monotone" dataKey="spend" name="Spend" stroke="#7c3aed" fill="#ddd6fe" strokeWidth={3} />
         </AreaChart>
       </ChartFrame>
     </article>
   )
-}
-
-function CommandCenterView({
-  data,
-  latestCouncil,
-  onCouncilReady,
-  chatMessages,
-  chatInput,
-  isChatLoading,
-  onChatInputChange,
-  onChatSend,
-}: {
-  data: DashboardData
-  latestCouncil: AgentCouncilSession | null
-  onCouncilReady: (council: AgentCouncilSession) => void
-  chatMessages: ChatMessage[]
-  chatInput: string
-  isChatLoading: boolean
-  onChatInputChange: (value: string) => void
-  onChatSend: (message: string) => void
-}) {
-  const [tasks, setTasks] = useState<AgentTask[]>([])
-  const [agents, setAgents] = useState<AgentSpec[]>([])
-  const [systemChecklist, setSystemChecklist] = useState<SystemChecklist | null>(null)
-  const [command, setCommand] = useState('Create a campaign with 3 VSLs: income, business automation, content creators. Use $100 each and optimize for Telegram START.')
-  const [source, setSource] = useState<'dashboard' | 'telegram' | 'codex'>('dashboard')
-  const [campaignGroupId, setCampaignGroupId] = useState('next-launch')
-  const [segmentIds, setSegmentIds] = useState('income, business, creators')
-  const [prepareApproval, setPrepareApproval] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isSendingTelegramTest, setIsSendingTelegramTest] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
-
-  const loadCommandCenter = async () => {
-    const [result, checklist] = await Promise.all([
-      getAgentCommandCenter(),
-      fetch('/api/system/checklist')
-        .then((response) => response.ok ? response.json() : null)
-        .catch(() => null),
-    ])
-    setTasks(result.tasks)
-    setAgents(result.agents)
-    setSystemChecklist(checklist as SystemChecklist | null)
-  }
-
-  useEffect(() => {
-    let cancelled = false
-    void Promise.all([
-      getAgentCommandCenter(),
-      fetch('/api/system/checklist')
-        .then((response) => response.ok ? response.json() : null)
-        .catch(() => null),
-    ])
-      .then(([result, checklist]) => {
-        if (!cancelled) {
-          setTasks(result.tasks)
-          setAgents(result.agents)
-          setSystemChecklist(checklist as SystemChecklist | null)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setMessage('Could not load the command center. Make sure the backend is running.')
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const submitTask = async () => {
-    if (!command.trim() || isSubmitting) {
-      return
-    }
-
-    setIsSubmitting(true)
-    setMessage('Sending command to the orchestrator...')
-    try {
-      const result = await createAgentTask({
-        source,
-        command,
-        campaignGroupId: campaignGroupId.trim() || undefined,
-        segmentIds: parseCsvList(segmentIds),
-        prepareApproval,
-      })
-      setTasks((current) => [result.task, ...current.filter((task) => task.id !== result.task.id)])
-      setMessage(
-        result.task.approvalId
-          ? 'Task planned and approval request created. It will still not publish or spend.'
-          : 'Task planned. Review the plan before turning it into an approval request.',
-      )
-      await loadCommandCenter()
-    } catch {
-      setMessage('Could not create the task. Check the backend task endpoint.')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const recentCampaigns = data.campaigns.slice(0, 8)
-  const approvalAgents = agents.filter((agent) => agent.requiresApproval).length
-  const pendingTasks = tasks.filter((task) => task.status === 'planning' || task.status === 'needs_approval').length
-
-  const sendTelegramTest = async () => {
-    if (isSendingTelegramTest) {
-      return
-    }
-
-    setIsSendingTelegramTest(true)
-    setMessage('Sending Telegram test message...')
-    try {
-      const response = await fetch('/api/telegram/test-message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'Meta Agent Telegram test: outbound messages are connected.' }),
-      })
-      const result = (await response.json()) as { telegram?: { ok?: boolean; error?: string } }
-      setMessage(result.telegram?.ok ? 'Telegram test message sent.' : result.telegram?.error ?? `Telegram test failed with ${response.status}`)
-    } catch {
-      setMessage('Could not reach the Telegram test endpoint.')
-    } finally {
-      setIsSendingTelegramTest(false)
-    }
-  }
-
-  return (
-    <section className="command-center-layout">
-      <article className="panel panel-wide mission-control-hero">
-        <PanelHeading eyebrow="Command Center" title="Tell the agent what outcome you want" icon={Bot} />
-        <p>
-          Use natural language for strategy, campaign setup, edits, A/B tests, or monitoring decisions. The orchestrator can route the work to specialists, show their debate, and prepare a paused campaign packet for approval.
-        </p>
-        <div className="mission-control-examples">
-          <button type="button" onClick={() => onChatSend('Plan the best paused VSL campaign from the last 180 days using top audiences and top 3 creatives.')} disabled={isChatLoading}>
-            Plan paused VSL campaign
-          </button>
-          <button type="button" onClick={() => onChatSend('Which audience, creative, and placement should we scale next, and what should we stop?')} disabled={isChatLoading}>
-            Find scale and stop decisions
-          </button>
-          <button type="button" onClick={() => onChatSend('Create an A/B test plan that protects budget and optimizes for Telegram START quality.')} disabled={isChatLoading}>
-            Build A/B test plan
-          </button>
-        </div>
-      </article>
-
-      <AgentChatPanel
-        messages={chatMessages}
-        input={chatInput}
-        isLoading={isChatLoading}
-        onInputChange={onChatInputChange}
-        onSend={onChatSend}
-      />
-
-      <AgentOfficeView latestCouncil={latestCouncil} onCouncilReady={onCouncilReady} />
-
-      <article className="panel">
-        <PanelHeading eyebrow="Task Queue" title="Recent orchestrator work" icon={ListChecks} />
-        <div className="builder-summary command-summary">
-          <MiniMetric label="Tasks" value={tasks.length.toString()} />
-          <MiniMetric label="Pending" value={pendingTasks.toString()} />
-          <MiniMetric label="Agents" value={agents.length.toString()} />
-          <MiniMetric label="Approval agents" value={approvalAgents.toString()} />
-        </div>
-        <div className="task-list">
-          {tasks.length > 0 ? tasks.slice(0, 8).map((task) => (
-            <div className={`task-item ${task.status}`} key={task.id}>
-              <div>
-                <strong>{task.requestedAction || 'Untitled task'}</strong>
-                <p>{task.plan?.answer ? shortText(task.plan.answer, 180) : 'The orchestrator has captured this task.'}</p>
-                <small>{task.source} / {task.activeAgent ?? 'orchestrator'} / {formatDateTime(task.updatedAt)}</small>
-                {task.approvalId && <small>Approval: {task.approvalId}</small>}
-                {task.approvalStatus && <small>Approval status: {labelRawSetting(task.approvalStatus)}</small>}
-                {task.approvalDecision?.rejectionReason && <small>Rejected: {task.approvalDecision.rejectionReason}</small>}
-                {task.approvalDecision?.changeRequestNote && <small>Needs changes: {task.approvalDecision.changeRequestNote}</small>}
-              </div>
-              <span>{labelRawSetting(task.status)}</span>
-            </div>
-          )) : (
-            <EmptyState compact />
-          )}
-        </div>
-      </article>
-
-      <article className="panel">
-        <PanelHeading eyebrow="Agent Availability" title="Specialists and execution safety" icon={ShieldAlert} />
-        <div className="agent-status-grid">
-          {agents.map((agent) => (
-            <div className={`agent-status-card ${agentStatusTone(agent)}`} key={agent.id}>
-              <div>
-                <strong>{agent.name}</strong>
-                <p>{agent.purpose}</p>
-              </div>
-              <span>{agent.readinessStatus ? labelRawSetting(agent.readinessStatus) : agent.requiresApproval ? 'Approval required' : 'Analysis ready'}</span>
-              {agent.blockedReasons && agent.blockedReasons.length > 0 && (
-                <small>{agent.blockedReasons.map(labelRawSetting).join(', ')}</small>
-              )}
-            </div>
-          ))}
-          {agents.length === 0 && <EmptyState compact />}
-        </div>
-      </article>
-
-      <ApprovalQueue data={data} />
-
-      <details className="advanced-command-section">
-        <summary>Edit campaign playbook and task metadata</summary>
-        <article className="panel panel-wide">
-          <PanelHeading eyebrow="Advanced Command" title="Structured task controls" icon={SlidersHorizontal} />
-          <div className="command-grid">
-            <label className="command-field-wide">
-              <span>Command</span>
-              <textarea value={command} onChange={(event) => setCommand(event.target.value)} />
-            </label>
-            <label>
-              <span>Input source</span>
-              <select value={source} onChange={(event) => setSource(event.target.value as typeof source)}>
-                <option value="dashboard">Dashboard</option>
-                <option value="telegram">Telegram bot</option>
-                <option value="codex">Codex chat</option>
-              </select>
-            </label>
-            <label>
-              <span>Campaign group ID</span>
-              <input value={campaignGroupId} onChange={(event) => setCampaignGroupId(event.target.value)} />
-            </label>
-            <label>
-              <span>Segment / VSL IDs</span>
-              <input value={segmentIds} onChange={(event) => setSegmentIds(event.target.value)} />
-            </label>
-          </div>
-          <div className="command-actions">
-            <label className="approval-toggle">
-              <input
-                type="checkbox"
-                checked={prepareApproval}
-                onChange={(event) => setPrepareApproval(event.target.checked)}
-              />
-              <span>Create approval request if campaign plan is complete</span>
-            </label>
-            <button className="sync-button" type="button" onClick={submitTask} disabled={isSubmitting || !command.trim()}>
-              <Send size={16} />
-              {isSubmitting ? 'Planning...' : 'Send structured task'}
-            </button>
-            {message && <small className="sync-message">{message}</small>}
-          </div>
-        </article>
-        <CampaignBuilderView />
-      </details>
-
-      <details className="advanced-command-section">
-        <summary>Operational diagnostics</summary>
-        <article className="panel">
-          <PanelHeading eyebrow="Regression Checklist" title="Completion readiness" icon={CheckCircle2} />
-          {systemChecklist ? (
-            <>
-              <div className="builder-summary command-summary">
-                <MiniMetric label="Ready" value={`${systemChecklist.summary.ready}/${systemChecklist.summary.total}`} />
-                <MiniMetric label="Partial" value={systemChecklist.summary.partial.toString()} />
-                <MiniMetric label="Needs work" value={systemChecklist.summary.needs_attention.toString()} />
-              </div>
-              <div className="task-list">
-                {systemChecklist.items.slice(0, 10).map((item) => (
-                  <div className={`task-item ${item.status}`} key={item.id}>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <p>{item.evidence}</p>
-                    </div>
-                    <span>{labelRawSetting(item.status)}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <EmptyState compact />
-          )}
-        </article>
-
-        <article className="panel panel-wide">
-          <PanelHeading eyebrow="Campaign Mapping" title="Connect Meta campaigns to reusable launch groups" icon={Target} />
-          <div className="campaign-map-grid">
-            <div className="mapping-note">
-              <strong>Mapping rule</strong>
-              <p>
-                Use a stable campaign group ID plus segment/VSL IDs. The same structure works for one VSL, three VSLs, or five VSLs later.
-              </p>
-            </div>
-            {recentCampaigns.map((campaign) => (
-              <div className="campaign-map-row" key={campaign.id}>
-                <strong>{campaign.name}</strong>
-                <span>{campaign.id}</span>
-                <small>{campaign.objective} / {campaign.status} / {formatCurrency(campaign.dailyBudgetUsd)}/day</small>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="panel panel-wide">
-          <PanelHeading eyebrow="Telegram Control" title="Bot command wiring" icon={Bot} />
-          <div className="telegram-command-grid">
-            <div>
-              <strong>Command webhook</strong>
-              <code>POST /api/telegram/command</code>
-              <p>Send Telegram message updates here to create orchestrator tasks from bot commands.</p>
-            </div>
-            <div>
-              <strong>Shared secret</strong>
-              <code>x-telegram-agent-secret</code>
-              <p>Set `TELEGRAM_COMMAND_SECRET` in the backend and send the same value in this header.</p>
-            </div>
-            <div>
-              <strong>Approval button data</strong>
-              <code>approve:approval_id</code>
-              <p>Approval buttons can approve a request, but publishing or spend still needs the execution endpoint and guardrails.</p>
-            </div>
-          </div>
-          <div className="command-actions">
-            <button className="sync-button secondary" type="button" onClick={sendTelegramTest} disabled={isSendingTelegramTest}>
-              <Send size={16} />
-              {isSendingTelegramTest ? 'Sending...' : 'Send test message'}
-            </button>
-          </div>
-        </article>
-      </details>
-    </section>
-  )
-}
-
-function AgentOfficeView({
-  latestCouncil,
-  onCouncilReady,
-}: {
-  latestCouncil: AgentCouncilSession | null
-  onCouncilReady: (council: AgentCouncilSession) => void
-}) {
-  const [command, setCommand] = useState(
-    'Run strategy council: agents talk to each other, challenge weak assumptions, and create the best paused VSL campaign plan from the last 180 days.',
-  )
-  const [isRunning, setIsRunning] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [isImplementing, setIsImplementing] = useState(false)
-  const [activeEventIndex, setActiveEventIndex] = useState(0)
-  const [message, setMessage] = useState<string | null>(null)
-  const [implementationResult, setImplementationResult] = useState<{
-    approvalId: string
-    status: string
-    guardrail: string
-  } | null>(null)
-  const agents = latestCouncil?.agents ?? fallbackCouncilAgents()
-  const events = latestCouncil?.events ?? []
-  const safeActiveEventIndex = events.length ? Math.min(activeEventIndex, events.length - 1) : 0
-  const activeEvent = events[safeActiveEventIndex]
-  const activeRound = latestCouncil?.rounds.find((round) => activeEvent && round.events.some((event) => event.id === activeEvent.id))
-  const fromPosition = getAgentDeskPosition(activeEvent?.fromAgent)
-  const toPosition = getAgentApproachPosition(activeEvent?.fromAgent, activeEvent?.toAgent)
-  const activeAgentIds = new Set(activeEvent ? [activeEvent.fromAgent, activeEvent.toAgent] : ['orchestrator'])
-  const movingAgentName = activeEvent ? agentNameForId(agents, activeEvent.fromAgent) : 'Orchestrator'
-  const progressLabel = latestCouncil
-    ? `${Math.min(safeActiveEventIndex + 1, events.length)} of ${events.length} exchanges`
-    : 'Waiting for a council session'
-
-  useEffect(() => {
-    if (!isPlaying || events.length <= 1) {
-      return undefined
-    }
-
-    const timer = window.setInterval(() => {
-      setActiveEventIndex((current) => {
-        if (current >= events.length - 1) {
-          window.clearInterval(timer)
-          setIsPlaying(false)
-          return current
-        }
-        return current + 1
-      })
-    }, 2200)
-
-    return () => window.clearInterval(timer)
-  }, [events.length, isPlaying])
-
-  const startCouncil = async () => {
-    if (!command.trim() || isRunning) {
-      return
-    }
-
-    setIsRunning(true)
-    setMessage('Running the strategy council...')
-    try {
-      const council = await runAgentCouncil(command)
-      onCouncilReady(council)
-      setActiveEventIndex(0)
-      setIsPlaying(true)
-      setMessage('Council session generated. Review the plan before creating any paused campaign draft.')
-    } catch {
-      setMessage('Could not run the council endpoint. Make sure the backend is running on port 8000.')
-    } finally {
-      setIsRunning(false)
-    }
-  }
-
-  const implementCouncilPlan = async () => {
-    if (!latestCouncil || isImplementing) {
-      return
-    }
-
-    setIsImplementing(true)
-    setImplementationResult(null)
-    setMessage('Creating paused Meta campaign approval from the council plan...')
-    try {
-      const response = await fetch('/api/execution/prepare-campaign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playbook: latestCouncil.generatedPlaybook ?? null,
-          reason: `Implemented from Agent Office council ${latestCouncil.id}. Create only a paused Meta campaign structure from the final council recommendations.`,
-        }),
-      })
-      const result = (await response.json()) as { ok?: boolean; approval?: ApprovalRequest; detail?: string; error?: string }
-      if (!response.ok || !result.ok || !result.approval) {
-        setMessage(result.detail ?? result.error ?? `Implementation failed with ${response.status}`)
-        return
-      }
-      setImplementationResult({
-        approvalId: result.approval.id,
-        status: result.approval.status,
-        guardrail: result.approval.guardrailResult,
-      })
-      setMessage(`Paused campaign approval created: ${result.approval.id}. It remains review-gated and cannot publish or spend.`)
-    } catch {
-      setMessage('Could not reach the paused campaign implementation endpoint.')
-    } finally {
-      setIsImplementing(false)
-    }
-  }
-
-  const stepEvent = (direction: -1 | 1) => {
-    setIsPlaying(false)
-    setActiveEventIndex((current) => Math.min(Math.max(current + direction, 0), Math.max(events.length - 1, 0)))
-  }
-
-  return (
-    <section className="agent-office-view">
-      <article className="panel panel-wide agent-office-brief">
-        <PanelHeading eyebrow="Agent Office" title="Multi-agent strategy council" icon={Users} />
-        <div className="agent-office-controls">
-          <label>
-            <span>Council task</span>
-            <textarea value={command} onChange={(event) => setCommand(event.target.value)} />
-          </label>
-          <div className="agent-office-actions">
-            <button className="sync-button" type="button" onClick={startCouncil} disabled={isRunning || !command.trim()}>
-              <Bot size={16} />
-              {isRunning ? 'Agents debating...' : 'Run council'}
-            </button>
-            {message && <small className="sync-message">{message}</small>}
-          </div>
-        </div>
-        <div className="builder-summary command-summary">
-          <MiniMetric label="Agents" value={agents.length.toString()} />
-          <MiniMetric label="Rounds" value={(latestCouncil?.rounds.length ?? 0).toString()} />
-          <MiniMetric label="Exchanges" value={(latestCouncil?.events.length ?? 0).toString()} />
-          <MiniMetric
-            label="Quality"
-            value={latestCouncil ? `${latestCouncil.averageScoreOutOf10.toFixed(1)}/10` : 'Waiting'}
-          />
-        </div>
-      </article>
-
-      <article className="panel panel-wide agent-office-map-panel agent-office-main">
-        <PanelHeading eyebrow="Top-View Office" title="Watch agents debate the campaign" icon={Bot} />
-        <div className="office-status-strip">
-          <div>
-            <small>What is happening now</small>
-            <strong>
-              {activeEvent
-                ? `${agentNameForId(agents, activeEvent.fromAgent)} is talking to ${agentNameForId(agents, activeEvent.toAgent)}`
-                : 'Run the council to start the agent conversation'}
-            </strong>
-            <span>{activeRound ? `${activeRound.title}: ${activeRound.purpose}` : 'Agents will move between desks as they critique the plan.'}</span>
-          </div>
-          <div className="office-playback">
-            <button type="button" onClick={() => stepEvent(-1)} disabled={!events.length || safeActiveEventIndex === 0}>
-              Back
-            </button>
-            <button type="button" onClick={() => setIsPlaying((current) => !current)} disabled={!events.length}>
-              {isPlaying ? 'Pause' : 'Play'}
-            </button>
-            <button type="button" onClick={() => stepEvent(1)} disabled={!events.length || safeActiveEventIndex >= events.length - 1}>
-              Next
-            </button>
-            <span>{progressLabel}</span>
-          </div>
-        </div>
-        <div className="agent-office-scene">
-          <div className="agent-office-map" aria-label="Top-view animated agent office">
-            <div className="office-floor-rug" />
-            <div className="office-center-table">
-              <strong>Strategy table</strong>
-              <span>Final plan forms here after critique rounds</span>
-            </div>
-            {activeEvent && (
-              <div
-                className="moving-agent"
-                style={
-                  {
-                    '--from-x': `${fromPosition.x}%`,
-                    '--from-y': `${fromPosition.y}%`,
-                    '--to-x': `${toPosition.x}%`,
-                    '--to-y': `${toPosition.y}%`,
-                  } as CSSProperties
-                }
-              >
-                <Bot size={17} />
-                <span>{movingAgentName}</span>
-              </div>
-            )}
-          {agents.map((agent) => {
-            const position = getAgentDeskPosition(agent.id)
-            const visual = getAgentVisual(agent.id)
-            const isActive = activeAgentIds.has(agent.id)
-            const isSpeaker = activeEvent?.fromAgent === agent.id
-            const isReceiver = activeEvent?.toAgent === agent.id
-            return (
-              <div
-                className={`agent-desk ${agent.id === 'orchestrator' ? 'orchestrator' : ''} ${isActive ? 'active' : ''} ${isSpeaker ? 'speaker' : ''} ${isReceiver ? 'receiver' : ''}`}
-                data-agent-id={agent.id}
-                style={{ left: `${position.x}%`, top: `${position.y}%`, '--agent-color': visual.color } as CSSProperties}
-                key={agent.id}
-              >
-                <div className="agent-circle">
-                  <Bot size={20} />
-                  <i />
-                </div>
-                <div className="agent-label-card">
-                  <strong>{agent.name}</strong>
-                  <span>{visual.shortRole}</span>
-                  <small>{councilScoreForAgent(latestCouncil, agent.id)}</small>
-                </div>
-              </div>
-            )
-          })}
-          </div>
-          <div className="active-exchange-card">
-            <small>{activeRound?.title ?? 'Waiting'}</small>
-            <strong>{activeEvent?.question ?? 'No exchange selected yet'}</strong>
-            <p>{activeEvent?.answer ?? 'Run the council to see each agent question, critique, and refine the setup.'}</p>
-          </div>
-        </div>
-      </article>
-
-      <article className="panel">
-        <PanelHeading eyebrow="Timeline Replay" title="Every agent exchange" icon={RadioTower} />
-        <div className="council-event-list timeline-replay">
-          {events.length > 0 ? (
-            events.map((event, index) => (
-              <button
-                className={index === safeActiveEventIndex ? 'council-event active' : 'council-event'}
-                type="button"
-                onClick={() => {
-                  setIsPlaying(false)
-                  setActiveEventIndex(index)
-                }}
-                key={event.id}
-              >
-                <CouncilEventCard event={event} />
-              </button>
-            ))
-          ) : (
-            <EmptyState compact />
-          )}
-        </div>
-      </article>
-
-      <article className="panel">
-        <PanelHeading eyebrow="Agent Scores" title="Council quality checks" icon={Gauge} />
-        <div className="agent-score-list">
-          {latestCouncil?.scores.length ? (
-            latestCouncil.scores.map((score) => (
-              <div className="agent-score-row" key={score.agentId}>
-                <strong>{labelRawSetting(score.agentId)}</strong>
-                <span>{score.scoreOutOf10.toFixed(1)}/10</span>
-                <p>{score.reason}</p>
-              </div>
-            ))
-          ) : (
-            <EmptyState compact />
-          )}
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Critique Rounds" title="How the plan improved" icon={ListChecks} />
-        <div className="council-round-grid">
-          {latestCouncil?.rounds.length ? (
-            latestCouncil.rounds.map((round) => (
-              <div className="council-round" key={round.id}>
-                <strong>{round.title}</strong>
-                <p>{round.purpose}</p>
-                <small>{round.events.length} exchanges</small>
-                {round.events.slice(0, 3).map((event) => (
-                  <span key={event.id}>{labelRawSetting(event.fromAgent)} asked {labelRawSetting(event.toAgent)}</span>
-                ))}
-              </div>
-            ))
-          ) : (
-            <EmptyState compact />
-          )}
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Final Plan" title="Council output before approval" icon={ClipboardCheck} />
-        {latestCouncil ? (
-          <CouncilFinalPlan
-            council={latestCouncil}
-            isImplementing={isImplementing}
-            implementationResult={implementationResult}
-            onImplement={implementCouncilPlan}
-          />
-        ) : (
-          <EmptyState compact />
-        )}
-      </article>
-    </section>
-  )
-}
-
-function CouncilEventCard({ event }: { event: AgentCouncilSession['events'][number] }) {
-  return (
-    <>
-      <div className="council-event-flow">
-        <span>{labelRawSetting(event.fromAgent)}</span>
-        <i />
-        <span>{labelRawSetting(event.toAgent)}</span>
-      </div>
-      <strong>{event.question}</strong>
-      <p>{event.answer}</p>
-      <small>{labelRawSetting(event.state)}</small>
-    </>
-  )
-}
-
-function CouncilFinalPlan({
-  council,
-  isImplementing,
-  implementationResult,
-  onImplement,
-}: {
-  council: AgentCouncilSession
-  isImplementing: boolean
-  implementationResult: { approvalId: string; status: string; guardrail: string } | null
-  onImplement: () => void
-}) {
-  const finalPlan = council.finalPlan
-  const canImplement = finalPlan.executionDecision.canCreatePausedDraft && !isImplementing
-  return (
-    <div className="council-final-plan">
-      <div className="council-plan-summary">
-        <strong>{finalPlan.summary}</strong>
-        <p>{finalPlan.campaignNamingRule}</p>
-      </div>
-      <div className="council-plan-grid">
-        <div>
-          <span>Audience</span>
-          <strong>{finalPlan.audienceDecision.primary}</strong>
-          {finalPlan.audienceDecision.segments.slice(0, 4).map((segment) => (
-            <small key={segment.name}>
-              {segment.name}: {formatCurrency(segment.budgetUsd)}/day · {segment.locations.join(', ')}
-            </small>
-          ))}
-        </div>
-        <div>
-          <span>Creative</span>
-          <strong>{finalPlan.creativeDecision.topCreative}</strong>
-          <small>{finalPlan.creativeDecision.rule}</small>
-          <small>{finalPlan.creativeDecision.topCreativePool.join(', ')}</small>
-        </div>
-        <div>
-          <span>Placement</span>
-          <strong>{finalPlan.placementDecision.primary}</strong>
-          <small>{finalPlan.placementDecision.rule}</small>
-        </div>
-        <div>
-          <span>Funnel</span>
-          <strong>{finalPlan.funnelDecision.requiredEvents.join(', ')}</strong>
-          <small>{finalPlan.funnelDecision.rule}</small>
-        </div>
-        <div>
-          <span>Monitoring</span>
-          <strong>Every {finalPlan.monitoringDecision.cadenceHours} hours</strong>
-          <small>{finalPlan.monitoringDecision.watchMetrics.join(', ')}</small>
-          <small>{finalPlan.monitoringDecision.rule}</small>
-        </div>
-        <div>
-          <span>Safety</span>
-          <strong>{finalPlan.executionDecision.canCreatePausedDraft ? 'Paused draft allowed' : 'Draft blocked'}</strong>
-          <small>Publish: {finalPlan.executionDecision.canPublish ? 'allowed' : 'blocked'}</small>
-          <small>Approval: {finalPlan.executionDecision.approvalRequired ? 'required' : 'not required'}</small>
-        </div>
-      </div>
-      <div className="council-experiment-list">
-        {finalPlan.experimentDecision.map((experiment) => (
-          <div key={`${experiment.day}-${experiment.test}`}>
-            <strong>{experiment.day}</strong>
-            <span>{experiment.test}</span>
-            <small>{experiment.decisionMetric}: {experiment.action}</small>
-          </div>
-        ))}
-      </div>
-      <div className="council-implementation-actions">
-        <div>
-          <strong>Turn this council output into an executable paused campaign packet</strong>
-          <p>
-            This uses the generated playbook, creates a Meta approval request, and keeps every campaign/ad set paused until a guarded execution step is approved.
-          </p>
-        </div>
-        <button className="sync-button" type="button" onClick={onImplement} disabled={!canImplement}>
-          <ClipboardCheck size={16} />
-          {isImplementing ? 'Implementing...' : 'Implemented'}
-        </button>
-      </div>
-      {implementationResult && (
-        <div className="implementation-result" role="status">
-          <strong>Paused campaign approval created</strong>
-          <span>{implementationResult.approvalId}</span>
-          <small>Status: {labelRawSetting(implementationResult.status)} · Guardrail: {labelRawSetting(implementationResult.guardrail)}</small>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function councilScoreForAgent(council: AgentCouncilSession | null, agentId: string) {
-  const score = council?.scores.find((item) => item.agentId === agentId)
-  return score ? `${score.scoreOutOf10.toFixed(1)}/10` : 'not scored'
-}
-
-function agentNameForId(agents: AgentCouncilSession['agents'], agentId?: string) {
-  return agents.find((agent) => agent.id === agentId)?.name ?? labelRawSetting(agentId ?? 'agent')
-}
-
-function getAgentApproachPosition(fromAgentId?: string, toAgentId?: string) {
-  const target = getAgentDeskPosition(toAgentId)
-  const source = getAgentDeskPosition(fromAgentId)
-  const deltaX = target.x - source.x
-  const deltaY = target.y - source.y
-  const distance = Math.max(Math.sqrt(deltaX * deltaX + deltaY * deltaY), 1)
-  return {
-    x: target.x - (deltaX / distance) * 16,
-    y: target.y - (deltaY / distance) * 16,
-  }
-}
-
-function getAgentDeskPosition(agentId?: string) {
-  const positions: Record<string, { x: number; y: number }> = {
-    orchestrator: { x: 50, y: 13 },
-    audit: { x: 25, y: 18 },
-    meta_ai_strategist: { x: 75, y: 18 },
-    audience: { x: 21, y: 42 },
-    creative: { x: 79, y: 42 },
-    placement: { x: 25, y: 73 },
-    funnel: { x: 50, y: 84 },
-    experiment: { x: 75, y: 73 },
-    monitoring: { x: 38, y: 30 },
-    execution: { x: 62, y: 30 },
-  }
-  return positions[agentId ?? 'orchestrator'] ?? { x: 50, y: 50 }
-}
-
-function getAgentVisual(agentId: string) {
-  const visuals: Record<string, { color: string; shortRole: string }> = {
-    orchestrator: { color: '#0f766e', shortRole: 'coordinates' },
-    audit: { color: '#2563eb', shortRole: 'audits data' },
-    meta_ai_strategist: { color: '#7c3aed', shortRole: 'Meta AI read' },
-    audience: { color: '#db2777', shortRole: 'audience' },
-    creative: { color: '#ea580c', shortRole: 'creative' },
-    placement: { color: '#0891b2', shortRole: 'placements' },
-    funnel: { color: '#16a34a', shortRole: 'tracking' },
-    experiment: { color: '#ca8a04', shortRole: 'testing' },
-    monitoring: { color: '#475569', shortRole: 'monitors' },
-    execution: { color: '#dc2626', shortRole: 'paused drafts' },
-  }
-  return visuals[agentId] ?? { color: '#64748b', shortRole: labelRawSetting(agentId) }
-}
-
-function fallbackCouncilAgents(): AgentCouncilSession['agents'] {
-  return [
-    { id: 'orchestrator', name: 'Orchestrator', role: 'routes work and asks follow-up questions', state: 'waiting', requiresApproval: true },
-    { id: 'audit', name: 'Performance Auditor', role: 'checks 180-day evidence', state: 'waiting', requiresApproval: false },
-    { id: 'meta_ai_strategist', name: 'Meta AI Strategist', role: 'captures Meta AI recommendations', state: 'waiting', requiresApproval: false },
-    { id: 'audience', name: 'Audience Specialist', role: 'ranks interests, age, gender, geo', state: 'waiting', requiresApproval: false },
-    { id: 'creative', name: 'Creative Analyst', role: 'ranks videos and hooks', state: 'waiting', requiresApproval: false },
-    { id: 'placement', name: 'Placement Optimizer', role: 'guards Instagram placement mix', state: 'waiting', requiresApproval: false },
-    { id: 'funnel', name: 'Funnel Tracking Agent', role: 'tracks landing page and Telegram starts', state: 'waiting', requiresApproval: false },
-    { id: 'experiment', name: 'Experiment Agent', role: 'designs A/B tests and stop rules', state: 'waiting', requiresApproval: false },
-    { id: 'monitoring', name: 'Monitoring Agent', role: 'checks campaigns every four hours', state: 'waiting', requiresApproval: false },
-    { id: 'execution', name: 'Execution Agent', role: 'creates paused drafts only', state: 'waiting', requiresApproval: true },
-  ]
 }
 
 function agentStatusTone(agent: AgentSpec) {
@@ -1796,752 +1120,6 @@ function agentStatusTone(agent: AgentSpec) {
     return 'danger'
   }
   return agent.requiresApproval ? 'warning' : 'good'
-}
-
-function RankingsView({ data, metrics }: { data: DashboardData; metrics: DailyAdMetric[] }) {
-  const campaignRankings = deriveRankingRows(
-    metrics,
-    data.campaigns.map((campaign) => ({
-      id: campaign.id,
-      name: campaign.name,
-      category: 'campaign',
-      metricIds: new Set([campaign.id]),
-    })),
-  )
-  const creativeRankings = deriveRankingRows(
-    metrics,
-    data.creatives.map((creative) => ({
-      id: creative.id,
-      name: creative.name,
-      category: 'creative',
-      metricIds: new Set([creative.id]),
-    })),
-  )
-  const audienceRankings = deriveRankingRows(
-    metrics,
-    data.adSets.map((adSet) => ({
-      id: adSet.id,
-      name: adSet.name,
-      category: 'audience',
-      metricIds: new Set([adSet.id]),
-    })),
-  )
-  const placementRankings = deriveRankingRows(
-    metrics,
-    Array.from(new Set(metrics.map((metric) => metric.placement))).map((placement) => ({
-      id: placement,
-      name: labelPlacement(placement),
-      category: 'placement',
-      metricIds: new Set([placement]),
-    })),
-  )
-
-  return (
-    <section className="rankings-grid">
-      <RankingPanel title="Campaign Ranking" rows={campaignRankings} />
-      <RankingPanel title="Creative Ranking" rows={creativeRankings} />
-      <RankingPanel title="Audience / Ad Set Ranking" rows={audienceRankings} />
-      <RankingPanel title="Placement Ranking" rows={placementRankings} />
-    </section>
-  )
-}
-
-function RankingPanel({ title, rows }: { title: string; rows: RankingRow[] }) {
-  return (
-    <article className="panel panel-wide">
-      <PanelHeading eyebrow="Quality-adjusted" title={title} icon={BarChart3} />
-      {rows.length > 0 ? <RankingTable rows={rows.slice(0, 12)} /> : <EmptyState compact />}
-    </article>
-  )
-}
-
-function RankingTable({ rows }: { rows: RankingRow[] }) {
-  return (
-    <div className="ranking-table">
-      <div className="ranking-head">
-        <span>Rank</span>
-        <span>Name</span>
-        <span>Spend</span>
-        <span>CPC</span>
-        <span>CPL</span>
-        <span>Lead rate</span>
-        <span>START rate</span>
-        <span>Leads</span>
-        <span>Buyers</span>
-        <span>Quality</span>
-        <span>Action</span>
-      </div>
-      {rows.map((row) => (
-        <div className="ranking-row" key={`${row.category}-${row.id}`}>
-          <span>#{row.rank}</span>
-          <strong title={row.name}>{row.name}</strong>
-          <span>{formatCurrency(row.spendUsd)}</span>
-          <span>{formatCurrency(row.cpc)}</span>
-          <span>{row.cpl ? formatCurrency(row.cpl) : '—'}</span>
-          <span>{row.leadRatePercent.toFixed(1)}%</span>
-          <span>{row.telegramStartRatePercent.toFixed(1)}%</span>
-          <span>{formatNumber(row.leads)}</span>
-          <span>{formatNumber(row.purchases)}</span>
-          <em className={row.tone}>{row.qualityScore}</em>
-          <small>{row.recommendedAction}</small>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function SettingsAuditView() {
-  const [audit, setAudit] = useState<MetaSettingsAudit | null>(null)
-  const [error, setError] = useState<string | null>(() =>
-    typeof fetch !== 'function' ? 'Settings audit API cannot be loaded in this browser sandbox.' : null,
-  )
-
-  useEffect(() => {
-    if (typeof fetch !== 'function') {
-      return
-    }
-
-    void fetch('/api/meta/settings-audit')
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
-      .then((result: { available?: boolean; audit?: MetaSettingsAudit; error?: string }) => {
-        if (!result.available || !result.audit) {
-          setError(result.error ?? 'No saved Meta settings audit yet.')
-          return
-        }
-        setAudit(result.audit)
-      })
-      .catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Could not load settings audit.'))
-  }, [])
-
-  if (error && !audit) {
-    return (
-      <section className="dashboard-grid">
-        <article className="panel panel-wide empty-state">
-          <AlertTriangle size={24} />
-          <strong>Settings audit unavailable</strong>
-          <p>{error}</p>
-        </article>
-      </section>
-    )
-  }
-
-  if (!audit) {
-    return (
-      <section className="dashboard-grid">
-        <article className="panel panel-wide empty-state">
-          <RefreshCcw size={24} />
-          <strong>Loading settings audit</strong>
-          <p>Reading campaign, ad set, placement, and targeting settings from the saved Meta snapshot.</p>
-        </article>
-      </section>
-    )
-  }
-
-  return (
-    <section className="dashboard-grid">
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Execution Safety" title="Agent control baseline" icon={ShieldAlert} />
-        <div className="settings-summary-grid">
-          <MiniMetric label="Mode" value={audit.policy.executionMode.replaceAll('_', ' ')} />
-          <MiniMetric label="Primary interface" value={audit.policy.primaryInterface.replaceAll('_', ' ')} />
-          <MiniMetric label="Browser fallback" value={audit.policy.browserFallback.replaceAll('_', ' ')} />
-        </div>
-      </article>
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Settings Extractor" title="Meta setup summary" icon={ClipboardCheck} />
-        <div className="settings-summary-grid">
-          <MiniMetric label="Campaigns" value={audit.summary.campaigns.toLocaleString()} />
-          <MiniMetric label="Ad sets" value={audit.summary.adsets.toLocaleString()} />
-          <MiniMetric label="Ads" value={audit.summary.ads.toLocaleString()} />
-          <MiniMetric label="Advantage+ audience" value={audit.summary.advantageAudienceAdsets.toLocaleString()} />
-          <MiniMetric label="IG-only ad sets" value={audit.summary.instagramOnlyAdsets.toLocaleString()} />
-          <MiniMetric label="Mixed FB/IG ad sets" value={audit.summary.facebookMixedAdsets.toLocaleString()} />
-          <MiniMetric label="Country targeting" value={audit.summary.countryTargetedAdsets.toLocaleString()} />
-          <MiniMetric label="Region/city targeting" value={audit.summary.regionTargetedAdsets.toLocaleString()} />
-        </div>
-      </article>
-      <article className="panel">
-        <PanelHeading eyebrow="Risk Watchlist" title="Settings to review" icon={AlertTriangle} />
-        <div className="insight-list">
-          {audit.risks.length > 0 ? audit.risks.map((risk) => (
-            <div className={`insight ${risk.severity === 'warning' ? 'warning' : risk.severity === 'danger' ? 'danger' : 'neutral'}`} key={`${risk.area}-${risk.title}`}>
-              <strong>{risk.title}</strong>
-              <p>{risk.detail}</p>
-              <small>{risk.area}</small>
-            </div>
-          )) : (
-            <div className="insight good">
-              <strong>No settings risk detected yet</strong>
-              <p>The saved Meta settings do not show obvious guardrail conflicts.</p>
-            </div>
-          )}
-        </div>
-      </article>
-      <article className="panel">
-        <PanelHeading eyebrow="Placement Mix" title="Where ad sets can deliver" icon={RadioTower} />
-        <div className="metric-list">
-          {audit.placementMix.slice(0, 10).map((item) => (
-            <div key={item.placement}>
-              <strong>{labelRawSetting(item.placement)}</strong>
-              <span>{item.adsetCount} ad sets</span>
-            </div>
-          ))}
-        </div>
-      </article>
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Ad Set Settings" title="Top extracted controls" icon={SlidersHorizontal} />
-        <div className="settings-table">
-          <div className="settings-row settings-head">
-            <span>Ad set</span>
-            <span>Age / gender</span>
-            <span>Geo</span>
-            <span>Audience</span>
-            <span>Placements</span>
-            <span>Use</span>
-          </div>
-          {audit.adsets.slice(0, 14).map((adset) => (
-            <div className="settings-row" key={adset.id}>
-              <span><strong>{adset.name}</strong><small>{shortText(adset.id, 18)}</small></span>
-              <span>{adset.ageMin}-{adset.ageMax} / {adset.genders.join(', ')}</span>
-              <span>{adset.locations.slice(0, 3).join(', ')}<small>{adset.geoStrategy}</small></span>
-              <span>{adset.advantageAudience ? 'Advantage+ audience' : adset.interests.slice(0, 2).join(', ')}</span>
-              <span>{labelRawSetting(adset.platformStrategy)}</span>
-              <span>{adset.recommendedUse}</span>
-            </div>
-          ))}
-        </div>
-      </article>
-    </section>
-  )
-}
-
-function MiniMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="mini-metric">
-      <small>{label}</small>
-      <strong>{value}</strong>
-    </div>
-  )
-}
-
-function CampaignBuilderView() {
-  const [name, setName] = useState('Next AI course launch')
-  const [primarySuccessMetric, setPrimarySuccessMetric] = useState('bot_start')
-  const [startingBudgetUsd, setStartingBudgetUsd] = useState(100)
-  const [maxDailyBudgetUsd, setMaxDailyBudgetUsd] = useState(500)
-  const [salesCapacityLeadsPerDay, setSalesCapacityLeadsPerDay] = useState(200)
-  const [scalingStepPercent, setScalingStepPercent] = useState(20)
-  const [segments, setSegments] = useState<CampaignPlaybookSegment[]>([
-    {
-      ...buildEmptySegment('New segment'),
-      targetAudienceNotes: 'Describe who should see this VSL.',
-      offerAngle: 'Describe the promise or hook for this segment.',
-    },
-  ])
-  const [savedPlaybook, setSavedPlaybook] = useState<CampaignPlaybook | null>(null)
-  const [saveMessage, setSaveMessage] = useState<string | null>(null)
-  const [isSaving, setIsSaving] = useState(false)
-
-  const draft = useMemo(
-    () =>
-      buildPlaybookDraft({
-        name,
-        startingBudgetUsd,
-        maxDailyBudgetUsd,
-        salesCapacityLeadsPerDay,
-        scalingStepPercent,
-        primarySuccessMetric,
-        segments,
-      }),
-    [maxDailyBudgetUsd, name, primarySuccessMetric, salesCapacityLeadsPerDay, scalingStepPercent, segments, startingBudgetUsd],
-  )
-  const readiness = useMemo(() => summarizePlaybookReadiness(draft), [draft])
-
-  const updateSegment = (index: number, patch: Partial<CampaignPlaybookSegment>) => {
-    setSegments((current) => current.map((segment, segmentIndex) => (segmentIndex === index ? { ...segment, ...patch } : segment)))
-  }
-
-  const addSegment = () => {
-    setSegments((current) => [...current, buildEmptySegment(`Segment ${current.length + 1}`)])
-  }
-
-  const removeSegment = (index: number) => {
-    setSegments((current) => current.filter((_, segmentIndex) => segmentIndex !== index))
-  }
-
-  const savePlaybook = async () => {
-    if (isSaving) {
-      return
-    }
-    setIsSaving(true)
-    setSaveMessage('Saving campaign playbook...')
-    try {
-      const response = await fetch('/api/playbooks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playbook: draft }),
-      })
-      const result = (await response.json()) as { playbook?: CampaignPlaybook; error?: string }
-      if (!response.ok || !result.playbook) {
-        setSaveMessage(result.error ?? `Save failed with ${response.status}`)
-        return
-      }
-      setSavedPlaybook(result.playbook)
-      setSaveMessage('Playbook saved. It can be used later for approval-based launch planning.')
-    } catch {
-      setSaveMessage('Could not reach the playbook API.')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  return (
-    <section className="dashboard-grid">
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Campaign Builder" title="Configurable launch playbook" icon={ClipboardCheck} />
-        <div className="builder-grid">
-          <label>
-            <span>Playbook name</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label>
-            <span>Primary success metric</span>
-            <select value={primarySuccessMetric} onChange={(event) => setPrimarySuccessMetric(event.target.value)}>
-              <option value="bot_start">Telegram START</option>
-              <option value="form_button_click">Form button click</option>
-              <option value="qualified_lead">Qualified lead</option>
-              <option value="full_payment">Full payment</option>
-            </select>
-          </label>
-          <label>
-            <span>Starting budget / segment</span>
-            <input type="number" min={1} value={startingBudgetUsd} onChange={(event) => setStartingBudgetUsd(Number(event.target.value))} />
-          </label>
-          <label>
-            <span>Max daily budget</span>
-            <input type="number" min={1} value={maxDailyBudgetUsd} onChange={(event) => setMaxDailyBudgetUsd(Number(event.target.value))} />
-          </label>
-          <label>
-            <span>Sales capacity leads/day</span>
-            <input type="number" min={1} value={salesCapacityLeadsPerDay} onChange={(event) => setSalesCapacityLeadsPerDay(Number(event.target.value))} />
-          </label>
-          <label>
-            <span>Scale step percent</span>
-            <input type="number" min={1} value={scalingStepPercent} onChange={(event) => setScalingStepPercent(Number(event.target.value))} />
-          </label>
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Segments" title="VSL and audience test groups" icon={Target} />
-        <div className="builder-summary">
-          <MiniMetric label="Segments" value={readiness.segmentCount.toString()} />
-          <MiniMetric label="Ready with links" value={readiness.readySegments.toString()} />
-          <MiniMetric label="Missing landing pages" value={readiness.missingLandingPages.toString()} />
-          <MiniMetric label="Starting budget total" value={formatCurrency(readiness.totalStartingBudgetUsd)} />
-        </div>
-        <div className="segment-builder-list">
-          {segments.map((segment, index) => (
-            <div className="segment-builder-card" key={`${segment.id}-${index}`}>
-              <div className="segment-builder-head">
-                <strong>Segment {index + 1}</strong>
-                <button type="button" onClick={() => removeSegment(index)} disabled={segments.length === 1}>
-                  Remove
-                </button>
-              </div>
-              <div className="builder-grid">
-                <label>
-                  <span>Name</span>
-                  <input value={segment.name} onChange={(event) => updateSegment(index, { name: event.target.value })} />
-                </label>
-                <label>
-                  <span>VSL ID</span>
-                  <input value={segment.vslId ?? ''} onChange={(event) => updateSegment(index, { vslId: event.target.value })} placeholder="Optional for now" />
-                </label>
-                <label>
-                  <span>Landing page URL</span>
-                  <input value={segment.landingPageUrl ?? ''} onChange={(event) => updateSegment(index, { landingPageUrl: event.target.value })} placeholder="Add later" />
-                </label>
-                <label>
-                  <span>Telegram bot URL</span>
-                  <input value={segment.telegramBotUrl ?? ''} onChange={(event) => updateSegment(index, { telegramBotUrl: event.target.value })} placeholder="Add later" />
-                </label>
-                <label>
-                  <span>Locations</span>
-                  <input value={(segment.locations ?? []).join(', ')} onChange={(event) => updateSegment(index, { locations: parseCsvList(event.target.value) })} />
-                </label>
-                <label>
-                  <span>Placements</span>
-                  <input value={(segment.placements ?? []).join(', ')} onChange={(event) => updateSegment(index, { placements: parseCsvList(event.target.value) })} />
-                </label>
-                <label>
-                  <span>Interests</span>
-                  <input value={(segment.interests ?? []).join(', ')} onChange={(event) => updateSegment(index, { interests: parseCsvList(event.target.value) })} />
-                </label>
-                <label>
-                  <span>Segment budget</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={segment.startingBudgetUsd ?? startingBudgetUsd}
-                    onChange={(event) => updateSegment(index, { startingBudgetUsd: Number(event.target.value) })}
-                  />
-                </label>
-                <label>
-                  <span>Creative count target</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={segment.creativeCountTarget ?? 8}
-                    onChange={(event) => updateSegment(index, { creativeCountTarget: Number(event.target.value) })}
-                  />
-                </label>
-                <label>
-                  <span>Age range</span>
-                  <input value={segment.ageRange ?? 'Broad'} onChange={(event) => updateSegment(index, { ageRange: event.target.value })} />
-                </label>
-                <label className="builder-field-wide">
-                  <span>Audience hypothesis</span>
-                  <textarea value={segment.targetAudienceNotes ?? ''} onChange={(event) => updateSegment(index, { targetAudienceNotes: event.target.value })} />
-                </label>
-                <label className="builder-field-wide">
-                  <span>Offer angle</span>
-                  <textarea value={segment.offerAngle ?? ''} onChange={(event) => updateSegment(index, { offerAngle: event.target.value })} />
-                </label>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="builder-actions">
-          <button className="sync-button" type="button" onClick={addSegment}>
-            <ListChecks size={16} />
-            Add segment
-          </button>
-          <button className="sync-button" type="button" onClick={savePlaybook} disabled={isSaving}>
-            <CheckCircle2 size={16} />
-            {isSaving ? 'Saving...' : 'Save playbook'}
-          </button>
-          {saveMessage && <small className="sync-message">{saveMessage}</small>}
-        </div>
-      </article>
-
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Draft Preview" title="Approval-safe launch structure" icon={ShieldAlert} />
-        <div className="metric-list">
-          <div><strong>Execution mode</strong><span>{draft.rules.requiresApprovalForExecution ? 'Approval required' : 'Autonomous'}</span></div>
-          <div><strong>Scale rule</strong><span>{draft.rules.scalingStepPercent}% every {draft.rules.scalingFrequencyDays} day</span></div>
-          <div><strong>Approval channels</strong><span>{draft.approvalChannels.join(', ')}</span></div>
-          <div><strong>Saved playbook</strong><span>{savedPlaybook ? savedPlaybook.name : 'Not saved this session'}</span></div>
-        </div>
-      </article>
-    </section>
-  )
-}
-
-function TrackingView({ data }: { data: DashboardData }) {
-  const [funnelEvents, setFunnelEvents] = useState<FunnelEventSummary | null>(null)
-
-  useEffect(() => {
-    if (typeof fetch !== 'function') {
-      return
-    }
-
-    void fetch('/api/funnel/summary')
-      .then((response) => response.ok ? response.json() : null)
-      .then((summary: FunnelEventSummary | null) => setFunnelEvents(summary))
-      .catch(() => setFunnelEvents(null))
-  }, [])
-
-  return (
-    <section className="dashboard-grid">
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Funnel Event Stream" title="Landing and Telegram tracking" icon={Bot} />
-        <div className="settings-summary-grid">
-          <MiniMetric label="Events received" value={(funnelEvents?.totalEvents ?? 0).toLocaleString()} />
-          <MiniMetric label="Unique visitors" value={(funnelEvents?.uniqueVisitors ?? 0).toLocaleString()} />
-          <MiniMetric label="Telegram users" value={(funnelEvents?.uniqueTelegramUsers ?? 0).toLocaleString()} />
-          <MiniMetric label="Latest event" value={funnelEvents?.latestEventAt ? formatDateTime(funnelEvents.latestEventAt) : 'Waiting'} />
-          <MiniMetric label="Telegram START rate" value={formatRate(funnelEvents?.rates?.telegramStartRate)} />
-          <MiniMetric label="Key message reach" value={formatRate(funnelEvents?.rates?.keyMessageReachRate)} />
-          <MiniMetric label="Form click rate" value={formatRate(funnelEvents?.rates?.formClickRate)} />
-          <MiniMetric label="Qualified lead rate" value={formatRate(funnelEvents?.rates?.qualifiedLeadRate)} />
-          <MiniMetric label="CRM attributed lead rate" value={formatRate(funnelEvents?.rates?.crmAttributedLeadRate)} />
-        </div>
-      </article>
-      <article className="panel">
-        <PanelHeading eyebrow="CRM Join" title="Bitrix lead attribution" icon={Users} />
-        <div className="settings-summary-grid">
-          <MiniMetric label="CRM leads" value={(funnelEvents?.crm?.totalLeads ?? 0).toLocaleString()} />
-          <MiniMetric label="Joined leads" value={(funnelEvents?.crm?.attributedLeads ?? 0).toLocaleString()} />
-          <MiniMetric label="Tracked stages" value={Object.keys(funnelEvents?.crm?.stages ?? {}).length.toLocaleString()} />
-        </div>
-        <div className="insight-list compact">
-          {Object.entries(funnelEvents?.crm?.stages ?? {}).length > 0 ? (
-            Object.entries(funnelEvents?.crm?.stages ?? {}).map(([stage, count]) => (
-              <div className="insight-item neutral" key={stage}>
-                <Users size={18} />
-                <div>
-                  <strong>{stage}</strong>
-                  <p>{count.toLocaleString()} leads in this CRM stage.</p>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="insight-item warning">
-              <AlertTriangle size={18} />
-              <div>
-                <strong>Waiting for CRM imports</strong>
-                <p>Import Bitrix leads with visitor or Telegram IDs to connect sales stages to ad traffic.</p>
-              </div>
-            </div>
-          )}
-        </div>
-      </article>
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Observed Bot Funnel" title="Tracked Telegram steps" icon={ListChecks} />
-        <div className="table-list">
-          <div className="ranking-head event-steps-grid">
-            <span>Step</span>
-            <span>Events</span>
-            <span>Visitors</span>
-            <span>From previous</span>
-          </div>
-          {(funnelEvents?.eventSteps?.length ? funnelEvents.eventSteps : [{ eventName: 'waiting_for_events', count: 0, uniqueVisitors: 0, rateFromPrevious: null }]).map((step) => (
-            <div className="ranking-row event-steps-grid" key={step.eventName}>
-              <strong>{labelEventName(step.eventName)}</strong>
-              <span>{step.count.toLocaleString()}</span>
-              <span>{step.uniqueVisitors.toLocaleString()}</span>
-              <em>{step.rateFromPrevious === null ? 'First step' : formatRate(step.rateFromPrevious)}</em>
-            </div>
-          ))}
-        </div>
-      </article>
-      {data.trackingHealth.map((item) => (
-        <article className={`panel tracking-card ${item.status}`} key={item.name}>
-          <div className="tracking-head">
-            {item.status === 'healthy' ? <CheckCircle2 size={20} /> : item.status === 'warning' ? <AlertTriangle size={20} /> : <XCircle size={20} />}
-            <div>
-              <h2>{item.name}</h2>
-              <p>{item.lastEventAt}</p>
-            </div>
-          </div>
-          <strong>{item.matchRate}% match</strong>
-          <div className="funnel-track">
-            <div className="funnel-fill" style={{ width: `${item.matchRate}%` }} />
-          </div>
-          <p>{item.note}</p>
-        </article>
-      ))}
-    </section>
-  )
-}
-
-function SettingsView({
-  data,
-  metaStatus,
-  onDashboardRefresh,
-}: {
-  data: DashboardData
-  metaStatus: MetaStatus | null
-  onDashboardRefresh?: () => Promise<DashboardData>
-}) {
-  const [isSyncing, setIsSyncing] = useState(false)
-  const [syncMessage, setSyncMessage] = useState<string | null>(null)
-  const [syncDays, setSyncDays] = useState<90 | 180>(90)
-  const [snapshots, setSnapshots] = useState<MetaSnapshot[]>([])
-  const [playbooks, setPlaybooks] = useState<CampaignPlaybook[]>([])
-  const syncErrors = data.dataSource?.syncErrors ?? []
-  const rawCounts = data.dataSource?.rawCounts ?? {}
-
-  useEffect(() => {
-    if (typeof fetch !== 'function') {
-      return
-    }
-
-    void fetch('/api/meta/snapshots')
-      .then((response) => response.ok ? response.json() : { snapshots: [] })
-      .then((result: { snapshots?: MetaSnapshot[] }) => setSnapshots(result.snapshots ?? []))
-      .catch(() => setSnapshots([]))
-
-    void fetch('/api/playbooks')
-      .then((response) => response.ok ? response.json() : { playbooks: [] })
-      .then((result: { playbooks?: CampaignPlaybook[] }) => setPlaybooks(result.playbooks ?? []))
-      .catch(() => setPlaybooks([]))
-  }, [])
-
-  const runSync = async () => {
-    if (isSyncing) {
-      return
-    }
-
-    setIsSyncing(true)
-    setSyncMessage(`Syncing the last ${syncDays} days from Meta...`)
-
-    try {
-      const response = await fetch('/api/meta/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days: syncDays }),
-      })
-      const result = (await response.json()) as {
-        ok?: boolean
-        error?: string
-        llmEnabled?: boolean
-        snapshot?: MetaSnapshot
-      }
-
-      if (!response.ok || !result.ok) {
-        setSyncMessage(result.error ?? `Sync failed with ${response.status}`)
-        return
-      }
-
-      if (result.snapshot) {
-        setSnapshots((current) => [result.snapshot as MetaSnapshot, ...current.filter((item) => item.id !== result.snapshot?.id)])
-      }
-      setSyncMessage(
-        result.llmEnabled
-          ? 'Sync complete. LLM analysis saved. Refreshing dashboard data...'
-          : 'Sync complete. Rule-based analysis saved. Refreshing dashboard data...',
-      )
-      if (onDashboardRefresh) {
-        await onDashboardRefresh()
-      }
-      setSyncMessage(result.llmEnabled ? 'Sync complete. Dashboard is updated.' : 'Sync complete. Dashboard is updated.')
-    } catch {
-      setSyncMessage('Could not reach the backend sync endpoint.')
-    } finally {
-      setIsSyncing(false)
-    }
-  }
-
-  return (
-    <section className="dashboard-grid">
-      <article className="panel">
-        <PanelHeading eyebrow="Meta Connection" title="Marketing API status" icon={Settings} />
-        <div className={`connection-card ${metaStatus?.connected ? 'good' : metaStatus?.configured ? 'warning' : 'danger'}`}>
-          <strong>
-            {metaStatus?.connected
-              ? 'Connected'
-              : metaStatus?.configured
-                ? 'Configured, needs validation'
-                : 'Not configured'}
-          </strong>
-          <p>{metaStatus?.error ?? metaStatus?.account?.name ?? 'Add local credentials to connect Meta.'}</p>
-          <div className="metric-list">
-            <div><strong>Ad account</strong><span>{metaStatus?.adAccountId || 'Missing'}</span></div>
-            <div><strong>Business ID</strong><span>{metaStatus?.businessId || 'Missing'}</span></div>
-            <div><strong>App ID</strong><span>{metaStatus?.appId || 'Missing'}</span></div>
-            <div><strong>API version</strong><span>{metaStatus?.apiVersion || 'Missing'}</span></div>
-            <div><strong>Token</strong><span>{metaStatus?.tokenConfigured ? metaStatus.tokenPreview : 'Missing'}</span></div>
-            <div><strong>Pixel</strong><span>{metaStatus?.pixelConfigured ? 'Configured' : 'Not set'}</span></div>
-          </div>
-        </div>
-      </article>
-      <article className="panel">
-        <PanelHeading eyebrow="Dashboard Source" title="Real data status" icon={RefreshCcw} />
-        <div className={`connection-card ${data.dataSource?.kind === 'meta' ? 'good' : 'warning'}`}>
-          <strong>{data.dataSource?.label ?? 'Dashboard data'}</strong>
-          <p>
-            {data.dataSource?.generatedAt
-              ? `Last analysis: ${formatDateTime(data.dataSource.generatedAt)}${data.dataSource.snapshotId ? ` (${data.dataSource.days ?? 90}d snapshot)` : ''}`
-              : 'No saved Meta analysis timestamp yet.'}
-          </p>
-          <div className="segmented-control compact">
-            {[90, 180].map((days) => (
-              <button
-                className={syncDays === days ? 'active' : ''}
-                key={days}
-                type="button"
-                onClick={() => setSyncDays(days as 90 | 180)}
-              >
-                {days} days
-              </button>
-            ))}
-          </div>
-          <button className="sync-button" type="button" onClick={runSync} disabled={isSyncing || !metaStatus?.connected}>
-            <RefreshCcw size={16} />
-            {isSyncing ? 'Syncing...' : `Run ${syncDays}-day sync`}
-          </button>
-          {syncMessage && <small className="sync-message">{syncMessage}</small>}
-          <div className="metric-list">
-            <div><strong>Campaigns</strong><span>{rawCounts.campaigns ?? data.campaigns.length}</span></div>
-            <div><strong>Ad sets</strong><span>{rawCounts.adsets ?? data.adSets.length}</span></div>
-            <div><strong>Ads</strong><span>{rawCounts.ads ?? data.ads.length}</span></div>
-            <div><strong>Insight rows</strong><span>{rawCounts.placementRows ?? data.metrics.length}</span></div>
-            <div><strong>Snapshot ID</strong><span>{data.dataSource?.snapshotId ? shortText(data.dataSource.snapshotId, 28) : 'Not saved yet'}</span></div>
-            <div><strong>Sync warnings</strong><span>{syncErrors.length}</span></div>
-          </div>
-        </div>
-      </article>
-      <article className="panel">
-        <PanelHeading eyebrow="Import Memory" title="Saved snapshots" icon={BookOpen} />
-        <div className="metric-list">
-          {snapshots.length > 0 ? snapshots.slice(0, 5).map((snapshot) => (
-            <div key={snapshot.id}>
-              <strong>{snapshot.days} days</strong>
-              <span>{formatDateTime(snapshot.generatedAt)}</span>
-            </div>
-          )) : (
-            <div><strong>No snapshots yet</strong><span>Run a Meta sync to create one.</span></div>
-          )}
-        </div>
-      </article>
-      <article className="panel">
-        <PanelHeading eyebrow="Campaign Playbooks" title="Configurable launch strategy" icon={ClipboardCheck} />
-        <div className="metric-list">
-          {playbooks.slice(0, 3).map((playbook) => (
-            <div key={playbook.id}>
-              <strong>{playbook.name}</strong>
-              <span>{playbook.segments.length} segments · {playbook.primarySuccessMetric}</span>
-            </div>
-          ))}
-        </div>
-      </article>
-      <article className="panel panel-wide">
-        <PanelHeading eyebrow="Metric Glossary" title="Definitions and watch points" icon={BookOpen} />
-        <div className="glossary-grid">
-          {data.glossary.map((item) => (
-            <div className="glossary-item" key={item.metric}>
-              <strong>{item.metric}</strong>
-              <p>{item.definition}</p>
-              <small>{item.watchFor}</small>
-            </div>
-          ))}
-        </div>
-      </article>
-      <article className="panel">
-        <PanelHeading eyebrow="Data Sources" title="Connector targets" icon={Settings} />
-        <div className="metric-list">
-          <div><strong>Meta Marketing API</strong><span>{data.dataSource?.kind === 'meta' ? 'Connected' : 'Pending'}</span></div>
-          <div><strong>Landing Page</strong><span>Pixel and CAPI next</span></div>
-          <div><strong>Telegram Bot</strong><span>Subscriber events next</span></div>
-          <div><strong>YouTube VSL</strong><span>Retention events next</span></div>
-          <div><strong>Gemini</strong><span>Creative video analysis next</span></div>
-        </div>
-      </article>
-      <details className="advanced-command-section settings-diagnostics">
-        <summary>Tracking diagnostics</summary>
-        <TrackingView data={data} />
-      </details>
-      <details className="advanced-command-section settings-diagnostics">
-        <summary>Meta settings audit</summary>
-        <SettingsAuditView />
-      </details>
-      {syncErrors.length > 0 && (
-        <article className="panel panel-wide">
-          <PanelHeading eyebrow="Sync Warnings" title="Meta data to retry in smaller slices" icon={AlertTriangle} />
-          <div className="metric-list">
-            {syncErrors.map((item) => (
-              <div key={`${item.source}-${item.error}`}>
-                <strong>{item.source}</strong>
-                <span>{item.error}</span>
-              </div>
-            ))}
-          </div>
-        </article>
-      )}
-    </section>
-  )
 }
 
 function InsightsPanel({ data }: { data: DashboardData }) {
@@ -2566,9 +1144,135 @@ function InsightsPanel({ data }: { data: DashboardData }) {
   )
 }
 
-function ApprovalQueue({ data }: { data: DashboardData }) {
+function ApprovalGuardrails({ checks }: { checks: ApprovalRequest['guardrailChecks'] }) {
+  if (!checks?.length) {
+    return null
+  }
+  return (
+    <ul className="approval-guardrails">
+      {checks.map((check, index) => {
+        const Icon = check.result === 'pass' ? CheckCircle2 : check.result === 'fail' ? XCircle : AlertTriangle
+        return (
+          <li key={`${check.message}-${index}`} className={`guardrail-${check.result}`}>
+            <Icon size={13} />
+            <span>{check.message}</span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function ApprovalAfterStructure({ after }: { after: ApprovalRequest['after'] }) {
+  const adsets = after.adsets ?? []
+  if (!after.campaign && adsets.length === 0) {
+    return null
+  }
+  const totalDaily = adsets.reduce((total, adset) => total + adset.daily_budget / 100, 0)
+  const totalAds = adsets.reduce((total, adset) => total + (adset.ads?.length ?? 0), 0)
+  return (
+    <details className="approval-after">
+      <summary>
+        Review what will be created: {adsets.length} paused ad set(s)
+        {totalAds > 0 ? `, ${totalAds} ad(s)` : ''}, {formatCurrency(totalDaily)}/day total
+      </summary>
+      {after.campaign && (
+        <p className="approval-after-campaign">
+          Campaign: <strong>{after.campaign.name}</strong> · {labelRawSetting(after.campaign.objective)} · status {after.campaign.status}
+        </p>
+      )}
+      <ul className="approval-after-adsets">
+        {adsets.map((adset, index) => {
+          const placements = adset.targeting.publisher_platforms ?? []
+          const interests = (adset.targeting.flexible_spec ?? [])
+            .flatMap((spec) => spec.interests ?? [])
+            .map((interest) => interest.name)
+          return (
+            <li key={`${adset.name}-${index}`}>
+              <strong>{adset.name}</strong>
+              <small>
+                {formatCurrency(adset.daily_budget / 100)}/day · {labelRawSetting(adset.optimization_goal)} · status {adset.status}
+              </small>
+              {placements.length > 0 && <small>Placements: {placements.join(', ')}</small>}
+              {interests.length > 0 && <small>Interests: {interests.join(', ')}</small>}
+              {(adset.ads ?? []).length > 0 && (
+                <small>
+                  Ads: {(adset.ads ?? []).map((ad) => `${ad.name} (creative ${ad.creativeId})`).join('; ')}
+                </small>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </details>
+  )
+}
+
+function ProactiveOpportunityDetails({ opportunity }: { opportunity: ProactiveOpportunity }) {
+  const audiences = (opportunity.audiences ?? []).slice(0, 3)
+  const creatives = opportunity.creatives ?? []
+  const sourceTemplate = opportunity.sourceTemplate
+  const config = sourceTemplate?.config
+  const reuseNames = creatives.flatMap((creative) =>
+    (creative.reuseExisting ?? []).map((item) => item.name),
+  )
+  const newHooks = creatives.flatMap((creative) =>
+    (creative.newAngleBriefs ?? []).map((brief) => brief.hook),
+  )
+
+  return (
+    <div className="approval-opportunity">
+      {opportunity.rationale && <p className="approval-opportunity-rationale">{opportunity.rationale}</p>}
+
+      {audiences.length > 0 && (
+        <div className="approval-opportunity-section">
+          <span className="approval-opportunity-label">Top audiences</span>
+          <ul className="approval-opportunity-audiences">
+            {audiences.map((audience, index) => (
+              <li key={`${audience.label}-${index}`}>
+                <strong>{audience.label}</strong>
+                {typeof audience.qualityScore === 'number' && (
+                  <small className="approval-opportunity-score">Quality {audience.qualityScore}</small>
+                )}
+                {audience.rationale && <small>{audience.rationale}</small>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {config && (
+        <p className="approval-opportunity-mirror">
+          Mirrors <strong>{sourceTemplate?.sourceCampaignName ?? 'top campaign'}</strong>
+          {config.objective ? `: ${labelRawSetting(config.objective)}` : ''}
+          {config.optimizationGoal ? ` / ${labelRawSetting(config.optimizationGoal)}` : ''}
+        </p>
+      )}
+
+      {(reuseNames.length > 0 || newHooks.length > 0) && (
+        <div className="approval-opportunity-section">
+          <span className="approval-opportunity-label">Recommended creatives</span>
+          {reuseNames.length > 0 && (
+            <small className="approval-opportunity-reuse">Reuse: {reuseNames.join(', ')}</small>
+          )}
+          {newHooks.length > 0 && (
+            <ul className="approval-opportunity-hooks">
+              {newHooks.map((hook, index) => (
+                <li key={`${hook}-${index}`}>{hook}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function ApprovalQueue({ data }: { data: DashboardData }) {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
   const [message, setMessage] = useState<string | null>(null)
+  // null = unknown (status not yet loaded); drives whether live execution is offered.
+  const [liveWritesEnabled, setLiveWritesEnabled] = useState<boolean | null>(null)
 
   const fetchApprovals = async () => {
     const response = await fetch('/api/approvals')
@@ -2590,6 +1294,18 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
       .catch(() => {
         if (!cancelled) {
           setMessage('Could not load execution approvals.')
+        }
+      })
+    void fetch('/api/meta/status')
+      .then((response) => response.json() as Promise<{ liveWritesEnabled?: boolean }>)
+      .then((status) => {
+        if (!cancelled) {
+          setLiveWritesEnabled(Boolean(status.liveWritesEnabled))
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLiveWritesEnabled(false)
         }
       })
     return () => {
@@ -2618,12 +1334,18 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
   }
 
   const reject = async (approvalId: string) => {
+    // Reject permanently kills a planned packet — confirm and capture a real reason
+    // (the backend stores and re-displays it) instead of a meaningless canned string.
+    const reason = window.prompt('Reject this approval? Enter a short reason (it will be recorded):')
+    if (reason === null) {
+      return
+    }
     setMessage('Rejecting request...')
     try {
       const response = await fetch(`/api/approvals/${approvalId}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rejectedBy: 'dashboard', reason: 'Rejected in dashboard.' }),
+        body: JSON.stringify({ rejectedBy: 'dashboard', reason: reason.trim() || 'Rejected in dashboard.' }),
       })
       if (!response.ok) {
         const result = (await response.json()) as { detail?: string }
@@ -2638,12 +1360,16 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
   }
 
   const requestChanges = async (approvalId: string) => {
+    const note = window.prompt('What changes are needed? This note is sent back with the request:')
+    if (note === null) {
+      return
+    }
     setMessage('Marking request as needs changes...')
     try {
       const response = await fetch(`/api/approvals/${approvalId}/changes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestedBy: 'dashboard', note: 'Needs changes in dashboard.' }),
+        body: JSON.stringify({ requestedBy: 'dashboard', note: note.trim() || 'Needs changes in dashboard.' }),
       })
       if (!response.ok) {
         const result = (await response.json()) as { detail?: string }
@@ -2677,24 +1403,60 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
     }
   }
 
+  const executeLive = async (approvalId: string) => {
+    setMessage('Creating the paused campaign in Meta…')
+    try {
+      const response = await fetch(`/api/approvals/${approvalId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: false, confirmLive: true }),
+      })
+      const result = (await response.json()) as { result?: { note?: string }; detail?: string }
+      if (!response.ok) {
+        setMessage(result.detail ?? `Live execution failed with ${response.status}`)
+        return
+      }
+      setMessage(result.result?.note ?? 'Created in Meta as PAUSED. Review in Ads Manager before enabling delivery.')
+      setApprovals(await fetchApprovals())
+    } catch {
+      setMessage('Could not create the campaign in Meta.')
+    }
+  }
+
   return (
     <article className="panel">
       <PanelHeading eyebrow="Recommended Actions" title="Approval queue" icon={ClipboardCheck} />
       {approvals.length > 0 && (
         <div className="action-list execution-approval-list">
-          {approvals.map((approval) => (
-            <div className={`action-item ${approval.risk}`} key={approval.id}>
+          {approvals.map((approval) => {
+            const isProactive = approval.source === 'proactive'
+            return (
+            <div
+              className={`action-item ${approval.risk}${isProactive ? ' approval-proactive' : ''}`}
+              key={approval.id}
+            >
               <div>
+                {isProactive && (
+                  <span className="provenance-chip llm approval-suggested-badge">🤖 Suggested for you</span>
+                )}
                 <strong>{approval.after.campaign?.name ?? approval.actionType}</strong>
                 <p>{approval.reason}</p>
                 <small>
-                  {approval.status} / {approval.guardrailResult} / {approval.executionMethod}
+                  {labelRawSetting(approval.status)} / guardrail {approval.guardrailResult} / {approval.executionMethod}
                 </small>
-                <small>
-                  {(approval.after.adsets ?? []).length} paused ad set(s), budget {formatCurrency((approval.after.adsets ?? []).reduce((total, adset) => total + adset.daily_budget / 100, 0))}/day
-                </small>
+                {approval.expectedImpact && (
+                  <small className="approval-impact">Expected impact: {approval.expectedImpact}</small>
+                )}
+                {isProactive && approval.opportunity && (
+                  <ProactiveOpportunityDetails opportunity={approval.opportunity} />
+                )}
+                <ApprovalGuardrails checks={approval.guardrailChecks} />
+                <ApprovalAfterStructure after={approval.after} />
                 {approval.rejectionReason && <small>Rejected reason: {approval.rejectionReason}</small>}
                 {approval.changeRequestNote && <small>Change request: {approval.changeRequestNote}</small>}
+                {approval.status === 'executed' && (
+                  <small className="approval-impact">{approval.lastExecutionResult?.note ?? 'Created in Meta as paused.'}</small>
+                )}
               </div>
               <div className="approval-button-stack">
                 {approval.status === 'needs_review' && (
@@ -2715,10 +1477,31 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
                     Dry run
                   </button>
                 )}
+                {approval.status === 'dry_run_completed' && (
+                  liveWritesEnabled === false ? (
+                    <>
+                      <button className="sync-button" type="button" disabled>
+                        Create paused campaign in Meta
+                      </button>
+                      <small className="approval-impact">Live writes disabled by configuration (set META_LIVE_WRITES_ENABLED=true).</small>
+                    </>
+                  ) : (
+                    <button
+                      className="sync-button"
+                      type="button"
+                      disabled={liveWritesEnabled === null || approval.guardrailResult === 'fail'}
+                      onClick={() => void executeLive(approval.id)}
+                    >
+                      Create paused campaign in Meta
+                    </button>
+                  )
+                )}
+                {approval.status === 'executed' && <span className="status-pill good">Created (paused)</span>}
                 <span>{approval.risk}</span>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
       {message && <small className="sync-message">{message}</small>}
@@ -2735,31 +1518,6 @@ function ApprovalQueue({ data }: { data: DashboardData }) {
         ))}
       </div>
     </article>
-  )
-}
-
-function EmptyState({
-  compact = false,
-  title = 'No matching data',
-  body = 'Adjust filters to restore the current dashboard view.',
-  onReset,
-}: {
-  compact?: boolean
-  title?: string
-  body?: string
-  onReset?: () => void
-}) {
-  return (
-    <div className={compact ? 'empty-state compact' : 'empty-state'}>
-      <AlertTriangle size={22} />
-      <strong>{title}</strong>
-      <p>{body}</p>
-      {onReset && (
-        <button className="sync-button" type="button" onClick={onReset}>
-          Reset filters
-        </button>
-      )}
-    </div>
   )
 }
 
@@ -2783,6 +1541,16 @@ function deriveFilteredKpis(metrics: DailyAdMetric[], trackingHealth: TrackingHe
   const averageTrackingHealth = Math.round(
     sumBy(trackingHealth, (item) => item.matchRate) / Math.max(1, trackingHealth.length),
   )
+  // Tone reflects whether a rate is on-target, not merely non-zero — so an off-target
+  // funnel reads as warning/danger instead of a misleading "good" just because it exists.
+  const visitRate = clicks > 0 ? (landingPageViews / clicks) * 100 : 0
+  const lpLeadRate = landingPageViews > 0 ? (leads / landingPageViews) * 100 : 0
+  const toneForRate = (value: number, good: number, warn: number, hasInputs: boolean): Tone => {
+    if (!hasInputs) return 'neutral'
+    if (value >= good) return 'good'
+    if (value >= warn) return 'warning'
+    return 'danger'
+  }
 
   return [
     {
@@ -2798,7 +1566,7 @@ function deriveFilteredKpis(metrics: DailyAdMetric[], trackingHealth: TrackingHe
       value: formatPercent(landingPageViews, clicks),
       change: `${formatNumber(landingPageViews)} landing visits`,
       helper: 'Landing visits / clicks',
-      tone: landingPageViews > 0 ? 'good' : 'warning',
+      tone: toneForRate(visitRate, 70, 40, clicks > 0),
       icon: 'bot',
     },
     {
@@ -2806,7 +1574,7 @@ function deriveFilteredKpis(metrics: DailyAdMetric[], trackingHealth: TrackingHe
       value: formatPercent(leads, landingPageViews),
       change: `${formatNumber(leads)} leads`,
       helper: 'Leads / landing visits',
-      tone: leads > 0 ? 'good' : 'warning',
+      tone: toneForRate(lpLeadRate, 35, 15, landingPageViews > 0),
       icon: 'target',
     },
     {
@@ -2828,76 +1596,3 @@ function deriveFilteredKpis(metrics: DailyAdMetric[], trackingHealth: TrackingHe
   ]
 }
 
-function sumBy<T>(rows: T[], select: (row: T) => number) {
-  return rows.reduce((total, row) => total + select(row), 0)
-}
-
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: value >= 100 ? 0 : 2,
-  }).format(value)
-}
-
-function formatPercent(value: number, base: number) {
-  return base === 0 ? '0%' : `${((value / base) * 100).toFixed(1)}%`
-}
-
-function formatRate(value?: number) {
-  return typeof value === 'number' ? `${value.toFixed(value % 1 === 0 ? 0 : 1)}%` : '0%'
-}
-
-function labelEventName(value: string) {
-  return value
-    .split('_')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-function getDashboardAnchorDate(data: DashboardData): string {
-  const generatedAt = data.dataSource?.generatedAt?.slice(0, 10)
-  if (generatedAt) {
-    return generatedAt
-  }
-
-  const campaignDates = data.campaigns.flatMap((campaign) =>
-    [campaign.startedAt, campaign.endedAt].filter((value): value is string => Boolean(value)),
-  )
-  const metricDates = data.metrics.map((metric) => metric.date)
-  const dates: string[] = [...campaignDates, ...metricDates]
-  return dates.reduce((max, value) => (value > max ? value : max), '2026-05-21')
-}
-
-function labelPlacement(placement: Placement) {
-  return placement
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-function labelRawSetting(value: string) {
-  return value
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-function shortCampaignLabel(name: string) {
-  const cleanName = name.replace(/^DA\s*-\s*/i, '').trim()
-  return cleanName.length <= 28 ? cleanName : `${cleanName.slice(0, 27)}...`
-}
-
-function shortText(value: string, limit: number) {
-  return value.length <= limit ? value : `${value.slice(0, limit - 1)}...`
-}
-
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}

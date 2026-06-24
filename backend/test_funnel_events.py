@@ -1,7 +1,10 @@
+from datetime import datetime, timezone
+
 from backend.funnel_events import (
     build_funnel_summary,
     normalize_funnel_event,
     save_funnel_event,
+    telegram_starts_by_campaign_date,
 )
 
 
@@ -121,3 +124,22 @@ def test_funnel_summary_joins_crm_leads_by_visitor_and_stage(tmp_path):
     assert summary["crm"]["stages"]["NEW"] == 1
     assert summary["crm"]["stages"]["FULL_PAID"] == 1
     assert summary["rates"]["crmAttributedLeadRate"] == 100
+
+
+def test_telegram_starts_by_campaign_date_counts_bot_starts(tmp_path):
+    storage_dir = tmp_path / "storage"
+    today = datetime.now(timezone.utc).date().isoformat()
+    save_funnel_event({"event_name": "bot_start", "visitor_id": "v1", "campaign_id": "cmp_1"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "bot_start", "visitor_id": "v2", "campaign_id": "cmp_1"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "bot_start", "visitor_id": "v3", "campaign_id": "cmp_2"}, storage_dir=storage_dir)
+    # Excluded: not a START, and a START with no campaign to attribute to.
+    save_funnel_event({"event_name": "telegram_link_click", "visitor_id": "v4", "campaign_id": "cmp_1"}, storage_dir=storage_dir)
+    save_funnel_event({"event_name": "bot_start", "visitor_id": "v5"}, storage_dir=storage_dir)
+
+    counts = telegram_starts_by_campaign_date(storage_dir=storage_dir)
+
+    assert counts == {("cmp_1", today): 2, ("cmp_2", today): 1}
+
+
+def test_telegram_starts_by_campaign_date_empty_when_no_events(tmp_path):
+    assert telegram_starts_by_campaign_date(storage_dir=tmp_path / "storage") == {}

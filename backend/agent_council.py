@@ -68,6 +68,15 @@ def run_strategy_council(
     scores = score_council_agents(events, strategy, findings)
     average_score = round(sum(item["scoreOutOf10"] for item in scores) / len(scores), 2)
     final_plan = build_final_plan(strategy, evidence)
+    # When there is no synced evidence, the council must not present a confident,
+    # named plan as if it were proven — force a needs_refinement verdict.
+    has_evidence = bool(evidence.get("hasEvidence"))
+    if has_evidence:
+        quality_status = "usable" if average_score >= 7.0 else "needs_refinement"
+        quality_issues = [] if average_score >= 7.0 else ["Council evidence is thin; resync Meta data or narrow the brief for stronger conviction."]
+    else:
+        quality_status = "needs_refinement"
+        quality_issues = ["No synced Meta evidence: the council cannot name proven winners. Sync Meta data before treating this plan as evidence-backed."]
     session = {
         "id": f"council_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
         "status": "ready_for_review",
@@ -80,9 +89,10 @@ def run_strategy_council(
         "averageScoreOutOf10": average_score,
         "quality": {
             "score": int(round(average_score * 10)),
-            "status": "usable" if average_score >= 7.0 else "needs_refinement",
-            "issues": [] if average_score >= 7.0 else ["Council evidence is thin; resync Meta data or narrow the brief for stronger conviction."],
+            "status": quality_status,
+            "issues": quality_issues,
         },
+        "hasEvidence": has_evidence,
         "finalPlan": final_plan,
         "generatedPlaybook": playbook,
         "generatedStrategy": strategy,
@@ -131,10 +141,18 @@ def extract_council_evidence(analysis: dict[str, Any], findings: dict[str, Any] 
     creative_best = _finding_label(findings.get("creative", {}).get("best"))
     audience_best = _finding_label(findings.get("audience", {}).get("best"))
     placement_best = _finding_label(findings.get("placement", {}).get("best"))
+    # No hardcoded demo fallbacks: when there is no synced evidence the council must
+    # NOT name a specific (placeholder) winner as if it were proven. It says so instead.
+    no_evidence = "no synced evidence"
+    top_creative = creative_best or first_label(top_ads, None)
+    top_audience = audience_best or first_label(audience.get("interests") or [], None)
+    top_placement = placement_best or first_label(placements, None)
+    has_evidence = bool(top_creative or top_audience or top_placement or summary)
     return {
-        "topCreative": creative_best or first_label(top_ads, "VID - 08"),
-        "topAudience": audience_best or first_label(audience.get("interests") or [], "Artificial intelligence"),
-        "topPlacement": placement_best or first_label(placements, "instagram / reels"),
+        "hasEvidence": has_evidence,
+        "topCreative": top_creative or no_evidence,
+        "topAudience": top_audience or no_evidence,
+        "topPlacement": top_placement or no_evidence,
         "leadCount": int(float(summary.get("leads") or 0)),
         "purchaseCount": int(float(summary.get("purchases") or 0)),
         "topAds": [item.get("label") for item in top_ads[:3] if item.get("label")],
@@ -151,7 +169,7 @@ def _finding_label(item: dict[str, Any] | None) -> str | None:
     return keys.get("ad_name") or item.get("label") or keys.get("ad_id")
 
 
-def first_label(rows: list[dict[str, Any]], fallback: str) -> str:
+def first_label(rows: list[dict[str, Any]], fallback: str | None) -> str | None:
     if rows and rows[0].get("label"):
         return str(rows[0]["label"])
     return fallback

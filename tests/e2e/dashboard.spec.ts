@@ -6,19 +6,27 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
 
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  await expect(page.getByRole('heading', { name: /campaign audit dashboard/i })).toBeVisible();
+  // The front door is now the chat-first campaign setup view.
+  await expect(page.getByRole('heading', { level: 1, name: /set up a campaign by chatting/i })).toBeVisible();
   const nav = page.locator('.app-nav');
-  await expect(nav.getByRole('button', { name: /overview/i })).toBeVisible();
+  await expect(nav.getByRole('button', { name: /chat/i })).toBeVisible();
+  await expect(nav.getByRole('button', { name: /monitor/i })).toBeVisible();
   await expect(nav.getByRole('button', { name: /command center/i })).toBeVisible();
   await expect(nav.getByRole('button', { name: /rankings/i })).toBeVisible();
   await expect(nav.getByRole('button', { name: /settings/i })).toBeVisible();
-  await expect(nav.getByRole('button')).toHaveCount(4);
+  await expect(nav.getByRole('button')).toHaveCount(5);
   await expect(nav.getByRole('button', { name: /creatives/i })).toHaveCount(0);
   await expect(nav.getByRole('button', { name: /funnel/i })).toHaveCount(0);
   await expect(nav.getByRole('button', { name: /agent office/i })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /refresh data/i })).toBeVisible();
+  // Chat front door surfaces the conversation + starter prompts.
+  await expect(page.getByRole('heading', { name: /ask about your ads/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /plan a 3-vsl launch/i })).toBeVisible();
+
+  // The Monitor view carries the audit + priority surfaces.
+  await nav.getByRole('button', { name: /monitor/i }).click();
+  await expect(page.getByRole('heading', { name: /campaign audit dashboard/i })).toBeVisible();
   await expect(page.getByText(/action needed|watch closely|healthy/i)).toBeVisible();
-  await expect(page.getByText(/decision rankings/i)).toBeVisible();
   await expect(page.getByText(/best current levers/i)).toBeVisible();
   await expect(page.getByText(/what needs attention now/i)).toBeVisible();
   await expect(page.getByText(/operator priority queue/i)).toBeVisible();
@@ -81,7 +89,7 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await expect(page.locator('.agent-desk.speaker')).toBeVisible();
   await expect(page.locator('.agent-desk.receiver')).toBeVisible();
   await expect(page.locator('.active-exchange-card')).toContainText(/round/i);
-  await page.getByRole('button', { name: 'Implemented', exact: true }).click();
+  await page.getByRole('button', { name: 'Create paused packet', exact: true }).click();
   await expect(page.locator('.implementation-result')).toContainText(/paused campaign approval created/i);
   await expect(page.getByText(/cannot publish or spend/i)).toBeVisible();
   await expect(page.getByText(/edit campaign playbook and task metadata/i)).toBeVisible();
@@ -98,5 +106,6 @@ test('dashboard loads and exposes primary control surfaces', async ({ page }) =>
   await expect(page.getByText(/meta settings audit/i)).toBeVisible();
 
   await page.getByRole('button', { name: /refresh data/i }).click();
+  await nav.getByRole('button', { name: /monitor/i }).click();
   await expect(page.getByRole('heading', { name: /campaign audit dashboard/i })).toBeVisible();
 });

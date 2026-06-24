@@ -4,7 +4,11 @@ import re
 from typing import Any
 
 from .agent_quality import evaluate_agent_response
-from .chat_campaign_planner import build_playbook_from_chat, can_build_playbook_from_chat
+from .chat_campaign_planner import (
+    build_playbook_from_chat,
+    can_build_playbook_from_chat,
+    extract_budget,
+)
 from .meta_action_planner import build_action_approval, plan_meta_action
 from .strategy_generator import generate_launch_strategy
 
@@ -82,6 +86,33 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
         "canExecuteLiveChanges": False,
         "requiresApproval": False,
     },
+    "measurement": {
+        "name": "Measurement & Attribution Agent",
+        "purpose": "Own Pixel/CAPI event health, attribution windows, and lead/registration dedup; gate every scale decision on trustworthy measurement.",
+        "inputs": ["pixel/dataset diagnostics", "tracking health", "attribution windows", "lead/registration action mix"],
+        "outputs": ["measurement readiness verdict", "attribution-window recommendation", "dedup/double-count warnings", "scale gate"],
+        "tools": ["tracking_health", "dataset_diagnostics", "knowledge_base"],
+        "canExecuteLiveChanges": False,
+        "requiresApproval": False,
+    },
+    "budget_pacing": {
+        "name": "Budget & Pacing Agent",
+        "purpose": "Watch spend pacing, learning-phase status, and decide CBO vs ABO and safe budget steps.",
+        "inputs": ["daily budgets", "spend pacing", "learning-phase status", "target CPA", "sales capacity"],
+        "outputs": ["pacing diagnosis", "CBO/ABO recommendation", "approval-safe budget step", "learning-phase guardrails"],
+        "tools": ["dashboard_data", "campaign_watch", "knowledge_base"],
+        "canExecuteLiveChanges": False,
+        "requiresApproval": False,
+    },
+    "landing_cro": {
+        "name": "Landing & CRO Agent",
+        "purpose": "Own the landing page / VSL: message-match, page speed, form/Telegram handoff friction, and conversion-rate optimization for the diagnosed funnel leak.",
+        "inputs": ["funnel leak diagnosis", "landing events", "creative promise vs LP headline", "Telegram/form handoff"],
+        "outputs": ["LP/VSL fix list", "message-match check", "CRO test ideas for the leaking step"],
+        "tools": ["funnel_events", "landing_tracker", "knowledge_base"],
+        "canExecuteLiveChanges": False,
+        "requiresApproval": False,
+    },
     "meta_ai_advisor": {
         "name": "Meta AI Advisor Agent",
         "purpose": "Capture and interpret Ads Manager AI Analyze recommendations as read-only platform-side evidence.",
@@ -127,6 +158,9 @@ SPECIALIST_KEYWORDS: dict[str, tuple[str, ...]] = {
     "funnel": ("funnel", "telegram", "landing", "crm", "bitrix", "form", "pixel", "visit rate", "lead rate"),
     "monitoring": ("monitor", "alert", "trend", "rising", "improving", "getting expensive"),
     "experiment": ("experiment", "test", "ab test", "a/b", "scale rule", "stop rule"),
+    "measurement": ("attribution", "attribution window", "pixel health", "capi", "conversions api", "dedup", "double count", "double-count", "measurement", "tracking health", "event match"),
+    "budget_pacing": ("pacing", "budget utilization", "underspending", "overspending", "learning phase", "learning limited", "cbo", "abo", "budget split", "budget allocation"),
+    "landing_cro": ("cro", "conversion rate optimization", "message match", "message-match", "page speed", "form friction", "landing optimization", "optimize landing", "optimize the landing", "fix the landing", "landing page speed"),
 }
 
 
@@ -146,10 +180,20 @@ def route_question(question: str) -> dict[str, Any]:
         return route("meta_ai_strategist", "Captured Meta AI evidence should be converted into Meta-side strategy.")
     if any(word in lower for word in ["meta ai", "ads manager ai", "analyze button", "opportunity score", "opportunity-score"]):
         return route("meta_ai_advisor", "Meta AI Analyze request should be captured read-only and validated against business data.")
+    if wants_autonomous_build(lower):
+        return route("orchestrator", "Operator delegated the decision; the orchestrator should autonomously build a best-guess PAUSED campaign.")
     if is_campaign_creation_request(lower):
         return route("orchestrator", "Campaign creation/planning request should be converted into an approval-ready playbook or strategy.")
     if has_execution_intent(lower):
         return route("execution", "Live Meta change request requires approval and API-first execution policy.")
+    # Specific new specialist intents take priority over multi-specialist aggregation,
+    # so an attribution/pacing/CRO question reaches its owner instead of being merged.
+    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["measurement"]):
+        return route("measurement", "Measurement/attribution question needs Pixel/CAPI health, attribution-window, and dedup reasoning.")
+    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["budget_pacing"]):
+        return route("budget_pacing", "Budget/pacing question needs pacing, learning-phase, and CBO/ABO reasoning.")
+    if matches_any_keyword(lower, SPECIALIST_KEYWORDS["landing_cro"]):
+        return route("landing_cro", "Landing/CRO question needs message-match, page-speed, and funnel-leak remediation reasoning.")
     if len(detect_involved_agents(question)) >= 3:
         return route("orchestrator", "Multi-specialist strategy question should be delegated and merged by the orchestrator.")
     if is_monitoring_request(lower):
@@ -178,6 +222,38 @@ def route_question(question: str) -> dict[str, Any]:
     if is_experiment_request(lower):
         return route("experiment", "Experiment question needs hypothesis, variable, metric, and guardrail design.")
     return route("audit", "Default to audit agent for historical performance and lessons.")
+
+
+# The explicit "build me a campaign" words that put the orchestrator into a campaign-
+# building turn. Broader creation-intent phrases (e.g. "campaign recommendation") stay on
+# the multi-specialist analysis path, so this list is deliberately narrow.
+CREATION_BUILD_WORDS = ("setup", "set up", "create campaign", "launch", "campaign plan", "vsl")
+
+
+AUTONOMOUS_BUILD_PHRASES = (
+    "do it yourself",
+    "on your own",
+    "you decide",
+    "you know better",
+    "i don't have answers",
+    "i dont have answers",
+    "pick the best",
+    "pick the top",
+    "just create it",
+    "just do it",
+    "create a test",
+    "optimize and run",
+    "you choose",
+    "your call",
+    "whatever you think",
+    "best guess",
+)
+
+
+def wants_autonomous_build(lower: str) -> bool:
+    """True when the operator is delegating the decision — build a best-guess PAUSED
+    campaign autonomously instead of looping on clarifying questions."""
+    return any(phrase in lower for phrase in AUTONOMOUS_BUILD_PHRASES)
 
 
 def is_campaign_creation_request(lower_question: str) -> bool:
@@ -250,8 +326,17 @@ def orchestrate_agent_chat(
     *,
     knowledge: dict[str, Any] | None,
     playbooks: list[dict[str, Any]],
+    campaigns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     lower = question.lower()
+
+    # Bulk manage of EXISTING campaigns (pause/archive a filtered set) takes priority over
+    # the create/meta-action branches: "delete all campaigns created past a week" is a
+    # cleanup, not a creation or a single-target tweak.
+    manage_result = _maybe_manage_campaigns(question, knowledge=knowledge, campaigns=campaigns)
+    if manage_result is not None:
+        return manage_result
+
     routed = route_question(question)
     meta_action_plan = plan_meta_action(question)
     if should_prepare_meta_action(question, routed, meta_action_plan):
@@ -337,7 +422,24 @@ def orchestrate_agent_chat(
             ],
         )
 
-    if routed["agentId"] == "orchestrator" and any(word in lower for word in ["setup", "set up", "create campaign", "launch", "campaign plan", "vsl"]):
+    # Autonomous build: when the operator delegates the decision, OR asks to create a
+    # campaign but hasn't given enough to build a full playbook (and there's no saved
+    # playbook to plan from), do NOT loop on clarifying questions — build a best-guess
+    # PAUSED campaign by reusing the proactive engine. This replaces the old clarifying
+    # fallback; the can_build-true and saved-playbook paths below are unchanged. If even
+    # the autonomous build can't find a usable audience, it asks ONCE (no infinite loop).
+    if routed["agentId"] == "orchestrator" and (
+        wants_autonomous_build(lower)
+        or (
+            any(word in lower for word in CREATION_BUILD_WORDS)
+            and is_campaign_creation_request(lower)
+            and not can_build_playbook_from_chat(question)
+            and not first_playbook_with_segments(playbooks or [])
+        )
+    ):
+        return _autonomous_build_response(routed, question, knowledge=knowledge, playbooks=playbooks)
+
+    if routed["agentId"] == "orchestrator" and any(word in lower for word in CREATION_BUILD_WORDS):
         if can_build_playbook_from_chat(question):
             playbook = build_playbook_from_chat(question, knowledge=knowledge)
             strategy = generate_launch_strategy(playbook, knowledge)
@@ -398,6 +500,215 @@ def orchestrate_agent_chat(
     return None
 
 
+def _autonomous_build_response(
+    routed: dict[str, Any],
+    question: str,
+    *,
+    knowledge: dict[str, Any] | None,
+    playbooks: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Autonomously build a best-guess PAUSED campaign, or ask once if impossible.
+
+    Reuses the proactive engine's ``build_autonomous_campaign`` (imported lazily to avoid
+    an import cycle), persists the resulting approval, and returns the orchestrator
+    response carrying ``generatedApprovalRequest``, ``autonomous=True``, and a plain
+    summary. When no usable audience exists it returns the standard clarifying response
+    flagged ``needsClarification=True`` — this is the only question, never a loop.
+    """
+    from .opportunity_finder import build_autonomous_campaign
+
+    account_id, pixel_id = _meta_account_and_pixel()
+
+    approval = build_autonomous_campaign(
+        knowledge,
+        playbooks,
+        account_id=account_id,
+        budget=extract_budget(question),
+        n_audiences=3,
+        n_creatives=5,
+        pixel_id=pixel_id,
+    )
+
+    if approval is None:
+        result = response(
+            routed,
+            answer=(
+                "I tried to build a best-guess paused campaign on my own, but I don't yet have enough "
+                "synced Meta data to pick audiences. Sync the account (or tell me the segments, daily "
+                "budget, and primary success metric) and I'll draft the paused campaign for approval."
+            ),
+            sources=["agent_orchestrator", "opportunity_finder", "docs/AGENT_OPERATING_POLICY.md"],
+            suggested=[
+                "Sync the latest Meta data, then ask me to build it.",
+                "Create a plan for income, business, and creator VSLs at $100/segment.",
+                "Optimize for Telegram START and let me pick the audiences.",
+            ],
+        )
+        result["needsClarification"] = True
+        return result
+
+    saved = _persist_autonomous_approval(approval)
+    result = response(
+        routed,
+        answer=format_autonomous_answer(saved),
+        sources=["opportunity_finder", "meta_execution", "storage/meta_knowledge_base.json", "docs/AGENT_OPERATING_POLICY.md"],
+        suggested=[
+            "Approve this paused campaign.",
+            "Lower the daily budget before I draft it.",
+            "Swap one of the chosen audiences.",
+        ],
+    )
+    result["generatedApprovalRequest"] = saved
+    result["autonomous"] = True
+    return result
+
+
+def _maybe_manage_campaigns(
+    question: str,
+    *,
+    knowledge: dict[str, Any] | None,
+    campaigns: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Bulk pause/archive branch for EXISTING campaigns.
+
+    Returns an orchestrator response carrying a PRE-PERSISTED ``manage_campaigns``
+    approval (so "type approve" can resolve it by id on both surfaces) plus
+    ``managePrepared=True`` so task_service does NOT re-create it. Returns a helpful
+    no-approval answer when nothing matches, and None when the message isn't a manage
+    request at all (so the normal create/meta-action routing runs).
+    """
+    from .campaign_manage import (
+        agent_created_index,
+        build_manage_approval,
+        detect_manage_intent,
+        format_manage_answer,
+        resolve_target_campaigns,
+    )
+
+    intent = detect_manage_intent(question)
+    if not intent:
+        return None
+
+    routed = route("execution", "Bulk manage of existing campaigns requires approval before execution.")
+
+    camps = campaigns if campaigns is not None else (((knowledge or {}).get("raw", {}) or {}).get("campaigns", []) or [])
+    agent_ids, agent_at = agent_created_index()
+    selected, labels = resolve_target_campaigns(
+        question, camps, agent_ids=agent_ids, agent_created_at=agent_at
+    )
+
+    if not selected:
+        return response(
+            routed,
+            answer=(
+                "I couldn't find campaigns matching that. I can target these sets: "
+                "idle (not active) campaigns, campaigns created over a week ago, or the ones you "
+                "created (test/draft). Which set should I act on?"
+            ),
+            sources=["campaign_manage"],
+            suggested=[
+                "Pause the idle campaigns you created.",
+                "Archive campaigns created over a week ago.",
+                "Show me the campaigns you created.",
+            ],
+        )
+
+    account_id, _pixel = _meta_account_and_pixel()
+    approval = build_manage_approval(
+        intent["action"],
+        selected,
+        account_id=account_id or "",
+        filter_labels=labels,
+        reason="bulk manage from chat",
+    )
+    if approval is None:
+        return response(
+            routed,
+            answer="I matched campaigns but couldn't prepare the action. Try naming the set again.",
+            sources=["campaign_manage"],
+            suggested=["Pause the idle campaigns you created.", "Archive old test campaigns."],
+        )
+
+    saved = _persist_autonomous_approval(approval)
+
+    result = response(
+        routed,
+        answer=format_manage_answer(saved),
+        sources=["campaign_manage"],
+        suggested=[
+            "Approve to apply this.",
+            "Reject to cancel.",
+            "Only the idle ones, not the active ones.",
+        ],
+    )
+    result["activeAgent"] = "execution"
+    result["generatedApprovalRequest"] = saved
+    result["managePrepared"] = True
+    return result
+
+
+def _meta_account_and_pixel() -> tuple[str | None, str | None]:
+    try:
+        from .meta_client import get_meta_config
+
+        config = get_meta_config()
+        return (config.ad_account_id or None), (config.pixel_id or None)
+    except Exception:  # noqa: BLE001 - config absent in tests/dev
+        return None, None
+
+
+def _persist_autonomous_approval(approval: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from .approval_store import create_approval_request
+
+        return create_approval_request(approval)
+    except Exception:  # noqa: BLE001 - persistence is best-effort; still return the packet
+        return approval
+
+
+def format_autonomous_answer(approval: dict[str, Any]) -> str:
+    """Plain-language summary of an autonomously built paused campaign packet."""
+    after = approval.get("after", {}) or {}
+    adsets = after.get("adsets", []) or []
+    opportunity = approval.get("opportunity", {}) or {}
+
+    audience_names = [adset.get("name", "Audience").replace(" - DRAFT", "") for adset in adsets]
+    if not audience_names:
+        audience_names = [
+            str(a.get("label")) for a in opportunity.get("audiences", []) if a.get("label")
+        ]
+
+    total_daily = sum(float(adset.get("daily_budget") or 0) / 100 for adset in adsets)
+    creatives_per_adset = max((len(adset.get("ads") or []) for adset in adsets), default=0)
+
+    template = opportunity.get("sourceTemplate") or {}
+    template_name = template.get("sourceCampaignName") or template.get("name")
+
+    guardrail = approval.get("guardrailResult", "unknown")
+    guard_counts: dict[str, int] = {}
+    for check in approval.get("guardrailChecks", []) or []:
+        guard_counts[check.get("result", "unknown")] = guard_counts.get(check.get("result", "unknown"), 0) + 1
+    guard_rollup = ", ".join(f"{count} {result}" for result, count in guard_counts.items()) or "no checks"
+
+    lines = [
+        "I built a best-guess paused campaign on my own, no further questions needed.",
+        "",
+        f"Audiences ({len(audience_names)}): {', '.join(audience_names) or 'none found'}.",
+    ]
+    if template_name:
+        lines.append(f"Mirrored the winning template: {template_name}.")
+    lines.extend(
+        [
+            f"Total daily budget: ${total_daily:,.2f}/day across {len(adsets)} ad set(s).",
+            f"Creatives per ad set: up to {creatives_per_adset}.",
+            f"Guardrails: {guardrail} ({guard_rollup}).",
+            "",
+            "Everything is PAUSED — no spend until you enable delivery.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def first_playbook_with_segments(playbooks: list[dict[str, Any]]) -> dict[str, Any] | None:
     for playbook in playbooks:
         if playbook.get("segments"):
@@ -418,6 +729,9 @@ def describe_agent_system() -> str:
         "creative",
         "placement",
         "funnel",
+        "measurement",
+        "budget_pacing",
+        "landing_cro",
         "monitoring",
         "experiment",
         "meta_ai_advisor",
@@ -551,19 +865,40 @@ def response(
 
 
 def build_agent_decision(routed: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    handoff_agents = [handoff["toAgent"] for handoff in payload.get("agentHandoffs", []) if handoff.get("toAgent")]
+    handoffs = payload.get("agentHandoffs", [])
+    handoff_agents = [handoff["toAgent"] for handoff in handoffs if handoff.get("toAgent")]
     involved = list(dict.fromkeys([*handoff_agents] or [routed["agentId"]]))
-    high_confidence_handoffs = sum(1 for handoff in payload.get("agentHandoffs", []) if handoff.get("confidence") in {"high", "medium"})
-    confidence_score = 95 if payload.get("sources") and payload.get("suggestedQuestions") else 75
+    high_confidence_handoffs = sum(1 for handoff in handoffs if handoff.get("confidence") in {"high", "medium"})
+
+    # Honest confidence: earn the score from substance (cited sources, next steps,
+    # and the number of confident specialist handoffs), not from field presence.
+    # The old logic stamped 95/100 whenever `sources` was non-empty, which read as
+    # decision quality but only measured whether template fields were populated.
+    score = 40
+    basis: list[str] = []
+    if payload.get("sources"):
+        score += 15
+        basis.append("cited sources")
+    if payload.get("suggestedQuestions"):
+        score += 10
+        basis.append("clear next steps")
+    if high_confidence_handoffs:
+        score += min(30, high_confidence_handoffs * 8)
+        basis.append(f"{high_confidence_handoffs} confident specialist handoff(s)")
     if routed["agentId"] == "orchestrator" and high_confidence_handoffs >= 3:
-        confidence_score = 100
-    if routed["agentId"] == "execution":
-        confidence_score = 95 if payload.get("sources") else 70
+        score += 10
+        basis.append("well-coordinated multi-specialist plan")
+    if routed["agentId"] == "execution" and not payload.get("sources"):
+        score -= 20
+        basis.append("execution path without cited policy")
+    confidence_score = max(20, min(100, score))
+
     return {
         "primaryAgent": routed["agentId"],
         "involvedAgents": involved,
         "approvalRequired": routed["agentId"] in {"orchestrator", "execution", "browser_operator"},
         "confidenceScore": confidence_score,
+        "confidenceBasis": basis or ["limited supporting evidence"],
         "reason": routed["reason"],
         "evidenceNeeds": build_evidence_needs(involved),
     }
@@ -581,6 +916,12 @@ def build_evidence_needs(involved_agents: list[str]) -> list[str]:
         needs.append("Landing click, Telegram START, form click, and CRM attribution events.")
     if "experiment" in involved_agents:
         needs.append("One-variable test plan with stop and scale rules.")
+    if "measurement" in involved_agents:
+        needs.append("Pixel/CAPI event health, attribution windows, and lead/registration dedup status.")
+    if "budget_pacing" in involved_agents:
+        needs.append("Spend pacing vs daily budget, learning-phase status, and CBO/ABO choice.")
+    if "landing_cro" in involved_agents:
+        needs.append("Landing/VSL message-match, page speed, and form/Telegram handoff friction.")
     return needs
 
 
@@ -640,6 +981,17 @@ def build_agent_handoffs(agent_id: str) -> list[dict[str, Any]]:
         ],
         "placement": [
             handoff("placement", "experiment", "Convert placement findings into safe placement tests.", ["placement ranking", "platform quality notes"], "Placement experiment matrix", "medium"),
+        ],
+        "measurement": [
+            handoff("measurement", "budget_pacing", "Gate any scale decision on trustworthy measurement before budget moves.", ["pixel/CAPI health", "attribution windows", "dedup status"], "Scale gate verdict", "high"),
+            handoff("measurement", "audit", "Feed attribution/dedup caveats into the historical lessons.", ["lead/registration action mix", "tracking health"], "Measurement-adjusted confidence notes", "medium"),
+        ],
+        "budget_pacing": [
+            handoff("budget_pacing", "experiment", "Turn pacing/learning findings into a safe budget-step test instead of a live change.", ["pacing diagnosis", "learning-phase status", "target CPA"], "Approval-safe budget step", "high"),
+        ],
+        "landing_cro": [
+            handoff("landing_cro", "experiment", "Convert the landing/VSL leak into a controlled CRO test.", ["funnel leak diagnosis", "message-match check"], "CRO test for the leaking step", "high"),
+            handoff("landing_cro", "funnel", "Confirm the diagnosed leak with funnel/Telegram tracking before optimizing.", ["funnel summary", "landing events"], "Validated leak location", "medium"),
         ],
     }
     return handoff_map.get(agent_id, [])

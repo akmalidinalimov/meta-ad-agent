@@ -89,10 +89,13 @@ def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
             plan["generatedStrategy"]["playbookId"] = saved_playbook["id"]
 
         if request.prepareApproval:
+            config = get_meta_config()
             approval = build_campaign_creation_approval(
                 saved_playbook,
-                account_id=get_meta_config().ad_account_id or "unconfigured_ad_account",
+                account_id=config.ad_account_id or "unconfigured_ad_account",
                 reason=f"Task {task['id']}: prepare paused Meta campaign structure from command.",
+                knowledge=load_knowledge_base(),
+                pixel_id=config.pixel_id or None,
             )
             saved_approval = approval_store.create_approval_request(approval)
             plan["telegramNotification"] = telegram_outbound.send_approval_notification(saved_approval)
@@ -100,7 +103,17 @@ def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
             patch["status"] = "needs_approval"
 
     generated_meta_action_approval = plan.get("generatedApprovalRequest") if isinstance(plan, dict) else None
-    if generated_meta_action_approval and generated_meta_action_approval.get("status") == "needs_review":
+    # Autonomous campaign packets AND managePrepared bulk-manage packets are ALREADY
+    # persisted (and carry an id) by orchestrate_agent_chat, so re-creating here would
+    # duplicate them. Track the existing id + send the notification instead.
+    already_persisted = plan.get("autonomous") or (
+        plan.get("managePrepared") and bool((generated_meta_action_approval or {}).get("id"))
+    )
+    if (
+        generated_meta_action_approval
+        and generated_meta_action_approval.get("status") == "needs_review"
+        and not already_persisted
+    ):
         saved_approval = approval_store.create_approval_request(
             {
                 **generated_meta_action_approval,
@@ -110,6 +123,16 @@ def create_orchestrated_agent_task(request: AgentTaskRequest) -> dict[str, Any]:
         plan["generatedApprovalRequest"] = saved_approval
         plan["telegramNotification"] = telegram_outbound.send_approval_notification(saved_approval)
         patch["approvalId"] = saved_approval["id"]
+        patch["status"] = "needs_approval"
+    elif generated_meta_action_approval and plan.get("managePrepared") and generated_meta_action_approval.get("id"):
+        # Already-saved bulk-manage packet: notify (so Telegram can approve it) and track
+        # the existing id without re-creating.
+        plan["telegramNotification"] = telegram_outbound.send_approval_notification(generated_meta_action_approval)
+        patch["approvalId"] = generated_meta_action_approval.get("id")
+        patch["status"] = "needs_approval"
+    elif generated_meta_action_approval and plan.get("autonomous"):
+        # Already-saved autonomous packet: track it on the task without re-creating.
+        patch["approvalId"] = generated_meta_action_approval.get("id")
         patch["status"] = "needs_approval"
 
     updated = update_agent_task(task["id"], patch)

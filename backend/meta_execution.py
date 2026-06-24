@@ -11,9 +11,24 @@ def build_campaign_creation_approval(
     *,
     account_id: str,
     reason: str = "Create a paused Meta campaign structure from the approved playbook.",
+    knowledge: dict[str, Any] | None = None,
+    pixel_id: str | None = None,
+    template: dict[str, Any] | None = None,
+    creatives_limit: int = 3,
 ) -> dict[str, Any]:
-    campaign = build_campaign_payload(playbook)
-    adsets = [build_adset_payload(segment, playbook) for segment in playbook.get("segments", [])]
+    campaign = build_campaign_payload(playbook, template=template)
+    # Reuse the account's best historical creatives (from synced knowledge) as paused
+    # ads — the same "apply the winners" move a media buyer makes by hand. Each ad set
+    # leads with up to `creatives_limit` proven creatives so the operator can test
+    # several winners per audience. Empty when no knowledge is synced, so the packet
+    # degrades to campaign + ad sets only (the prior behavior).
+    creatives_pool = extract_top_creatives(knowledge, limit=creatives_limit)
+    segments = playbook.get("segments", [])
+    adsets = []
+    for index, segment in enumerate(segments):
+        adset = build_adset_payload(segment, playbook, pixel_id=pixel_id, template=template)
+        adset["ads"] = build_ad_payloads(segment, creatives_pool, index, limit=creatives_limit)
+        adsets.append(adset)
     checks = guardrail_checks(playbook, adsets)
     guardrail_result = rollup_guardrail(checks)
     approval = {
@@ -37,24 +52,67 @@ def build_campaign_creation_approval(
     return approval
 
 
-def build_campaign_payload(playbook: dict[str, Any]) -> dict[str, Any]:
-    return {
+def build_campaign_payload(playbook: dict[str, Any], *, template: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build the PAUSED campaign payload.
+
+    With template=None this returns the exact LIVE-VALIDATED hardcoded shape (Graph v23,
+    proven against the real account) and MUST stay byte-identical — the live-valid tests
+    lock it. When a `template` (a WS-G `config` block from a past WINNING campaign) is
+    supplied, mirror its objective/buyingType/budgetMode/specialAdCategories so a new test
+    inherits what already works on this account instead of the defaults.
+    """
+    payload = {
         "name": f"{playbook.get('name', 'Meta Agent Campaign')} - DRAFT",
         "objective": "OUTCOME_LEADS",
         "status": "PAUSED",
         "special_ad_categories": [],
         "buying_type": "AUCTION",
+        # ABO (ad-set budgets): Graph v23 requires this be set explicitly when the
+        # campaign has no budget. False = ad sets do not share budget.
+        "is_adset_budget_sharing_enabled": False,
     }
+    if not template:
+        return payload
+
+    objective = template.get("objective")
+    if objective:
+        payload["objective"] = objective
+    buying_type = template.get("buyingType")
+    if buying_type:
+        payload["buying_type"] = buying_type
+    special_categories = template.get("specialAdCategories")
+    if special_categories is not None:
+        payload["special_ad_categories"] = special_categories
+    # The winning campaign may be CBO, but the generated test draft keeps ABO (each
+    # audience gets its own ad-set budget). That is both the right way to A/B test new
+    # audiences — CBO would let Meta starve the untested ones — AND required for a valid
+    # write: enabling ad-set budget sharing needs a campaign-level budget + bid strategy
+    # that a paused review shell never sets, so Meta rejects the combination (Invalid
+    # parameter, subcode 4834005). We still mirror objective / buying type / categories,
+    # and each ad set mirrors the winner's optimization, billing, and bid strategy.
+    payload["_templateSource"] = "mirrored_from_winning_campaign_config"
+    return payload
+
+
+def _strip_private_keys(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop packet-only annotation keys (underscore-prefixed) before any Meta write."""
+    return {key: value for key, value in payload.items() if not str(key).startswith("_")}
 
 
 def build_operation_preview(campaign: dict[str, Any], adsets: list[dict[str, Any]]) -> dict[str, Any]:
+    ad_steps = [
+        f"Create PAUSED ad: {ad.get('name')} (reuse creative {ad.get('creativeId')})"
+        for adset in adsets
+        for ad in (adset.get("ads") or [])
+    ]
     return {
         "publishBlocked": True,
         "liveSpendRisk": "none_while_paused",
         "steps": [
             f"Create PAUSED campaign: {campaign.get('name')}",
             *[f"Create PAUSED ad set: {adset.get('name')} with ${float(adset.get('daily_budget', 0)) / 100:,.2f}/day" for adset in adsets],
-            "Stop before ads/publishing until the human approves the exact next action.",
+            *ad_steps,
+            "All objects remain PAUSED until you approve activation separately.",
         ],
         "safetyNotes": [
             "All generated Meta objects must remain PAUSED.",
@@ -78,23 +136,121 @@ def build_execution_readiness(approval: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_adset_payload(segment: dict[str, Any], playbook: dict[str, Any]) -> dict[str, Any]:
+def build_adset_payload(
+    segment: dict[str, Any],
+    playbook: dict[str, Any],
+    *,
+    pixel_id: str | None = None,
+    template: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a LIVE-VALID paused ad-set matching the account's proven pattern.
+
+    With a pixel: OUTCOME_LEADS + OFFSITE_CONVERSIONS optimizing the website-registration
+    event (what produces the account's ~$0.07 registrations). Without a pixel: LINK_CLICKS,
+    which needs no promoted_object and always validates. Targeting is broad geo + age on
+    Instagram only — we deliberately omit interest targeting because Meta requires real
+    interest IDs (name-only flexible_spec is rejected), and broad/Advantage+ is the
+    account's best-performing approach anyway.
+
+    With template=None this output is byte-identical to the prior live-validated shape and
+    MUST stay so. When a `template` (a past WINNING campaign's `config` block) is supplied,
+    mirror its billingEvent/bidStrategy, and — when a pixel is wired — its optimizationGoal
+    and pixel, so a new test inherits the proven settings instead of the defaults.
+    """
     budget = int(round(float(segment.get("startingBudgetUsd") or playbook.get("rules", {}).get("startingBudgetUsd") or 100) * 100))
-    return {
+    payload: dict[str, Any] = {
         "name": f"{segment.get('name', 'Segment')} - DRAFT",
         "status": "PAUSED",
         "daily_budget": budget,
         "billing_event": "IMPRESSIONS",
-        "optimization_goal": "LEAD_GENERATION",
+        # ABO autobid: lowest cost without a cap needs no bid amount; Graph v23 requires
+        # the strategy be explicit on the ad set when the campaign has no budget.
+        "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+        "destination_type": "WEBSITE",
         "targeting": {
             "geo_locations": geo_locations(segment.get("locations") or ["Uzbekistan"]),
             "age_min": age_min(segment.get("ageRange")),
             "age_max": age_max(segment.get("ageRange")),
             "publisher_platforms": ["instagram"],
             "instagram_positions": instagram_positions(segment.get("placements") or []),
-            "flexible_spec": flexible_spec(segment.get("interests") or []),
+            # Graph v23 requires the Advantage+ audience flag be explicit. 0 = respect the
+            # geo/age targeting as set (no algorithmic expansion).
+            "targeting_automation": {"advantage_audience": 0},
         },
     }
+    template_pixel = template.get("promotedObjectPixelId") if template else None
+    effective_pixel = pixel_id or template_pixel
+    if effective_pixel:
+        payload["optimization_goal"] = "OFFSITE_CONVERSIONS"
+        payload["promoted_object"] = {"pixel_id": str(effective_pixel), "custom_event_type": "COMPLETE_REGISTRATION"}
+    else:
+        # No pixel wired -> a goal that needs no promoted_object, so the create still validates.
+        payload["optimization_goal"] = "LINK_CLICKS"
+
+    if template:
+        # Mirror the proven ad-set settings from the winning campaign's config. Only override
+        # when the template actually carries a value, so missing fields keep the safe defaults.
+        billing_event = template.get("billingEvent")
+        if billing_event:
+            payload["billing_event"] = billing_event
+        bid_strategy = template.get("bidStrategy")
+        if bid_strategy:
+            payload["bid_strategy"] = bid_strategy
+        optimization_goal = template.get("optimizationGoal")
+        # Only mirror the optimization goal when we have a pixel to back it — otherwise an
+        # OFFSITE_CONVERSIONS-style goal with no promoted_object would fail Graph validation.
+        if optimization_goal and effective_pixel:
+            payload["optimization_goal"] = optimization_goal
+        payload["_templateSource"] = "mirrored_from_winning_campaign_config"
+    return payload
+
+
+def extract_top_creatives(knowledge: dict[str, Any] | None, *, limit: int = 3) -> list[dict[str, Any]]:
+    """Pull the account's best historical creatives (with a real Meta creative id) from
+    the synced analysis, ranked best-first by topAds order (quality-sorted upstream)."""
+    analysis = (knowledge or {}).get("analysis", {})
+    creatives: list[dict[str, Any]] = []
+    for ad in analysis.get("topAds", []) or []:
+        creative = ad.get("creative") or {}
+        creative_id = creative.get("id")
+        if not creative_id:
+            continue
+        creatives.append({
+            "creativeId": str(creative_id),
+            "name": ad.get("label") or creative.get("name") or "Winning creative",
+        })
+        if len(creatives) >= limit:
+            break
+    return creatives
+
+
+def build_ad_payloads(
+    segment: dict[str, Any],
+    creatives_pool: list[dict[str, Any]],
+    index: int,
+    *,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Attach the top proven creatives to an ad set as PAUSED ads (mirrors a buyer
+    leading each audience with several known winners). Each ad set gets up to `limit`
+    creatives — the same top-N pool for every audience so each fresh audience is tested
+    against the account's best assets. Empty pool -> no ads (structure only).
+
+    `index` is retained for call-site compatibility but no longer rotates the pool: a
+    cycling single creative gave each audience only one winner; leading every audience
+    with the same top-N lets the operator A/B the winners per audience.
+    """
+    if not creatives_pool:
+        return []
+    chosen = creatives_pool[: max(1, int(limit))]
+    return [
+        {
+            "name": f"{creative['name']} - {segment.get('name', 'Segment')}",
+            "creativeId": creative["creativeId"],
+            "status": "PAUSED",
+        }
+        for creative in chosen
+    ]
 
 
 async def execute_campaign_creation_approval(
@@ -105,6 +261,7 @@ async def execute_campaign_creation_approval(
     live_writes_enabled: bool = False,
     create_campaign: MetaCreateFn | None = None,
     create_ad_set: MetaCreateFn | None = None,
+    create_ad: MetaCreateFn | None = None,
 ) -> dict[str, Any]:
     if not is_execution_approved_status(approval_request.get("status")):
         return {"ok": False, "error": "Specific approval is required before execution."}
@@ -118,10 +275,9 @@ async def execute_campaign_creation_approval(
             "wouldCreate": approval_request.get("after", {}),
             "note": "Dry run only. No request was sent to Meta.",
         }
-    if not confirm_live:
-        return {"ok": False, "dryRun": False, "error": "Final live confirmation is required before Meta writes."}
-    if not live_writes_enabled:
-        return {"ok": False, "dryRun": False, "error": "Live Meta writes are disabled by configuration."}
+    block = assert_executable(approval_request, confirm_live=confirm_live, live_writes_enabled=live_writes_enabled)
+    if block:
+        return {"ok": False, "dryRun": False, "error": block}
     if not create_campaign or not create_ad_set:
         return {"ok": False, "dryRun": False, "error": "Meta create functions are not configured."}
 
@@ -129,7 +285,9 @@ async def execute_campaign_creation_approval(
     campaign_payload = after.get("campaign") or {}
     adset_payloads = after.get("adsets") or []
     created = []
-    campaign_result = await create_campaign(campaign_payload)
+    # Strip packet-only metadata (underscore-prefixed, e.g. _templateSource) before any
+    # Meta write; these are our annotations, not Graph fields, and would fail validation.
+    campaign_result = await create_campaign(_strip_private_keys(campaign_payload))
     campaign_id = campaign_result.get("id")
     if not campaign_id:
         return {
@@ -146,7 +304,11 @@ async def execute_campaign_creation_approval(
         "name": campaign_payload.get("name"),
     })
     for adset_payload in adset_payloads:
-        next_payload = {**adset_payload, "campaign_id": campaign_id}
+        # `ads` and any underscore-prefixed key (e.g. _templateSource) are our packet
+        # metadata, not Meta ad-set fields — strip before sending.
+        ads_to_create = adset_payload.get("ads") or []
+        next_payload = _strip_private_keys({key: value for key, value in adset_payload.items() if key != "ads"})
+        next_payload["campaign_id"] = campaign_id
         adset_result = await create_ad_set(next_payload)
         adset_id = adset_result.get("id")
         if not adset_id:
@@ -163,11 +325,38 @@ async def execute_campaign_creation_approval(
             "name": next_payload.get("name"),
         })
 
+        # Create the proven creatives as PAUSED ads under this ad set (reusing existing
+        # creative IDs). Skipped when no create_ad fn is wired or no ads are attached.
+        if create_ad:
+            for ad in ads_to_create:
+                ad_payload = {
+                    "name": ad.get("name", "Winning creative"),
+                    "adset_id": adset_id,
+                    "creative": {"creative_id": ad["creativeId"]},
+                    "status": "PAUSED",
+                }
+                ad_result = await create_ad(ad_payload)
+                ad_id = ad_result.get("id")
+                if not ad_id:
+                    return {
+                        "ok": False,
+                        "dryRun": False,
+                        "created": created,
+                        "error": "Meta ad creation did not return an ad ID.",
+                        "rawResult": ad_result,
+                    }
+                created.append({
+                    "level": "ad",
+                    "id": ad_id,
+                    "name": ad_payload["name"],
+                    "creativeId": ad["creativeId"],
+                })
+
     return {
         "ok": True,
         "dryRun": False,
         "created": created,
-        "note": "Live Meta write completed. Created objects are paused by default.",
+        "note": "Live Meta write completed. Created objects (campaign, ad sets, ads) are paused by default.",
     }
 
 
@@ -205,6 +394,50 @@ async def execute_meta_action_approval(approval: dict[str, Any], *, writer: Any)
     }
 
 
+async def execute_manage_campaigns_approval(approval: dict[str, Any], *, writer: Any) -> dict[str, Any]:
+    """Apply a bulk ``manage_campaigns`` approval: set each campaign's Meta status.
+
+    The caller (router) owns the dry-run short-circuit and the live-write gate
+    (assert_executable + live_writes_enabled); this performs the actual writes. Per-item
+    failures are tolerated — they're collected and the remaining campaigns still proceed,
+    so one stale id can't block the whole cleanup.
+    """
+    if not is_execution_approved_status(approval.get("status")):
+        return {"ok": False, "blockedReason": "Approval must be approved before execution."}
+
+    after = approval.get("after") or {}
+    status_value = after.get("status")
+    if status_value not in {"PAUSED", "ARCHIVED"}:
+        return {"ok": False, "blockedReason": f"Unsupported manage status: {status_value}"}
+
+    changed: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for campaign in after.get("campaigns", []) or []:
+        campaign_id = campaign.get("id")
+        if not campaign_id:
+            errors.append({"id": campaign_id, "name": campaign.get("name"), "error": "Missing campaign id."})
+            continue
+        try:
+            await writer.update_campaign(str(campaign_id), {"status": status_value})
+        except Exception as error:  # noqa: BLE001 - tolerate per-item failure, keep going
+            errors.append({"id": str(campaign_id), "name": campaign.get("name"), "error": str(error)})
+            continue
+        changed.append(
+            {
+                "level": "campaign",
+                "id": str(campaign_id),
+                "name": campaign.get("name"),
+                "status": status_value,
+            }
+        )
+
+    note = (
+        f"Set {len(changed)} campaign(s) to {status_value}."
+        + (f" {len(errors)} failed." if errors else "")
+    )
+    return {"ok": True, "changed": changed, "errors": errors, "note": note}
+
+
 def payload_for_meta_action(action_type: str | None, after: dict[str, Any]) -> dict[str, Any]:
     if action_type == "rename_meta_object" and after.get("name"):
         return {"name": after["name"]}
@@ -219,6 +452,29 @@ def payload_for_meta_action(action_type: str | None, after: dict[str, Any]) -> d
 
 def is_execution_approved_status(status: Any) -> bool:
     return status in {"approved", "dry_run_completed"}
+
+
+def assert_executable(
+    approval: dict[str, Any],
+    *,
+    confirm_live: bool,
+    live_writes_enabled: bool,
+) -> str | None:
+    """Single source of truth for the live-write gate.
+
+    Returns a blocking reason string, or None when a live write may proceed. Both the
+    campaign-creation and meta-action execution paths call this so the safety policy
+    (the most security-critical logic in the app) cannot drift between two copies.
+    """
+    if not is_execution_approved_status(approval.get("status")):
+        return "Specific approval is required before execution."
+    if approval.get("guardrailResult") == "fail":
+        return "Guardrail failed; execution is blocked."
+    if not confirm_live:
+        return "Final live confirmation is required before Meta writes."
+    if not live_writes_enabled:
+        return "Live Meta writes are disabled by configuration."
+    return None
 
 
 def guardrail_checks(playbook: dict[str, Any], adsets: list[dict[str, Any]]) -> list[dict[str, Any]]:

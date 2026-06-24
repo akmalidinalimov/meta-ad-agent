@@ -68,6 +68,47 @@ describe('buildOperatorAttention', () => {
     expect(rows[1].action).toContain('Check tracking')
   })
 
+  it('shows the authored whyItMatters reason even when metricDeltas is also present', () => {
+    const rows = buildOperatorAttention({
+      ...baseData,
+      monitoringAlerts: [
+        {
+          id: 'alert_1',
+          severity: 'high',
+          title: 'CPL rose sharply',
+          whyItMatters: 'Cheap clicks but lead quality is collapsing.',
+          metricDeltas: { CPL: '2 -> 5' },
+          recommendedActions: ['Pause the weakest ad set.'],
+          createdAt: '2026-06-01T00:00:00Z',
+          status: 'open',
+        },
+      ],
+    })
+
+    // Regression: an operator-precedence bug used to discard whyItMatters whenever
+    // metricDeltas was truthy, replacing it with a generic placeholder.
+    expect(rows[0].reason).toBe('Cheap clicks but lead quality is collapsing.')
+  })
+
+  it('falls back to a generic reason when no whyItMatters is authored', () => {
+    const rows = buildOperatorAttention({
+      ...baseData,
+      monitoringAlerts: [
+        {
+          id: 'alert_2',
+          severity: 'medium',
+          title: 'CPC drifting up',
+          metricDeltas: { CPC: '0.2 -> 0.4' },
+          recommendedActions: ['Review creatives.'],
+          createdAt: '2026-06-01T00:00:00Z',
+          status: 'open',
+        },
+      ],
+    })
+
+    expect(rows[0].reason).toBe('Metric movement needs review.')
+  })
+
   it('adds tracking and approval items when there are no alerts', () => {
     const rows = buildOperatorAttention({
       ...baseData,

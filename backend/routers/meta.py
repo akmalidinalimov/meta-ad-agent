@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from ..analysis_engine import build_meta_analysis
+from ..config import live_writes_enabled
 from ..api_models import MetaSyncRequest
 from ..knowledge_base import load_knowledge_base, save_knowledge_base
 from ..llm_reasoner import generate_llm_summary
@@ -40,6 +41,7 @@ async def meta_status() -> dict[str, Any]:
         "pixelConfigured": bool(config.pixel_id),
         "tokenConfigured": bool(config.access_token),
         "tokenPreview": mask_token(config.access_token),
+        "liveWritesEnabled": live_writes_enabled(),
         "connected": False,
         "account": None,
         "error": None,
@@ -55,6 +57,60 @@ async def meta_status() -> dict[str, Any]:
     except MetaApiError as error:
         result["error"] = str(error)
 
+    return result
+
+
+@router.get("/api/meta/adsets/{adset_id}/creatives")
+async def meta_adset_creatives(adset_id: str) -> dict[str, Any]:
+    """Per-ad-set creatives with thumbnails + lifetime stats for the web-app view."""
+    from ..adset_creatives import fetch_adset_creatives, rank_creatives, serialize_creative
+    from ..meta_live import get_live_account
+
+    config = get_meta_config()
+    result: dict[str, Any] = {
+        "configured": config.is_configured,
+        "adsetId": adset_id,
+        "adsetName": None,
+        "campaignId": "",
+        "campaignName": None,
+        "source": "snapshot",
+        "adsManagerUrl": None,
+        "creatives": [],
+        "error": None,
+    }
+    if not config.is_configured:
+        result["error"] = "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to .env."
+        return result
+
+    knowledge = load_knowledge_base() or {}
+    try:
+        ranked = await fetch_adset_creatives(config, adset_id)
+        result["source"] = "live"
+    except MetaApiError as error:
+        ads = [a for a in (knowledge.get("raw", {}).get("ads", []) or []) if str(a.get("adset_id")) == str(adset_id)]
+        ranked = rank_creatives(ads, [])
+        result["source"] = "snapshot"
+        result["error"] = str(error)
+
+    # Ad-set / campaign context for the header + Ads Manager deep link.
+    try:
+        acct = await get_live_account(knowledge=knowledge)
+        adset = next((a for a in acct.adsets if str(a.get("id")) == str(adset_id)), {})
+        campaign_id = str(adset.get("campaign_id") or "")
+        campaign = next((c for c in acct.campaigns if str(c.get("id")) == campaign_id), {})
+        result["adsetName"] = adset.get("name")
+        result["campaignId"] = campaign_id
+        result["campaignName"] = campaign.get("name")
+        bare = config.ad_account_id[4:] if config.ad_account_id.startswith("act_") else config.ad_account_id
+        if bare and campaign_id:
+            result["adsManagerUrl"] = (
+                "https://adsmanager.facebook.com/adsmanager/manage/ads"
+                f"?act={bare}&selected_campaign_ids={campaign_id}"
+            )
+    except MetaApiError:
+        pass
+
+    result["creatives"] = [serialize_creative(ad) for ad in ranked]
     return result
 
 
@@ -168,7 +224,7 @@ async def meta_sync(request: MetaSyncRequest | None = None) -> dict[str, Any]:
             "rawCounts": knowledge["analysis"]["rawCounts"],
             "summary": knowledge["analysis"]["summary"],
             "recommendations": knowledge["analysis"]["recommendations"],
-            "llmEnabled": bool(llm_summary and not llm_summary.startswith("LLM summary unavailable")),
+            "llmEnabled": bool(llm_summary),
         }
     except MetaApiError as error:
         return {"ok": False, "error": str(error)}

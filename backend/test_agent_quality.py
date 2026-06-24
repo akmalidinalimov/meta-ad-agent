@@ -58,3 +58,45 @@ def test_evaluate_agent_response_blocks_empty_answer():
 
     assert result["status"] == "blocked"
     assert "missing_answer" in result["issues"]
+
+
+def test_substance_axis_flags_answer_with_no_numbers():
+    result = evaluate_agent_response(
+        {
+            "activeAgent": "creative",
+            "routeReason": "Creative question.",
+            "answer": "Try fresh hooks and a clearer offer.",
+            "sources": ["creativeAnalyses"],
+            "suggestedQuestions": ["What next?"],
+        }
+    )
+    assert result["substance"]["citesNumber"] is False
+    assert result["substance"]["substanceScore"] < 100
+
+
+def test_substance_axis_flags_unsafe_scale_without_buyer_proof():
+    # Account has leads but zero purchases; a bare "scale" recommendation is unsafe.
+    unsafe = evaluate_agent_response(
+        {
+            "activeAgent": "audience",
+            "routeReason": "Audience question.",
+            "answer": "This audience has 4200 leads — scale the budget aggressively.",
+            "sources": ["audience"],
+            "suggestedQuestions": ["Which next?"],
+        },
+        context={"summary": {"leads": 4200, "purchases": 0}},
+    )
+    assert unsafe["substance"]["recommendsScaleWithoutBuyerProof"] is True
+
+    # Same recommendation WITH the buyer-quality caveat is acceptable.
+    safe = evaluate_agent_response(
+        {
+            "activeAgent": "audience",
+            "routeReason": "Audience question.",
+            "answer": "This audience has 4200 leads. Confirm Telegram START quality before scaling — this is lead quality, not buyer proof.",
+            "sources": ["audience"],
+            "suggestedQuestions": ["Which next?"],
+        },
+        context={"summary": {"leads": 4200, "purchases": 0}},
+    )
+    assert safe["substance"]["recommendsScaleWithoutBuyerProof"] is False

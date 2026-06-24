@@ -14,6 +14,13 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     message: str
+    # Optional operator session id so the web chat can refine its in-flight autonomous
+    # draft across turns (maps to a pending_context_store operator key). When absent the
+    # shared "web:default" key is used.
+    sessionId: str | None = None
+    # When True (the default), an autonomously built best-guess campaign is created in
+    # Meta as PAUSED immediately (no separate approval tap), per operator decision.
+    autoExecute: bool = True
 
 
 class ChatResponse(BaseModel):
@@ -56,26 +63,42 @@ class DraftCampaignProposalRequest(BaseModel):
 
 
 class ApprovalDecisionRequest(BaseModel):
-    approvedBy: str = "akmal"
+    approvedBy: str = "operator"
 
 
 class ApprovalRejectRequest(BaseModel):
-    rejectedBy: str = "akmal"
+    rejectedBy: str = "operator"
     reason: str = ""
 
 
 class ApprovalChangesRequest(BaseModel):
-    requestedBy: str = "akmal"
+    requestedBy: str = "operator"
     note: str = ""
 
 
 class ApprovalExecutionRequest(BaseModel):
     dryRun: bool = True
     confirmLive: bool = False
+    executedBy: str = "operator"
+    # Optional client-supplied idempotency key: a retried/double-clicked live execute
+    # with the same key returns the prior result instead of creating a second campaign.
+    clientRequestId: str | None = None
 
 
 class ScheduledMonitoringRequest(BaseModel):
     force: bool = False
+
+
+class ScheduledOpportunityRequest(BaseModel):
+    # External cron hits the debounced endpoint with force=False; manual/testing
+    # callers pass force=True to bypass the 24h cooldown.
+    force: bool = False
+
+
+class GenerateOpportunityRequest(BaseModel):
+    # Force-generate now (manual/testing). Optional overrides degrade to defaults.
+    accountId: str | None = None
+    perSegmentBudgetUsd: float | None = None
 
 
 class FunnelEventRequest(BaseModel):
@@ -92,6 +115,9 @@ class AgentTaskRequest(BaseModel):
     campaignGroupId: str | None = None
     segmentIds: list[str] = []
     prepareApproval: bool = False
+    # Optional operator key (e.g. "tg:12345") so a Telegram-originated task can refine
+    # its in-flight autonomous draft across turns. None keeps the prior behavior.
+    operatorKey: str | None = None
 
 
 class CouncilRequest(BaseModel):

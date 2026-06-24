@@ -100,3 +100,14 @@ def test_refine_text_returns_input_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     out = asyncio.run(refine_text("Deterministic answer with $0.04 CPL.", instruction="improve"))
     assert out == "Deterministic answer with $0.04 CPL."
+
+
+def test_build_proactive_insights_survives_partial_findings(monkeypatch):
+    # Hot-path robustness: a knowledge base that only yields a subset of finding
+    # families must not KeyError (it used bracket access before).
+    monkeypatch.setattr(
+        "backend.proactive_insights.collect_findings",
+        lambda knowledge: {"creative": {}, "audit": {"summary": {}}},
+    )
+    insights = build_proactive_insights({"any": "knowledge"})
+    assert isinstance(insights, list)

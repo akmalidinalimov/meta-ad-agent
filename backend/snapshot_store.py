@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .storage_io import write_json_atomic
+
 ROOT = Path(__file__).resolve().parents[1]
 STORAGE_DIR = ROOT / "storage"
 SNAPSHOT_DIR = STORAGE_DIR / "snapshots"
@@ -40,10 +42,7 @@ def build_snapshot_payload(
 
 
 def save_snapshot(payload: dict[str, Any], *, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
-    snapshot_dir = storage_dir / "snapshots"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    path = snapshot_dir / f"{payload['id']}.json"
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(storage_dir / "snapshots" / f"{payload['id']}.json", payload)
     return snapshot_metadata(payload)
 
 
