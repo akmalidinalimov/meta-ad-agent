@@ -11,12 +11,12 @@ from backend.bitrix_client import (
 )
 
 
-def test_lead_source_title_default_matches_all_ai_creators_variants(monkeypatch):
-    # The default must be the broad "AI Creators" substring so it catches every variant —
-    # the order form, the "Заполнение CRM-формы AI Creators…" web forms, and 4.0 — not just
-    # the exact order-form title (which undercounts leads and inflates cost-per-lead).
+def test_lead_source_title_default_scopes_to_ai_creators_5(monkeypatch):
+    # Default = "AI Creators 5.0": catches the 5.0 order form + the "Заполнение CRM-формы
+    # AI Creators 5.0 | …" web forms, but NOT the older AI Creators 4.0 (different product).
+    # The exact order-form title alone undercounts; bare "AI Creators" over-counts (incl 4.0).
     monkeypatch.delenv("BITRIX_LEAD_SOURCE_TITLE", raising=False)
-    assert lead_source_title() == "AI Creators"
+    assert lead_source_title() == "AI Creators 5.0"
     monkeypatch.setenv("BITRIX_LEAD_SOURCE_TITLE", "Custom Title")
     assert lead_source_title() == "Custom Title"
 

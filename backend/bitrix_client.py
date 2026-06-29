@@ -32,11 +32,12 @@ def tashkent_day(created_at: Any) -> str:
     return dt.astimezone(TASHKENT_TZ).date().isoformat()
 
 
-# Bitrix %TITLE substring that scopes THIS funnel's CRM leads. The default matches ALL AI-Creators
-# lead variants — the order form ("AI Creators 5.0 buyurtmasi"), the web "Заполнение CRM-формы
-# AI Creators…" forms, and 4.0/future versions — not just the exact order-form title (which only
-# catches ~80% of the leads and inflates cost-per-lead). Override with BITRIX_LEAD_SOURCE_TITLE.
-DEFAULT_LEAD_SOURCE_TITLE = "AI Creators"
+# Bitrix %TITLE substring that scopes THIS funnel's CRM leads. Default = "AI Creators 5.0" so it
+# matches every AI Creators 5.0 variant — the order form ("AI Creators 5.0 buyurtmasi") AND the web
+# "Заполнение CRM-формы AI Creators 5.0 | …" forms — but NOT the older "AI Creators 4.0" leads (a
+# different product). The exact order-form title alone undercounts (misses the web forms); bare
+# "AI Creators" over-counts (pulls in 4.0). Override with BITRIX_LEAD_SOURCE_TITLE.
+DEFAULT_LEAD_SOURCE_TITLE = "AI Creators 5.0"
 
 
 def lead_source_title() -> str:
