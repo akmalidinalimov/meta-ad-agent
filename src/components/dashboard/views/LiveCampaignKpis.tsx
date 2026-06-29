@@ -3,8 +3,9 @@
 // CRM stage breakdown, and spend & volume. EVERYTHING auto-fetches on Refresh — there
 // are no manual inputs: Meta volumes from /api/campaigns/kpis, bot starts from the
 // first-party Telegram relay, CRM leads from /api/crm/stages (Bitrix), VSL views from
-// /api/vsl (YouTube). Rates are recomputed client-side (capped at 100%); Start rate uses
-// the backend's select_start_rate.
+// /api/vsl (YouTube). Rates are recomputed client-side (capped at 100%) — EXCEPT VSL reach,
+// which is an uncapped YouTube-views ÷ bot-starts PROXY (not a true watch rate; see below).
+// Start rate uses the backend's select_start_rate.
 import { useEffect, useState } from 'react'
 import {
   getCampaignKpis,
@@ -36,7 +37,7 @@ const RATE_CARDS = [
   { key: 'visit', label: 'Visit rate', color: '#2563eb', desc: '% of ad-clickers whose page loaded', sub: (i: FunnelInputs) => `${formatNumber(i.landingViews)} views ÷ ${formatNumber(i.linkClicks)} clicks` },
   { key: 'lead', label: 'Lead rate', color: '#0d9488', desc: '% of visitors who clicked the CTA', sub: (i: FunnelInputs) => `${formatNumber(i.leads)} leads ÷ ${formatNumber(i.landingViews)} views` },
   { key: 'start', label: 'Start rate', color: '#7c3aed', desc: '% of button-clickers who started the bot', sub: (i: FunnelInputs) => `${formatNumber(i.botStarts)} starts ÷ ${formatNumber(i.leads)} leads` },
-  { key: 'vslView', label: 'VSL view rate', color: '#ea580c', desc: '% of bot-starters who watched the VSL', sub: (i: FunnelInputs) => `${formatNumber(i.vslViews)} VSL views ÷ ${formatNumber(i.botStarts)} starts` },
+  { key: 'vslView', label: 'VSL reach (YT)', color: '#ea580c', desc: 'YouTube views ÷ bot-starts — a directional reach PROXY (the VSL is watched mostly inside Telegram, so YouTube undercounts); NOT a true watch rate', sub: (i: FunnelInputs) => `${formatNumber(i.vslViews)} YouTube views ÷ ${formatNumber(i.botStarts)} starts` },
   { key: 'crmFill', label: 'CRM fill rate', color: '#db2777', desc: '% of bot-starters who filled the in-bot form', sub: (i: FunnelInputs) => `${formatNumber(i.crmLeads)} form submits ÷ ${formatNumber(i.botStarts)} starts` },
 ] as const
 
@@ -45,7 +46,7 @@ const COST_DEFS = [
   { key: 'perVisit', color: '#2563eb', label: 'per visit (landing view)' },
   { key: 'perLead', color: '#0d9488', label: 'per lead (CTA)' },
   { key: 'perBotStart', color: '#7c3aed', label: 'per bot start' },
-  { key: 'perVslView', color: '#ea580c', label: 'per VSL view' },
+  { key: 'perVslView', color: '#ea580c', label: 'per VSL view (YouTube)' },
   { key: 'perCrmLead', color: '#db2777', label: 'per CRM lead' },
 ] as const
 
@@ -180,6 +181,12 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
           } else if (card.key === 'vslView' && vslAccruing) {
             value = loading ? '…' : '—'
             sub = 'VSL daily accrues — check back tomorrow'
+          } else if (card.key === 'vslView') {
+            // Reach proxy: uncapped YouTube-views ÷ bot-starts (can exceed 100% — public
+            // YouTube counts rewatches + non-bot viewers). For short windows, YouTube's
+            // ~48h reporting lag starves the numerator, so the number reads artificially low.
+            value = loading ? '…' : reachRate != null ? `${reachRate.toFixed(1)}%` : '—'
+            sub = card.sub(inputs) + (days <= 2 ? ' · YouTube lags ~48h, so today/recent read low' : '')
           } else if (card.key === 'crmFill' && crmNotTracked) {
             value = loading ? '…' : '—'
             sub = 'In-bot form-submit relay not connected — add it in ChatPlace to populate this.'
@@ -241,11 +248,6 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
                 {startHealthWarning && startHealthMessage ? startHealthMessage : sub}
               </span>
               <small>{card.desc}</small>
-              {card.key === 'vslView' && !loading && (
-                <small title="YouTube views ÷ bot-starts. May exceed 100% — public YouTube counts rewatches and non-bot viewers; Studio data lags ~48 h.">
-                  VSL reach: {reachRate != null ? `${reachRate.toFixed(1)}%` : '—'} <span style={{ opacity: 0.65 }}>(YouTube views ÷ bot-starts)</span>
-                </small>
-              )}
               <span className="simple-rate-trend-hint">📈 {selected ? 'trend shown' : 'view trend'}</span>
             </article>
           )
