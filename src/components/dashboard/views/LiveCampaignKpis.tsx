@@ -37,7 +37,7 @@ const RATE_CARDS = [
   { key: 'visit', label: 'Visit rate', color: '#2563eb', desc: '% of ad-clickers whose page loaded', sub: (i: FunnelInputs) => `${formatNumber(i.landingViews)} views ÷ ${formatNumber(i.linkClicks)} clicks` },
   { key: 'lead', label: 'Lead rate', color: '#0d9488', desc: '% of visitors who clicked the CTA', sub: (i: FunnelInputs) => `${formatNumber(i.leads)} leads ÷ ${formatNumber(i.landingViews)} views` },
   { key: 'start', label: 'Start rate', color: '#7c3aed', desc: '% of button-clickers who started the bot', sub: (i: FunnelInputs) => `${formatNumber(i.botStarts)} starts ÷ ${formatNumber(i.leads)} leads` },
-  { key: 'vslView', label: 'VSL reach (YT)', color: '#ea580c', desc: 'YouTube views ÷ bot-starts — a directional reach PROXY (the VSL is watched mostly inside Telegram, so YouTube undercounts); NOT a true watch rate', sub: (i: FunnelInputs) => `${formatNumber(i.vslViews)} YouTube views ÷ ${formatNumber(i.botStarts)} starts` },
+  { key: 'vslView', label: 'VSL view rate', color: '#ea580c', desc: '% of bot-starters who started the VSL inside the bot (first-party)', sub: (i: FunnelInputs) => `${formatNumber(i.vslViews)} VSL plays ÷ ${formatNumber(i.botStarts)} starts` },
   { key: 'crmFill', label: 'CRM fill rate', color: '#db2777', desc: '% of bot-starters who filled the in-bot form', sub: (i: FunnelInputs) => `${formatNumber(i.crmLeads)} form submits ÷ ${formatNumber(i.botStarts)} starts` },
 ] as const
 
@@ -46,7 +46,7 @@ const COST_DEFS = [
   { key: 'perVisit', color: '#2563eb', label: 'per visit (landing view)' },
   { key: 'perLead', color: '#0d9488', label: 'per lead (CTA)' },
   { key: 'perBotStart', color: '#7c3aed', label: 'per bot start' },
-  { key: 'perVslView', color: '#ea580c', label: 'per VSL view (YouTube)' },
+  { key: 'perVslView', color: '#ea580c', label: 'per VSL play (in-bot)' },
   { key: 'perCrmLead', color: '#db2777', label: 'per CRM lead' },
 ] as const
 
@@ -96,16 +96,19 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
   const vsl = loading ? undefined : bundle?.vsl
   const live = Boolean(kpis?.ok && kpis?.hasData)
 
-  // VSL views for the active window: a bounded range uses the period delta (periodViews),
-  // an open "last N days" window uses YouTube's lifetime cumulative.
-  const vslViewsValue = scoped ? (vsl?.periodViews ?? null) : (vsl?.views ?? null)
+  // VSL view rate = FIRST-PARTY in-bot "VSL started" events ÷ bot-starts (same source + window as
+  // bot_start). A YouTube view-count can't measure in-bot watching (the bot serves the VSL inside
+  // Telegram, so YouTube undercounts ~50×), so it is NOT used for the rate — only shown as a small
+  // "promo views" note. The card reads "not connected" until the ChatPlace vsl_sequence_started
+  // relay exists (vslPlays > 0), then lights up automatically.
+  const vslPlays = kpis?.counts?.vslPlays ?? 0
+  const vslKeyMessage = kpis?.counts?.vslKeyMessage ?? 0
+  const vslPlaysTracked = Boolean(kpis?.ok && vslPlays > 0)
+  const youtubeViews = vsl?.configured ? (vsl?.views ?? null) : null // lifetime YT count — note only
 
-  // Every input is LIVE — no manual entry. Bot starts come from the first-party Telegram
-  // relay (kpis.counts.botStarts), CRM leads from Bitrix bot-only (Cell B), VSL views from
-  // YouTube. All refresh together when Refresh is pressed.
-  // CRM fill = people who filled the form INSIDE the Telegram bot, measured by the
-  // first-party crm_form_submit event (a ChatPlace relay, like bot_start) — NOT the Bitrix
-  // "Cell B" tag, which is the no-bot direct-landing form. formSubmits is account-wide.
+  // Every input is LIVE — no manual entry. Bot starts come from the first-party Telegram relay
+  // (kpis.counts.botStarts); CRM-fill + VSL-view rates use first-party in-bot events (crm_form_submit
+  // / vsl_sequence_started), NOT Bitrix tags or YouTube. All refresh together on Refresh.
   const formSubmits = kpis?.counts?.formSubmits ?? 0
   const crmNotTracked = Boolean(kpis?.ok && formSubmits === 0)
   const inputs: FunnelInputs = {
@@ -113,23 +116,15 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
     landingViews: kpis?.counts?.landingPageViews ?? 0,
     leads: kpis?.counts?.leads ?? 0,
     botStarts: kpis?.counts?.botStarts ?? 0,
-    vslViews: vslViewsValue ?? 0,
+    vslViews: vslPlaysTracked ? vslPlays : 0, // first-party in-bot plays (0 until the relay exists)
     crmLeads: formSubmits,
     spend: kpis?.kpis?.spend ?? 0,
   }
   const out = computeSimpleFunnel(inputs)
   const maxBar = Math.max(inputs.linkClicks, 1)
-  const vslNeedsConnect = Boolean(vsl && !vsl.configured)
-  // Configured, but a bounded range with no baseline snapshot yet → daily VSL still accruing.
-  const vslAccruing = Boolean(vsl?.configured && scoped && vslViewsValue == null)
-
-  // VSL reach rate: YouTube views ÷ bot-starts. Uses period views when scoped, lifetime
-  // otherwise. Can exceed 100% (public YouTube includes rewatches + non-bot viewers; YouTube
-  // Studio data lags ~48 h so there is also an API lag effect).
-  const reachViews = vsl?.periodViews ?? vsl?.views ?? null
-  const botStartsForReach = kpis?.counts?.botStarts ?? 0
-  const reachRate: number | null =
-    botStartsForReach > 0 && reachViews != null ? (reachViews / botStartsForReach) * 100 : null
+  // Watch-through (depth): of those who started the VSL, how many reached the key-message checkpoint.
+  const watchThrough: number | null =
+    vslPlaysTracked && vslKeyMessage > 0 ? Math.min(100, Math.round((vslKeyMessage / vslPlays) * 1000) / 10) : null
 
   const periodText = periodLabel ?? (scoped ? `${since} → ${until}` : `last ${days} days`)
   const freshness = loading
@@ -175,18 +170,9 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
               startHealthWarning = kpis.startHealth.stalled ? 'stalled' : 'gap'
               startHealthMessage = kpis.startHealth.message
             }
-          } else if (card.key === 'vslView' && vslNeedsConnect) {
+          } else if (card.key === 'vslView' && !vslPlaysTracked) {
             value = loading ? '…' : '—'
-            sub = 'Connect YouTube to populate'
-          } else if (card.key === 'vslView' && vslAccruing) {
-            value = loading ? '…' : '—'
-            sub = 'VSL daily accrues — check back tomorrow'
-          } else if (card.key === 'vslView') {
-            // Reach proxy: uncapped YouTube-views ÷ bot-starts (can exceed 100% — public
-            // YouTube counts rewatches + non-bot viewers). For short windows, YouTube's
-            // ~48h reporting lag starves the numerator, so the number reads artificially low.
-            value = loading ? '…' : reachRate != null ? `${reachRate.toFixed(1)}%` : '—'
-            sub = card.sub(inputs) + (days <= 2 ? ' · YouTube lags ~48h, so today/recent read low' : '')
+            sub = 'In-bot VSL relay not connected — fire vsl_sequence_started from ChatPlace to populate this.'
           } else if (card.key === 'crmFill' && crmNotTracked) {
             value = loading ? '…' : '—'
             sub = 'In-bot form-submit relay not connected — add it in ChatPlace to populate this.'
@@ -248,6 +234,14 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
                 {startHealthWarning && startHealthMessage ? startHealthMessage : sub}
               </span>
               <small>{card.desc}</small>
+              {card.key === 'vslView' && !loading && watchThrough != null && (
+                <small>Watch-through: {watchThrough}% reached the key message</small>
+              )}
+              {card.key === 'vslView' && !loading && youtubeViews != null && (
+                <small style={{ opacity: 0.6 }} title="YouTube's public view count for the VSL video — promo/launch/organic views, NOT your in-bot watches (the bot serves the VSL inside Telegram, which YouTube can't count).">
+                  YouTube promo views: {formatNumber(youtubeViews)} <span style={{ opacity: 0.8 }}>(not bot-watches)</span>
+                </small>
+              )}
               <span className="simple-rate-trend-hint">📈 {selected ? 'trend shown' : 'view trend'}</span>
             </article>
           )
@@ -279,8 +273,8 @@ export function LiveCampaignKpis({ campaignId, campaignName, days, since, until,
         </div>
         <small className="simple-help">
           Each row’s % is that step’s conversion vs the stage above it. Everything auto-refreshes — Meta volumes from live
-          insights, bot starts + in-bot form submits from the Telegram relay, VSL views from YouTube.
-          {vslNeedsConnect ? ' VSL views read 0 until YouTube is connected (set YOUTUBE_VSL_VIDEO_ID + YOUTUBE_API_KEY).' : ''}
+          insights, bot starts + in-bot form submits + VSL plays from the first-party Telegram relay.
+          {!vslPlaysTracked ? ' VSL plays read 0 until the in-bot vsl_sequence_started relay is connected in ChatPlace.' : ''}
         </small>
       </div>
 

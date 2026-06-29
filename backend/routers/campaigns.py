@@ -243,6 +243,12 @@ async def campaign_kpis(
     # crm_form_submit, like bot_start). This is the CORRECT CRM-fill numerator — the bot's
     # in-chat form — not the Bitrix "Cell B" tag (which is the no-bot direct landing form).
     form_submits = count_event_users("crm_form_submit", since_iso=since_iso, until_iso=until_iso)
+    # First-party "started watching the VSL inside the bot" signal (a ChatPlace relay fires
+    # vsl_sequence_started, like bot_start). This is the CORRECT VSL-view numerator — a YouTube
+    # view-count can't see in-bot watching. vsl_key_message_sent = a later checkpoint = watch-depth.
+    # Both are 0 until the ChatPlace relay exists, so the card shows "not connected" until then.
+    vsl_plays = count_event_users("vsl_sequence_started", since_iso=since_iso, until_iso=until_iso)
+    vsl_key_message = count_event_users("vsl_key_message_sent", since_iso=since_iso, until_iso=until_iso)
     bot_starts, start_scope = account_starts, "account"
     if scoped:
         since_date, end_date = start_day.isoformat(), end_day.isoformat()
@@ -300,6 +306,8 @@ async def campaign_kpis(
             "botStarts": int(bot_starts),
             "telegramLinkClicks": int(link_clicks),
             "formSubmits": int(form_submits),
+            "vslPlays": int(vsl_plays),
+            "vslKeyMessage": int(vsl_key_message),
         },
         "startSource": start["numeratorSource"],
         "startDenominatorSource": start["denominatorSource"],

@@ -127,6 +127,8 @@ export type CampaignKpis = {
     botStarts?: number
     telegramLinkClicks?: number
     formSubmits?: number
+    vslPlays?: number
+    vslKeyMessage?: number
   }
   startSource?: string
   startDenominatorSource?: string
