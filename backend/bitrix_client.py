@@ -32,6 +32,17 @@ def tashkent_day(created_at: Any) -> str:
     return dt.astimezone(TASHKENT_TZ).date().isoformat()
 
 
+# Bitrix %TITLE substring that scopes THIS funnel's CRM leads. The default matches ALL AI-Creators
+# lead variants — the order form ("AI Creators 5.0 buyurtmasi"), the web "Заполнение CRM-формы
+# AI Creators…" forms, and 4.0/future versions — not just the exact order-form title (which only
+# catches ~80% of the leads and inflates cost-per-lead). Override with BITRIX_LEAD_SOURCE_TITLE.
+DEFAULT_LEAD_SOURCE_TITLE = "AI Creators"
+
+
+def lead_source_title() -> str:
+    return os.getenv("BITRIX_LEAD_SOURCE_TITLE", DEFAULT_LEAD_SOURCE_TITLE).strip()
+
+
 @dataclass(frozen=True)
 class BitrixConfig:
     webhook_url: str

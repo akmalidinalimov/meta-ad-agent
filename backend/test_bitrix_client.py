@@ -5,9 +5,20 @@ from backend.bitrix_client import (
     build_bitrix_webhook_url,
     fetch_bitrix_leads,
     fetch_bitrix_statuses,
+    lead_source_title,
     normalize_bitrix_lead,
     normalize_bitrix_status,
 )
+
+
+def test_lead_source_title_default_matches_all_ai_creators_variants(monkeypatch):
+    # The default must be the broad "AI Creators" substring so it catches every variant —
+    # the order form, the "Заполнение CRM-формы AI Creators…" web forms, and 4.0 — not just
+    # the exact order-form title (which undercounts leads and inflates cost-per-lead).
+    monkeypatch.delenv("BITRIX_LEAD_SOURCE_TITLE", raising=False)
+    assert lead_source_title() == "AI Creators"
+    monkeypatch.setenv("BITRIX_LEAD_SOURCE_TITLE", "Custom Title")
+    assert lead_source_title() == "Custom Title"
 
 
 class FakeBitrixTransport:

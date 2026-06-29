@@ -14,6 +14,7 @@ from ..bitrix_client import (
     fetch_bitrix_statuses,
     get_bitrix_config,
     get_bot_cell_tags,
+    lead_source_title,
     tashkent_day,
 )
 from ..crm_funnel import build_crm_stage_breakdown, split_by_cell
@@ -142,7 +143,7 @@ async def crm_stages(
             "cellCounts": {"A": 0, "B": 0, "all": 0},
         }
 
-    title = os.getenv("BITRIX_LEAD_SOURCE_TITLE", "AI Creators 5.0 buyurtmasi").strip()
+    title = lead_source_title()  # matches all AI-Creators lead variants (see bitrix_client)
     # Resolve the window: an explicit since..until wins; else the last N days.
     end_day = _parse_day(until) or date.today()
     start_day = _parse_day(since)

@@ -67,13 +67,15 @@ async def _crm_leads_by_date(days: int) -> dict[str, int]:
     """Per-day CRM-lead counts from Bitrix, BOT-only (Cell B) — the same bot leads the CRM
     card counts, so the trend's CRM-fill line matches the headline. Best-effort: returns {}
     when Bitrix isn't configured or the read fails, so a CRM hiccup never blanks the trend."""
-    from ..bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config, get_bot_cell_tags
+    from ..bitrix_client import (
+        HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config, get_bot_cell_tags, lead_source_title,
+    )
     from ..crm_funnel import split_by_cell
 
     config = get_bitrix_config()
     if not config.is_configured:
         return {}
-    title = os.getenv("BITRIX_LEAD_SOURCE_TITLE", "AI Creators 5.0 buyurtmasi").strip()
+    title = lead_source_title()  # all AI-Creators lead variants (matches the dashboard cost-per-lead)
     try:
         leads = await fetch_bitrix_leads(
             transport=HttpBitrixTransport(config), days=days, limit=None, title_contains=title or None

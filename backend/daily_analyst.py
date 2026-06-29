@@ -30,11 +30,13 @@ async def _crm_today() -> dict[str, Any]:
     # ASYNC and awaited — run_daily_analysis already runs in an event loop; using
     # run_until_complete would crash with 'loop already running'.
     try:
-        from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config, tashkent_day
+        from .bitrix_client import (
+            HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config, lead_source_title, tashkent_day,
+        )
         config = get_bitrix_config()
         if not config.is_configured:
             return {"leads": 0, "stages": {}}
-        title = os.getenv("BITRIX_LEAD_SOURCE_TITLE", "AI Creators 5.0 buyurtmasi").strip()
+        title = lead_source_title()  # all AI-Creators lead variants (matches the dashboard)
         # Fetch a 2-day buffer (Bitrix DATE_CREATE is +03:00) then keep only leads whose
         # Asia/Tashkent calendar day is today — matching the dashboard's cost-per-lead count
         # (title-scoped to THIS funnel, not the whole multi-course Bitrix portal).
