@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .analysis_engine import aggregate_rows, valid_rows
+from .bitrix_client import tashkent_day
 from .funnel_events import STORAGE_DIR, select_start_rate
 
 HISTORY_PATH = STORAGE_DIR / "funnel_history.jsonl"
@@ -76,7 +77,7 @@ def crm_leads_by_date(leads: list[dict[str, Any]]) -> dict[str, int]:
     filtered to the configured source/order title by the caller)."""
     counts: Counter[str] = Counter()
     for lead in leads:
-        created = str(lead.get("createdAt") or "")[:10]
+        created = tashkent_day(lead.get("createdAt"))  # bucket on Tashkent days (DATE_CREATE is +03:00)
         if created:
             counts[created] += 1
     return dict(counts)

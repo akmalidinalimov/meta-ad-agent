@@ -14,6 +14,7 @@ from ..bitrix_client import (
     fetch_bitrix_statuses,
     get_bitrix_config,
     get_bot_cell_tags,
+    tashkent_day,
 )
 from ..crm_funnel import build_crm_stage_breakdown, split_by_cell
 from ..crm_store import STORAGE_DIR as CRM_STORAGE_DIR
@@ -27,6 +28,11 @@ _STAGES_TTL_SECONDS = 90
 
 def build_bitrix_transport(config: Any) -> Any:
     return HttpBitrixTransport(config)
+
+
+# Bucket Bitrix leads on Asia/Tashkent days (their DATE_CREATE carries a +03:00 offset).
+# Shared with funnel_history + daily_analyst so every lead-day count uses the same boundary.
+_lead_day = tashkent_day
 
 
 @router.get("/api/crm/bitrix/status")
@@ -159,9 +165,11 @@ async def crm_stages(
     except Exception as exc:  # noqa: BLE001 - surface a sanitized 502
         raise HTTPException(status_code=502, detail=f"Bitrix24 stages read failed: {exc}") from exc
 
-    # Clamp to the requested window (fetch is >=start; trim anything created after `until`).
+    # Clamp to the requested window, bucketing each lead on its Asia/Tashkent calendar day
+    # (Bitrix timestamps carry a +03:00 offset) so the lead-day aligns with the Tashkent
+    # spend-day — otherwise late-night Tashkent leads leak to the previous day.
     lo, hi = start_day.isoformat(), end_day.isoformat()
-    window = [lead for lead in leads if lo <= str(lead.get("createdAt") or "")[:10] <= hi]
+    window = [lead for lead in leads if lo <= _lead_day(lead.get("createdAt")) <= hi]
 
     descs, utms = get_bot_cell_tags()
     split = split_by_cell(window, bot_source_descriptions=descs, bot_utm_contents=utms)

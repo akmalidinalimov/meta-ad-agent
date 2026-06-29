@@ -74,6 +74,16 @@ def test_crm_leads_by_date_counts_by_created():
     assert crm_leads_by_date(leads) == {"2026-06-17": 2, "2026-06-18": 1}
 
 
+def test_crm_leads_by_date_buckets_late_night_on_tashkent_day():
+    # 23:30 at +03:00 (Bitrix/Moscow) on Jun 17 == 01:30 Tashkent on Jun 18 — must count on
+    # Jun 18 (the raw [:10] would wrongly bucket it on Jun 17, dropping late-night leads).
+    leads = [
+        {"createdAt": "2026-06-17T23:30:00+03:00"},  # -> Tashkent 2026-06-18 01:30
+        {"createdAt": "2026-06-18T10:00:00+03:00"},  # -> Tashkent 2026-06-18 12:00
+    ]
+    assert crm_leads_by_date(leads) == {"2026-06-18": 2}
+
+
 def test_daterange_is_inclusive():
     assert daterange(date(2026, 6, 17), date(2026, 6, 19)) == ["2026-06-17", "2026-06-18", "2026-06-19"]
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Protocol
 
 import httpx
@@ -11,6 +11,25 @@ from dotenv import load_dotenv
 from .meta_client import get_ssl_context
 
 load_dotenv()
+
+TASHKENT_TZ = timezone(timedelta(hours=5))  # Asia/Tashkent (UTC+5, no DST)
+
+
+def tashkent_day(created_at: Any) -> str:
+    """Calendar day of a Bitrix timestamp on **Asia/Tashkent** time.
+
+    Bitrix returns DATE_CREATE with the portal's own offset (currently +03:00 / Moscow), so a raw
+    ``[:10]`` buckets leads on Moscow days — misdating the first ~2 late-night Tashkent hours (a real
+    traffic peak here) to the previous day. Convert to Tashkent first so lead-days line up with the
+    Tashkent spend-day / dashboard window. Unparseable input falls back to the first 10 chars."""
+    text = str(created_at or "")
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return text[:10]
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(TASHKENT_TZ).date().isoformat()
 
 
 @dataclass(frozen=True)

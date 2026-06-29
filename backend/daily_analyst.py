@@ -5,8 +5,9 @@ object. Best-effort per source - a failing source degrades its section, never th
 from __future__ import annotations
 
 import asyncio
+import os
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 # today + 3 trailing days for trend context
@@ -29,13 +30,20 @@ async def _crm_today() -> dict[str, Any]:
     # ASYNC and awaited — run_daily_analysis already runs in an event loop; using
     # run_until_complete would crash with 'loop already running'.
     try:
-        from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config
+        from .bitrix_client import HttpBitrixTransport, fetch_bitrix_leads, get_bitrix_config, tashkent_day
         config = get_bitrix_config()
         if not config.is_configured:
             return {"leads": 0, "stages": {}}
+        title = os.getenv("BITRIX_LEAD_SOURCE_TITLE", "AI Creators 5.0 buyurtmasi").strip()
+        # Fetch a 2-day buffer (Bitrix DATE_CREATE is +03:00) then keep only leads whose
+        # Asia/Tashkent calendar day is today — matching the dashboard's cost-per-lead count
+        # (title-scoped to THIS funnel, not the whole multi-course Bitrix portal).
         leads = await asyncio.wait_for(
-            fetch_bitrix_leads(transport=HttpBitrixTransport(config), days=1, limit=None), timeout=10.0)
-        return {"leads": len(leads), "stages": {}}
+            fetch_bitrix_leads(transport=HttpBitrixTransport(config), days=2, limit=None, title_contains=title or None),
+            timeout=10.0)
+        today = (datetime.now(timezone.utc) + timedelta(hours=5)).date().isoformat()
+        n = sum(1 for lead in leads if tashkent_day(lead.get("createdAt")) == today)
+        return {"leads": n, "stages": {}}
     except Exception:  # noqa: BLE001 - CRM is one of several sources
         return {"leads": 0, "stages": {}}
 
