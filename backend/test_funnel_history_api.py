@@ -70,7 +70,7 @@ def test_history_builds_daily_points(monkeypatch):
     monkeypatch.setattr(funnel_mod, "get_entity_insights", fake_entity_insights)
     monkeypatch.setattr(
         funnel_mod,
-        "load_funnel_events",
+        "iter_funnel_events",
         lambda **k: [
             {"eventName": "bot_start", "receivedAt": yesterday.isoformat() + "T08:00:00Z", "telegramUserId": "A"},
             {"eventName": "bot_start", "receivedAt": yesterday.isoformat() + "T09:00:00Z", "telegramUserId": "B"},

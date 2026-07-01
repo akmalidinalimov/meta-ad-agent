@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -90,19 +91,30 @@ def save_funnel_event(payload: dict[str, Any], *, storage_dir: Path = STORAGE_DI
     return event
 
 
-def load_funnel_events(*, storage_dir: Path = STORAGE_DIR) -> list[dict[str, Any]]:
+def iter_funnel_events(*, storage_dir: Path = STORAGE_DIR) -> Iterator[dict[str, Any]]:
+    """Stream funnel events one line at a time so a large funnel_events.jsonl (tens of MB /
+    ~100k lines) never materializes as a full in-memory list. Hot count functions iterate this
+    directly to stay flat in RAM on the 945MB VM; load_funnel_events() is the list wrapper for
+    the few callers that need multiple passes / random access."""
     path = storage_dir / "funnel_events.jsonl"
     if not path.exists():
-        return []
-    events = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
+        return
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                yield json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+
+
+def load_funnel_events(*, storage_dir: Path = STORAGE_DIR) -> list[dict[str, Any]]:
+    """Full in-memory list of funnel events. Prefer iter_funnel_events() on hot paths — a 41MB
+    file becomes ~300MB of Python objects here, and campaign_kpis calling this ~7x/request is
+    what OOM-killed the 945MB VM. Ingest stays append-only; the reads are what must stream."""
+    return list(iter_funnel_events(storage_dir=storage_dir))
 
 
 def count_event_users(
@@ -121,7 +133,7 @@ def count_event_users(
     so any rate built on these counts can't be inflated by repeats.
     """
     users: set[str] = set()
-    for event in load_funnel_events(storage_dir=storage_dir):
+    for event in iter_funnel_events(storage_dir=storage_dir):
         if event.get("eventName") != event_name:
             continue
         received = str(event.get("receivedAt") or "")
@@ -207,7 +219,7 @@ def bot_start_health(
     START rate instead of presenting a misleadingly low number as if it were real."""
     clicks: dict[str, int] = {}
     starts: dict[str, int] = {}
-    for event in load_funnel_events(storage_dir=storage_dir):
+    for event in iter_funnel_events(storage_dir=storage_dir):
         received = str(event.get("receivedAt") or "")
         if since_iso and received < since_iso:
             continue
@@ -270,7 +282,7 @@ def telegram_starts_by_campaign_date(*, storage_dir: Path = STORAGE_DIR) -> dict
     starts are intentionally dropped here (they cannot be joined).
     """
     counts: Counter[tuple[str, str]] = Counter()
-    for event in load_funnel_events(storage_dir=storage_dir):
+    for event in iter_funnel_events(storage_dir=storage_dir):
         if event.get("eventName") != "bot_start":
             continue
         campaign_id = event.get("campaignId")
@@ -282,43 +294,59 @@ def telegram_starts_by_campaign_date(*, storage_dir: Path = STORAGE_DIR) -> dict
 
 
 def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
-    events = load_funnel_events(storage_dir=storage_dir)
-    by_name = Counter(event.get("eventName", "unknown") for event in events)
+    # ONE streaming pass over funnel_events.jsonl — never materializes the whole file as a list.
+    # This runs on every /api/dashboard load (via dashboard_service); the old full-list version
+    # spiked ~300MB and OOM-killed the 945MB VM.
+    by_name: Counter[str] = Counter()
     by_segment: dict[str, Counter[str]] = defaultdict(Counter)
-    visitors = set()
-    telegram_users = set()
+    visitors: set[str] = set()
+    telegram_users: set[str] = set()
     visitors_by_event: dict[str, set[str]] = defaultdict(set)
-    event_steps: list[dict[str, Any]] = []
-    crm = build_crm_summary(storage_dir=storage_dir)
+    ordered_events: list[str] = []  # event names in first-seen order (preserves the old step order)
+    seen_events: set[str] = set()
+    total_events = 0
+    latest_event_at: Any = None
 
-    for event in events:
+    for event in iter_funnel_events(storage_dir=storage_dir):
+        total_events += 1
         event_name = event.get("eventName", "unknown")
+        by_name[event_name] += 1
         segment = str(event.get("segment") or "unknown")
         by_segment[segment][event_name] += 1
-        if event_name not in [step["eventName"] for step in event_steps]:
-            event_steps.append({"eventName": event_name, "count": 0, "uniqueVisitors": 0, "rateFromPrevious": None})
+        if event_name not in seen_events:
+            seen_events.add(event_name)
+            ordered_events.append(event_name)
         if event.get("visitorId"):
             visitor_id = str(event["visitorId"])
             visitors.add(visitor_id)
             visitors_by_event[event_name].add(visitor_id)
         if event.get("telegramUserId"):
             telegram_users.add(str(event["telegramUserId"]))
+        latest_event_at = event.get("receivedAt")  # append-only chronological → last line is latest
 
-    for step in event_steps:
-        step["count"] = by_name[step["eventName"]]
-        step["uniqueVisitors"] = len(visitors_by_event[step["eventName"]])
+    crm = build_crm_summary(storage_dir=storage_dir)
+
+    event_steps: list[dict[str, Any]] = [
+        {
+            "eventName": name,
+            "count": by_name[name],
+            "uniqueVisitors": len(visitors_by_event[name]),
+            "rateFromPrevious": None,
+        }
+        for name in ordered_events
+    ]
     for index, step in enumerate(event_steps):
         if index > 0:
             previous = event_steps[index - 1]
             step["rateFromPrevious"] = min(100, rate(step["uniqueVisitors"], previous["uniqueVisitors"]))
 
     return {
-        "totalEvents": len(events),
+        "totalEvents": total_events,
         "eventsByName": dict(by_name),
         "eventsBySegment": {segment: dict(counter) for segment, counter in by_segment.items()},
         "uniqueVisitors": len(visitors),
         "uniqueTelegramUsers": len(telegram_users),
-        "latestEventAt": events[-1].get("receivedAt") if events else None,
+        "latestEventAt": latest_event_at,
         "eventSteps": event_steps,
         "rates": {
             "telegramStartRate": visitor_rate(visitors_by_event, "bot_start", "telegram_link_click"),
@@ -334,9 +362,13 @@ def build_funnel_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
 
 def build_crm_summary(*, storage_dir: Path = STORAGE_DIR) -> dict[str, Any]:
     leads = list_crm_leads(storage_dir=storage_dir)
-    events = load_funnel_events(storage_dir=storage_dir)
-    known_visitors = {str(event.get("visitorId")) for event in events if event.get("visitorId")}
-    known_telegram_users = {str(event.get("telegramUserId")) for event in events if event.get("telegramUserId")}
+    known_visitors: set[str] = set()
+    known_telegram_users: set[str] = set()
+    for event in iter_funnel_events(storage_dir=storage_dir):  # single streaming pass (was a full-list load)
+        if event.get("visitorId"):
+            known_visitors.add(str(event["visitorId"]))
+        if event.get("telegramUserId"):
+            known_telegram_users.add(str(event["telegramUserId"]))
     stages = Counter(str(lead.get("stage") or "unknown") for lead in leads)
     attributed = [
         lead

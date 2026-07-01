@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from ..api_models import FunnelEventRequest
 from ..chatplace_events import normalize_chatplace_event
-from ..funnel_events import build_funnel_summary, load_funnel_events, save_funnel_event
+from ..funnel_events import build_funnel_summary, iter_funnel_events, save_funnel_event
 from ..funnel_history import (
     build_history_series,
     crm_leads_by_date,
@@ -160,9 +160,10 @@ async def funnel_history(
         sync_errors = [str(exc)]
     meta_by_date = daily_meta_metrics(raw, None)
 
-    events = load_funnel_events()
-    bot_starts_by_date = event_users_by_date(events, "bot_start")
-    link_clicks_by_date = event_users_by_date(events, "telegram_link_click")
+    # Stream the file once per event type (a fresh generator each call) instead of materializing
+    # the whole 41MB file as a list — the trend-history endpoint used to spike ~300MB here too.
+    bot_starts_by_date = event_users_by_date(iter_funnel_events(), "bot_start")
+    link_clicks_by_date = event_users_by_date(iter_funnel_events(), "telegram_link_click")
     crm_by_date = await _crm_leads_by_date(days)
 
     # VSL daily views accrue from the YouTube view count: record today's cumulative count,
