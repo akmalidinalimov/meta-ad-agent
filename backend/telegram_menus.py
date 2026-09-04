@@ -197,13 +197,54 @@ def kpi_panel_keyboard(campaigns: list[dict[str, Any]], selected_id: str | None 
     return {"inline_keyboard": rows}
 
 
+# --- Campaign-grouped browse pickers (Suggestions / Alerts / Pending) ----------
+# Each of the three browse surfaces first shows a CAMPAIGN PICKER (one row per
+# campaign that has items, with a count), then drills into that campaign's items.
+# Namespaces: suggestions `sug`, alerts `alr`, pending approvals `apv`. The campaign
+# id (~17 digits) stays well under the 64-byte callback_data limit; the no-campaign
+# bucket uses the sentinel "none".
+
+
+def _campaign_group_rows(groups: list[dict[str, Any]], callback_prefix: str, icon: str) -> list[list[dict[str, Any]]]:
+    """One button per campaign group: '<icon> <name> · <count>' -> '<callback_prefix>:<id>'."""
+    rows: list[list[dict[str, Any]]] = []
+    for group in groups[:20]:
+        cid = str(group.get("id") or "") or "none"
+        name = _truncate(str(group.get("name") or "Other"), 48)
+        rows.append([{"text": f"{icon} {name} · {int(group.get('count', 0))}", "callback_data": f"{callback_prefix}:{cid}"}])
+    return rows
+
+
+def suggestions_campaign_keyboard(groups: list[dict[str, Any]]) -> dict[str, Any]:
+    """Campaign picker for 🤖 Suggestions. Tapping a campaign -> sug:c:<id>. The picker
+    is re-rendered in place on drill (the suggestion cards arrive as separate messages),
+    so no Back button is needed here."""
+    return {"inline_keyboard": _campaign_group_rows(groups, "sug:c", "🤖")}
+
+
+def alerts_campaign_keyboard(groups: list[dict[str, Any]]) -> dict[str, Any]:
+    """Campaign picker for 🚨 Alerts. Tapping a campaign -> alr:c:<id>."""
+    return {"inline_keyboard": _campaign_group_rows(groups, "alr:c", "🚨")}
+
+
+def alerts_back_keyboard() -> dict[str, Any]:
+    return {"inline_keyboard": [[{"text": "⬅️ Back to campaigns", "callback_data": "alr:list"}]]}
+
+
 # --- Task 4: Pending Approvals drill-down (callback namespace `apv`). ---
-# Schemes: apv:list, apv:a:<approval_id>, apv:s:<approval_id>~<idx>. Ad sets in an
-# approval have no id, so they are addressed by index after a `~` separator.
+# Schemes: apv:list (campaign picker), apv:gc:<campaign_id> (that campaign's approvals),
+# apv:a:<approval_id>, apv:s:<approval_id>~<idx>. Ad sets in an approval have no id, so
+# they are addressed by index after a `~` separator.
+
+
+def pending_campaign_keyboard(groups: list[dict[str, Any]]) -> dict[str, Any]:
+    """Campaign picker for 📝 Pending Approvals. Tapping a campaign -> apv:gc:<id>."""
+    return {"inline_keyboard": _campaign_group_rows(groups, "apv:gc", "📝")}
 
 
 def pending_approvals_keyboard(approvals: list[dict[str, Any]]) -> dict[str, Any]:
-    """One button per pending approval (cap 20), callback apv:a:<id>."""
+    """One button per pending approval in a campaign (cap 20), callback apv:a:<id>,
+    plus a Back button to the campaign picker."""
     rows = []
     for approval in approvals[:20]:
         aid = str(approval.get("id") or "")
@@ -212,6 +253,7 @@ def pending_approvals_keyboard(approvals: list[dict[str, Any]]) -> dict[str, Any
         campaign = (approval.get("after") or {}).get("campaign") or {}
         label = _truncate(str(campaign.get("name") or approval.get("actionType") or aid))
         rows.append([{"text": f"📝 {label}", "callback_data": f"apv:a:{aid}"}])
+    rows.append([{"text": "⬅️ Back", "callback_data": "apv:list"}])
     return {"inline_keyboard": rows}
 
 

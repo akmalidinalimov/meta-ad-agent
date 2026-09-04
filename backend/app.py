@@ -37,6 +37,8 @@ from .routers import planning as planning_router
 from .routers import targets as targets_router
 from .routers import tasks as tasks_router
 from .routers import telegram as telegram_router
+from .routers import analysis as analysis_router
+from .routers import vsl as vsl_router
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger(__name__)
@@ -112,6 +114,20 @@ async def _monitoring_loop() -> None:
         except Exception:
             agent_end("planner")
             logger.exception("Scheduled opportunity iteration failed")
+        # Daily Funnel Analyst — its own 18:00 Europe/Stockholm once-per-day gate.
+        try:
+            from .daily_analysis_scheduler import run_scheduled_daily_analysis
+            daily_result = await asyncio.wait_for(asyncio.to_thread(run_scheduled_daily_analysis), timeout=300)
+            if isinstance(daily_result, dict) and not daily_result.get("skipped"):
+                logger.info("Daily analyst report sent")
+        except Exception:
+            logger.exception("Daily analyst iteration failed")
+        # Intra-day anomaly guardrail (every cycle; debounced + silent when healthy).
+        try:
+            from .daily_analysis_scheduler import run_intraday_anomaly_check
+            await asyncio.wait_for(asyncio.to_thread(run_intraday_anomaly_check), timeout=120)
+        except Exception:
+            logger.exception("Intraday anomaly check failed")
         await asyncio.sleep(interval)
 
 
@@ -229,6 +245,8 @@ for module in (
     agents_router,
     members_router,
     agent_status_router,
+    vsl_router,
+    analysis_router,
 ):
     app.include_router(module.router)
 

@@ -5,9 +5,20 @@ from backend.bitrix_client import (
     build_bitrix_webhook_url,
     fetch_bitrix_leads,
     fetch_bitrix_statuses,
+    lead_source_title,
     normalize_bitrix_lead,
     normalize_bitrix_status,
 )
+
+
+def test_lead_source_title_default_scopes_to_ai_creators_5(monkeypatch):
+    # Default = "AI Creators 5.0": catches the 5.0 order form + the "Заполнение CRM-формы
+    # AI Creators 5.0 | …" web forms, but NOT the older AI Creators 4.0 (different product).
+    # The exact order-form title alone undercounts; bare "AI Creators" over-counts (incl 4.0).
+    monkeypatch.delenv("BITRIX_LEAD_SOURCE_TITLE", raising=False)
+    assert lead_source_title() == "AI Creators 5.0"
+    monkeypatch.setenv("BITRIX_LEAD_SOURCE_TITLE", "Custom Title")
+    assert lead_source_title() == "Custom Title"
 
 
 class FakeBitrixTransport:

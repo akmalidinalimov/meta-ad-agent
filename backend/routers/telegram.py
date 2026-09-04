@@ -18,6 +18,8 @@ from ..telegram_commands import normalize_telegram_command
 from ..telegram_digest import compose_kpi_digest_text
 from ..telegram_menus import (
     REPLY_BUTTON_ACTIONS,
+    alerts_back_keyboard,
+    alerts_campaign_keyboard,
     kpi_panel_keyboard,
     adset_ads_keyboard,
     approval_adset_detail_keyboard,
@@ -27,6 +29,8 @@ from ..telegram_menus import (
     campaigns_list_keyboard,
     main_reply_keyboard,
     pending_approvals_keyboard,
+    pending_campaign_keyboard,
+    suggestions_campaign_keyboard,
     team_panel_keyboard,
     viewer_reply_keyboard,
     welcome_text,
@@ -76,14 +80,167 @@ def _edit_stage(callback: dict[str, Any], stage: str, approval_id: str) -> None:
     telegram_outbound.edit_message_reply_markup(chat_id, message.get("message_id"), approval_stage_keyboard(stage, approval_id))
 
 
-def _send_pending_suggestions(command: dict[str, Any]) -> str:
-    pending = [a for a in list_approval_requests() if a.get("status") == "needs_review"]
-    if not pending:
-        _send(command, "✅ No suggestions waiting. I'll send new ones here as they come.")
-        return "none"
-    for approval in pending[:5]:
-        telegram_outbound.send_approval_notification(approval)
-    return f"{len(pending[:5])} sent"
+# --- Campaign grouping for the browse surfaces (Suggestions / Alerts / Pending) ---
+# All three group their items by campaign, show a campaign picker, then drill into the
+# chosen campaign. These helpers are shared so the three surfaces stay consistent.
+
+
+def _approval_campaign(approval: dict[str, Any]) -> tuple[str, str]:
+    campaign = (approval.get("after") or {}).get("campaign") or {}
+    cid = str(campaign.get("id") or "")
+    name = str(campaign.get("name") or approval.get("actionType") or "Other")
+    return cid, name
+
+
+def _alert_campaign(alert: dict[str, Any]) -> tuple[str, str]:
+    cid = str(alert.get("campaignId") or "")
+    name = str(alert.get("campaignName") or alert.get("campaignId") or "Other")
+    return cid, name
+
+
+def _group_by_campaign(items: list[dict[str, Any]], extractor: Any) -> list[dict[str, Any]]:
+    """Group items by campaign into ordered groups [{id, name, count, items}],
+    busiest campaign first. Items with no campaign collapse into one 'Other' group."""
+    groups: dict[str, dict[str, Any]] = {}
+    for item in items:
+        cid, name = extractor(item)
+        key = cid or "none"
+        group = groups.get(key)
+        if group is None:
+            group = {"id": cid, "name": name, "count": 0, "items": []}
+            groups[key] = group
+        group["count"] += 1
+        group["items"].append(item)
+    return sorted(groups.values(), key=lambda g: (-g["count"], str(g["name"]).lower()))
+
+
+def _find_group(groups: list[dict[str, Any]], cid_tail: str) -> dict[str, Any] | None:
+    """Resolve a 'sug:c:<id>' / 'apv:gc:<id>' tail back to its group ('none' sentinel
+    matches the no-campaign bucket)."""
+    want = "" if cid_tail == "none" else cid_tail
+    return next((g for g in groups if (g["id"] or "") == want), None)
+
+
+def _alert_severity_emoji(severity: Any) -> str:
+    key = str(severity or "").lower()
+    if key in {"high", "critical"}:
+        return "❌"
+    if key in {"medium", "warning", "warn"}:
+        return "⚠️"
+    return "ℹ️"
+
+
+# --- Suggestions: campaign picker -> that campaign's suggestion cards ----------------
+
+
+def _needs_review() -> list[dict[str, Any]]:
+    return [a for a in list_approval_requests() if a.get("status") == "needs_review"]
+
+
+def _suggestions_picker_text(groups: list[dict[str, Any]]) -> str:
+    total = sum(g["count"] for g in groups)
+    lines = [f"🤖 <b>Suggestions</b> ({total})"]
+    if not groups:
+        lines.append("\n✅ No suggestions waiting. I'll send new ones here as they come.")
+    else:
+        lines.append("\nPick a campaign to see its suggestions.")
+    return "\n".join(lines)
+
+
+def _open_suggestions(command: dict[str, Any]) -> dict[str, Any]:
+    groups = _group_by_campaign(_needs_review(), _approval_campaign)
+    _send(
+        command,
+        _suggestions_picker_text(groups),
+        parse_mode="HTML",
+        reply_markup=suggestions_campaign_keyboard(groups),
+    )
+    return {"ok": True, "telegram": command, "menu": "suggestions"}
+
+
+def _handle_suggestions(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
+    """sug: callbacks — campaign picker (sug:list) and per-campaign drill (sug:c:<id>)."""
+    raw = str(command.get("callbackData") or "")
+    tail = raw.split(":", 1)[1] if ":" in raw else ""
+    groups = _group_by_campaign(_needs_review(), _approval_campaign)
+
+    if tail.startswith("c:"):
+        group = _find_group(groups, tail[2:])
+        # Re-render the picker in place (counts stay current), then push the chosen
+        # campaign's suggestions as their own actionable Approve/Dry-run cards.
+        _edit(callback, _suggestions_picker_text(groups), suggestions_campaign_keyboard(groups))
+        if not group:
+            return {"ok": False, "telegram": command, "message": "no suggestions for campaign"}
+        _send(command, f"🤖 <b>{html.escape(str(group['name']))}</b> — {group['count']} suggestion(s):", parse_mode="HTML")
+        for approval in group["items"][:10]:
+            telegram_outbound.send_approval_notification(approval)
+        return {"ok": True, "telegram": command, "suggestions": group["id"] or "none", "sent": len(group["items"][:10])}
+
+    # "sug:list" / default → (re)render the picker.
+    if callback.get("message"):
+        _edit(callback, _suggestions_picker_text(groups), suggestions_campaign_keyboard(groups))
+        return {"ok": True, "telegram": command, "suggestions": "list"}
+    return _open_suggestions(command)
+
+
+# --- Alerts: campaign picker -> that campaign's alerts -------------------------------
+
+
+def _campaign_alert_lines(alert: dict[str, Any]) -> list[str]:
+    severity = str(alert.get("severity") or "info")
+    title = str(alert.get("title") or "Untitled alert")
+    out = [f"{_alert_severity_emoji(severity)} <b>{html.escape(severity)}</b> — {html.escape(title)}"]
+    for action in (alert.get("recommendedActions") or [])[:3]:
+        out.append(f"   • {html.escape(str(action))}")
+    return out
+
+
+def _alerts_picker_text(groups: list[dict[str, Any]]) -> str:
+    total = sum(g["count"] for g in groups)
+    lines = [f"🚨 <b>Alerts</b> ({total})"]
+    if not groups:
+        lines.append("\n✅ No monitoring alerts on the board. Run /monitoring or the dashboard check.")
+    else:
+        lines.append("\nPick a campaign to see its alerts.")
+    return "\n".join(lines)
+
+
+def _campaign_alerts_text(group: dict[str, Any]) -> str:
+    lines = [f"🚨 <b>{html.escape(str(group['name']))}</b> — {group['count']} alert(s)", ""]
+    for alert in group["items"][:10]:
+        lines.extend(_campaign_alert_lines(alert))
+    lines.append("")
+    lines.append("🔒 Alerts are recommendations only; execution still needs approval.")
+    return "\n".join(lines)
+
+
+def _open_alerts(command: dict[str, Any]) -> dict[str, Any]:
+    from ..monitoring_runner import list_monitoring_alerts
+
+    groups = _group_by_campaign(list_monitoring_alerts(), _alert_campaign)
+    _send(command, _alerts_picker_text(groups), parse_mode="HTML", reply_markup=alerts_campaign_keyboard(groups))
+    return {"ok": True, "telegram": command, "menu": "alerts"}
+
+
+def _handle_alerts(command: dict[str, Any], callback: dict[str, Any]) -> dict[str, Any]:
+    """alr: callbacks — campaign picker (alr:list) and per-campaign drill (alr:c:<id>)."""
+    from ..monitoring_runner import list_monitoring_alerts
+
+    raw = str(command.get("callbackData") or "")
+    tail = raw.split(":", 1)[1] if ":" in raw else ""
+    groups = _group_by_campaign(list_monitoring_alerts(), _alert_campaign)
+
+    if tail.startswith("c:"):
+        group = _find_group(groups, tail[2:])
+        if not group:
+            _edit(callback, _alerts_picker_text(groups), alerts_campaign_keyboard(groups))
+            return {"ok": False, "telegram": command, "message": "no alerts for campaign"}
+        _edit(callback, _campaign_alerts_text(group), alerts_back_keyboard())
+        return {"ok": True, "telegram": command, "alerts": group["id"] or "none"}
+
+    # "alr:list" / default → (re)render the picker.
+    _edit(callback, _alerts_picker_text(groups), alerts_campaign_keyboard(groups))
+    return {"ok": True, "telegram": command, "alerts": "list"}
 
 
 def _edit(callback: dict[str, Any], text: str, reply_markup: dict[str, Any] | None = None) -> None:
@@ -657,12 +814,19 @@ def _pending_approvals() -> list[dict[str, Any]]:
     return [a for a in list_approval_requests() if a.get("status") == "needs_review"]
 
 
-def _pending_list_text(approvals: list[dict[str, Any]]) -> str:
-    lines = [f"📝 <b>Pending Approvals</b> ({len(approvals)})"]
-    if not approvals:
+def _pending_picker_text(groups: list[dict[str, Any]]) -> str:
+    total = sum(g["count"] for g in groups)
+    lines = [f"📝 <b>Pending Approvals</b> ({total})"]
+    if not groups:
         lines.append("\n✅ Nothing waiting for review.")
     else:
-        lines.append("\nTap one to review its ad sets.")
+        lines.append("\nPick a campaign to see its approvals.")
+    return "\n".join(lines)
+
+
+def _campaign_approvals_text(group: dict[str, Any]) -> str:
+    lines = [f"📝 <b>{html.escape(str(group['name']))}</b> — {group['count']} approval(s)"]
+    lines.append("\nTap one to review its ad sets.")
     return "\n".join(lines)
 
 
@@ -707,12 +871,12 @@ def _approval_adset_text(approval: dict[str, Any], adset: dict[str, Any], idx: i
 
 
 def _open_pending_list(command: dict[str, Any]) -> dict[str, Any]:
-    approvals = _pending_approvals()
+    groups = _group_by_campaign(_pending_approvals(), _approval_campaign)
     _send(
         command,
-        _pending_list_text(approvals),
+        _pending_picker_text(groups),
         parse_mode="HTML",
-        reply_markup=pending_approvals_keyboard(approvals),
+        reply_markup=pending_campaign_keyboard(groups),
     )
     return {"ok": True, "telegram": command, "menu": "pending"}
 
@@ -722,9 +886,19 @@ def _handle_pending(command: dict[str, Any], callback: dict[str, Any]) -> dict[s
     tail = raw.split(":", 1)[1] if ":" in raw else ""
     approvals = _pending_approvals()
 
-    if tail == "list":
-        _edit(callback, _pending_list_text(approvals), pending_approvals_keyboard(approvals))
+    if tail == "list" or not tail:
+        groups = _group_by_campaign(approvals, _approval_campaign)
+        _edit(callback, _pending_picker_text(groups), pending_campaign_keyboard(groups))
         return {"ok": True, "telegram": command, "pending": "list"}
+
+    if tail.startswith("gc:"):
+        groups = _group_by_campaign(approvals, _approval_campaign)
+        group = _find_group(groups, tail[3:])
+        if not group:
+            _edit(callback, _pending_picker_text(groups), pending_campaign_keyboard(groups))
+            return {"ok": False, "telegram": command, "message": "no approvals for campaign"}
+        _edit(callback, _campaign_approvals_text(group), pending_approvals_keyboard(group["items"]))
+        return {"ok": True, "telegram": command, "pending": "campaign", "campaign": group["id"] or "none"}
 
     if tail.startswith("a:"):
         aid = tail[2:]
@@ -754,7 +928,8 @@ def _handle_pending(command: dict[str, Any], callback: dict[str, Any]) -> dict[s
         _edit(callback, _approval_adset_text(approval, adsets[idx], idx), approval_adset_detail_keyboard(aid))
         return {"ok": True, "telegram": command, "approval": aid, "adset": idx}
 
-    _edit(callback, _pending_list_text(approvals), pending_approvals_keyboard(approvals))
+    groups = _group_by_campaign(approvals, _approval_campaign)
+    _edit(callback, _pending_picker_text(groups), pending_campaign_keyboard(groups))
     return {"ok": True, "telegram": command, "pending": "list"}
 
 
@@ -827,11 +1002,11 @@ def _handle_menu(command: dict[str, Any], target: str) -> dict[str, Any]:
     if target == "kpis":
         return _open_kpi_panel(command)
     elif target == "suggestions":
-        _send_pending_suggestions(command)
+        return _open_suggestions(command)
     elif target == "status":
         _send(command, telegram_status_text(), parse_mode="HTML")
     elif target == "alerts":
-        _send(command, telegram_attention_text(), parse_mode="HTML")
+        return _open_alerts(command)
     elif target == "campaigns":
         return _open_campaigns_list(command)
     elif target == "pending":
@@ -995,6 +1170,12 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     if action == "kpi":
         return _handle_kpi(command, callback)
 
+    if action == "sug":
+        return _handle_suggestions(command, callback)
+
+    if action == "alr":
+        return _handle_alerts(command, callback)
+
     if action == "apv":
         return _handle_pending(command, callback)
 
@@ -1056,8 +1237,7 @@ def telegram_agent_command(payload: dict[str, Any], request: Request) -> dict[st
     if lowered == "kpis":
         return _open_kpi_panel(command)
     if lowered == "suggestions":
-        _send_pending_suggestions(command)
-        return {"ok": True, "telegram": command, "menu": "suggestions"}
+        return _open_suggestions(command)
 
     # --- Guided campaign: free-text audience answer ----------------------------
     # MUST run before the shortcut/attention handlers: when the operator chose

@@ -69,7 +69,7 @@ def _open_bot(monkeypatch):
     return sent, edits
 
 
-def test_pending_reply_button_lists_only_needs_review(monkeypatch):
+def test_pending_reply_button_shows_campaign_picker(monkeypatch):
     sent, _ = _open_bot(monkeypatch)
     client = TestClient(app)
     resp = client.post(
@@ -80,9 +80,27 @@ def test_pending_reply_button_lists_only_needs_review(monkeypatch):
     assert resp.json()["menu"] == "pending"
     markup = next(kwargs["reply_markup"] for _, kwargs in sent if "reply_markup" in kwargs)
     data = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+    labels = [b["text"] for row in markup["inline_keyboard"] for b in row]
+    # The needs_review approval has no campaign id -> the "none" bucket; the approved
+    # (non-pending) one is excluded entirely.
+    assert data == ["apv:gc:none"]
+    assert any("Q3 Scale Test" in label for label in labels)
+
+
+def test_pending_campaign_drill_lists_only_its_needs_review(monkeypatch):
+    _, edits = _open_bot(monkeypatch)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"message": {"chat": {"id": 1001}, "message_id": 9}, "from": {"username": "a"}, "data": "apv:gc:none"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pending"] == "campaign"
+    markup = next(kwargs["reply_markup"] for _, kwargs in edits if "reply_markup" in kwargs)
+    data = [b.get("callback_data") for row in markup["inline_keyboard"] for b in row]
     assert f"apv:a:{APPROVAL_ID}" in data
-    # The approved (non-pending) approval is excluded.
-    assert all("approval_other" not in cd for cd in data)
+    assert all("approval_other" not in (cd or "") for cd in data)
+    assert "apv:list" in data  # Back to the campaign picker
 
 
 def test_approval_callback_shows_adsets(monkeypatch):

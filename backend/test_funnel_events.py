@@ -53,6 +53,23 @@ def test_count_event_users_dedupes_by_identity(tmp_path):
     assert count_bot_starts(storage_dir=storage) == 1
 
 
+def test_count_event_users_respects_since_and_until_bounds(tmp_path):
+    import json
+
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    rows = [
+        {"eventName": "bot_start", "receivedAt": "2026-06-17T10:00:00+00:00", "telegramUserId": "a"},
+        {"eventName": "bot_start", "receivedAt": "2026-06-18T10:00:00+00:00", "telegramUserId": "b"},
+        {"eventName": "bot_start", "receivedAt": "2026-06-19T10:00:00+00:00", "telegramUserId": "c"},
+    ]
+    (storage / "funnel_events.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    # A single bounded day [06-18, 06-19) → only b (today/past-day scope can't leak later).
+    assert count_bot_starts(since_iso="2026-06-18", until_iso="2026-06-19", storage_dir=storage) == 1
+    assert count_bot_starts(since_iso="2026-06-18", storage_dir=storage) == 2  # since only
+    assert count_bot_starts(until_iso="2026-06-19", storage_dir=storage) == 2  # before 06-19
+
+
 def test_normalize_funnel_event_preserves_attribution_fields():
     event = normalize_funnel_event({
         "event_name": "bot_start",
@@ -188,3 +205,53 @@ def test_telegram_starts_by_campaign_date_counts_bot_starts(tmp_path):
 
 def test_telegram_starts_by_campaign_date_empty_when_no_events(tmp_path):
     assert telegram_starts_by_campaign_date(storage_dir=tmp_path / "storage") == {}
+
+
+def test_assess_bot_start_health_flags_current_stall():
+    from backend.funnel_events import assess_bot_start_health
+    # Relay healthy early, then the last 2 trafficked hours have clicks but ZERO starts.
+    buckets = [
+        {"hour": "2026-06-22T10", "clicks": 70, "starts": 58},
+        {"hour": "2026-06-22T11", "clicks": 111, "starts": 104},
+        {"hour": "2026-06-22T12", "clicks": 102, "starts": 0},
+        {"hour": "2026-06-22T13", "clicks": 45, "starts": 0},
+    ]
+    h = assess_bot_start_health(buckets)
+    assert h["stalled"] is True and h["gapHours"] == 2
+    assert h["collectedStartRate"] == round((58 + 104) / (70 + 111) * 100, 1)
+    assert "relay" in h["message"].lower()
+
+
+def test_assess_bot_start_health_window_gap_not_currently_stalled():
+    # A gap earlier in the day, but recent hours are healthy -> incomplete, not stalled.
+    from backend.funnel_events import assess_bot_start_health
+    buckets = [
+        {"hour": "2026-06-22T02", "clicks": 81, "starts": 0},
+        {"hour": "2026-06-22T03", "clicks": 76, "starts": 0},
+        {"hour": "2026-06-22T10", "clicks": 70, "starts": 58},
+        {"hour": "2026-06-22T11", "clicks": 111, "starts": 104},
+    ]
+    h = assess_bot_start_health(buckets)
+    assert h["stalled"] is False and h["gapHours"] == 2
+    assert "incomplete" in h["message"].lower()
+
+
+def test_assess_bot_start_health_healthy_is_quiet():
+    from backend.funnel_events import assess_bot_start_health
+    buckets = [
+        {"hour": "2026-06-22T12", "clicks": 100, "starts": 88},
+        {"hour": "2026-06-22T13", "clicks": 45, "starts": 40},
+    ]
+    h = assess_bot_start_health(buckets)
+    assert h["stalled"] is False and h["gapHours"] == 0 and h["message"] is None
+
+
+def test_assess_bot_start_health_ignores_trivial_traffic():
+    # An hour with only 1-2 clicks and 0 starts is noise, not a gap.
+    from backend.funnel_events import assess_bot_start_health
+    buckets = [
+        {"hour": "2026-06-22T12", "clicks": 100, "starts": 90},
+        {"hour": "2026-06-22T13", "clicks": 2, "starts": 0},
+    ]
+    h = assess_bot_start_health(buckets)
+    assert h["gapHours"] == 0 and h["stalled"] is False

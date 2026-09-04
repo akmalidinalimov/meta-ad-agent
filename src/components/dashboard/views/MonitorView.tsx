@@ -29,6 +29,9 @@ interface MonitorViewProps {
   trend: TrendPoint[]
   funnel: FunnelSummary[]
   days?: number
+  since?: string
+  until?: string
+  periodLabel?: string
   campaignId?: string
   campaignName?: string
   refreshKey?: number
@@ -39,6 +42,9 @@ export function MonitorView({
   trend,
   funnel,
   days = 30,
+  since,
+  until,
+  periodLabel,
   campaignId = 'all',
   campaignName = 'All campaigns',
   refreshKey = 0,
@@ -64,6 +70,9 @@ export function MonitorView({
         campaignId={campaignId}
         campaignName={campaignName}
         days={days}
+        since={since}
+        until={until}
+        periodLabel={periodLabel}
         refreshKey={refreshKey}
       />
 

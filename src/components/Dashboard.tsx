@@ -65,10 +65,50 @@ interface DashboardProps {
   role?: string | null
 }
 
-// Map the selected range to a day count for both the live Meta queries and the
-// synced account-history window, so the date control drives every number on screen.
-function rangeToDays(range: DateRange): number {
-  return range === '7d' ? 7 : range === '14d' ? 14 : 30
+// The campaign picker lists campaigns CREATED within this window, independent of the stat
+// period — so a "Today" period never empties the campaign list.
+const CAMPAIGN_LIST_DAYS = 90
+
+type PeriodKind = 'today' | 'yesterday' | '7d' | '14d' | '30d' | 'custom'
+type Period = { kind: PeriodKind; since?: string; until?: string }
+
+// Format a Date's UTC wall-clock as YYYY-MM-DD.
+function ymd(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+// Tashkent (UTC+5, no DST) is the operator's business day. Shift the current instant +5h and
+// read its UTC fields to get the Tashkent calendar date — so "today" is the Tashkent day no
+// matter which timezone the dashboard is opened in (phone, laptop, or the server).
+const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000
+function tashkentDay(daysAgo = 0): Date {
+  return new Date(Date.now() + TASHKENT_OFFSET_MS - daysAgo * 86_400_000)
+}
+
+// Resolve a period to the live-card window: an explicit since..until (every preset now sends
+// one) on Tashkent (UTC+5) day boundaries, so the dashboard's day matches how leads are
+// counted in Bitrix.
+function resolvePeriod(p: Period): { days: number; since?: string; until?: string; label: string } {
+  if (p.kind === 'today') {
+    const t = ymd(tashkentDay(0))
+    return { days: 1, since: t, until: t, label: 'Today' }
+  }
+  if (p.kind === 'yesterday') {
+    const s = ymd(tashkentDay(1))
+    return { days: 2, since: s, until: s, label: 'Yesterday' }
+  }
+  if (p.kind === 'custom' && p.since && p.until) {
+    return { days: 30, since: p.since, until: p.until, label: `${p.since} → ${p.until}` }
+  }
+  const days = p.kind === '7d' ? 7 : p.kind === '14d' ? 14 : 30
+  return { days, since: ymd(tashkentDay(days - 1)), until: ymd(tashkentDay(0)), label: `Last ${days} days` }
+}
+
+// The synced account-history disclosure still uses the coarse DateRange; map the period to it.
+function periodToDateRange(p: Period): DateRange {
+  if (p.kind === '14d') return '14d'
+  if (p.kind === '7d' || p.kind === 'today' || p.kind === 'yesterday') return '7d'
+  return '30d'
 }
 
 export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }: DashboardProps) {
@@ -78,12 +118,15 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
   const visibleNavItems = visibleNavFor(role)
   const [activeView, setActiveView] = useState<ViewId>('overview')
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null)
-  const [dateRange, setDateRange] = useState<DateRange>('30d')
+  const [period, setPeriod] = useState<Period>({ kind: '30d' })
   const [selectedCampaignId, setSelectedCampaignId] = useState('all')
   const [liveCampaigns, setLiveCampaigns] = useState<LiveCampaign[]>([])
   const [liveError, setLiveError] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
-  const days = rangeToDays(dateRange)
+  // The live cards use the precise period window (since/until/days); the synced history
+  // disclosure uses the coarse DateRange derived from it.
+  const live = resolvePeriod(period)
+  const dateRange = periodToDateRange(period)
 
   // Account-history window (synced snapshot) drives the disclosure charts only —
   // it is account-wide (no campaign/creative filter); the live panel above it owns
@@ -122,7 +165,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
   // reset the selection only if the current pick is no longer in range.
   useEffect(() => {
     let active = true
-    void getLiveCampaigns(days, refreshKey > 0)
+    void getLiveCampaigns(CAMPAIGN_LIST_DAYS, refreshKey > 0)
       .then((result) => {
         if (!active) return
         setLiveCampaigns(result.campaigns)
@@ -141,7 +184,7 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
     return () => {
       active = false
     }
-  }, [days, refreshKey])
+  }, [refreshKey])
 
   // Refresh bumps refreshKey (forces live re-fetch in the picker + KPI panels) and
   // re-runs the snapshot refresh so the account-history disclosure updates too.
@@ -216,9 +259,9 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
         </div>
       )}
 
+      {activeView === 'overview' && <PeriodSelector period={period} onChange={setPeriod} />}
+
       <Filters
-        dateRange={dateRange}
-        onDateRangeChange={setDateRange}
         campaigns={liveCampaigns}
         selectedCampaignId={selectedCampaignId}
         onCampaignChange={setSelectedCampaignId}
@@ -234,7 +277,10 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
           metrics={filteredMetrics}
           trend={trend}
           funnel={funnel}
-          days={days}
+          days={live.days}
+          since={live.since}
+          until={live.until}
+          periodLabel={live.label}
           campaignId={selectedCampaignId}
           campaignName={selectedCampaignName}
           refreshKey={refreshKey}
@@ -247,22 +293,76 @@ export function Dashboard({ data, isRefreshing = false, onRefresh, role = null }
   )
 }
 
+// Prominent period control for the live cards — Today / Yesterday / 7d / 14d / 30d /
+// Custom. Sits directly above the KPI cards so the operator can scope every number
+// (including "today's leads so far") in one tap.
+const PERIOD_PRESETS: Array<{ kind: PeriodKind; label: string }> = [
+  { kind: 'today', label: 'Today' },
+  { kind: 'yesterday', label: 'Yesterday' },
+  { kind: '7d', label: 'Last 7d' },
+  { kind: '14d', label: 'Last 14d' },
+  { kind: '30d', label: 'Last 30d' },
+]
+
+function PeriodSelector({ period, onChange }: { period: Period; onChange: (p: Period) => void }) {
+  return (
+    <div className="period-bar" role="group" aria-label="Date period">
+      <span className="period-bar-label">📅 Period</span>
+      <div className="period-chips">
+        {PERIOD_PRESETS.map((preset) => (
+          <button
+            key={preset.kind}
+            type="button"
+            className={`period-chip${period.kind === preset.kind ? ' is-active' : ''}`}
+            aria-pressed={period.kind === preset.kind}
+            onClick={() => onChange({ kind: preset.kind })}
+          >
+            {preset.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`period-chip${period.kind === 'custom' ? ' is-active' : ''}`}
+          aria-pressed={period.kind === 'custom'}
+          onClick={() => onChange({ kind: 'custom', since: period.since, until: period.until })}
+        >
+          Custom
+        </button>
+        {period.kind === 'custom' && (
+          <span className="period-custom">
+            <input
+              type="date"
+              aria-label="From date"
+              value={period.since ?? ''}
+              max={period.until || undefined}
+              onChange={(e) => onChange({ kind: 'custom', since: e.target.value, until: period.until || e.target.value })}
+            />
+            <span aria-hidden>→</span>
+            <input
+              type="date"
+              aria-label="To date"
+              value={period.until ?? ''}
+              min={period.since || undefined}
+              onChange={(e) => onChange({ kind: 'custom', since: period.since || e.target.value, until: e.target.value })}
+            />
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Filters({
-  dateRange,
-  onDateRangeChange,
   campaigns,
   selectedCampaignId,
   onCampaignChange,
   error,
 }: {
-  dateRange: DateRange
-  onDateRangeChange: (range: DateRange) => void
   campaigns: LiveCampaign[]
   selectedCampaignId: string
   onCampaignChange: (campaignId: string) => void
   error: string | null
 }) {
-  const rangeLabel = dateRange === '7d' ? 'Last 7 days' : dateRange === '14d' ? 'Last 14 days' : 'Last 30 days'
   const campaignSummary =
     selectedCampaignId === 'all'
       ? 'All campaigns'
@@ -272,18 +372,10 @@ function Filters({
     <details className="filter-bar" aria-label="Dashboard filters">
       <summary className="filter-summary">
         <SlidersHorizontal size={18} />
-        <strong>Filters</strong>
-        <span>{rangeLabel} · {campaignSummary}</span>
+        <strong>Campaign</strong>
+        <span>{campaignSummary}</span>
       </summary>
       <div className="filter-fields">
-        <label>
-          Date range
-          <select value={dateRange} onChange={(event) => onDateRangeChange(event.target.value as DateRange)}>
-            <option value="7d">Last 7 days</option>
-            <option value="14d">Last 14 days</option>
-            <option value="30d">Last 30 days</option>
-          </select>
-        </label>
         <label>
           Campaign
           <select value={selectedCampaignId} onChange={(event) => onCampaignChange(event.target.value)}>

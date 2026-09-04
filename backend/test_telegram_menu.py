@@ -9,6 +9,7 @@ from backend.app import app
 from backend.chat_service import to_telegram_html
 from backend.telegram_menus import (
     adset_ads_keyboard,
+    alerts_campaign_keyboard,
     approval_adset_detail_keyboard,
     approval_adsets_keyboard,
     campaign_adsets_keyboard,
@@ -16,6 +17,8 @@ from backend.telegram_menus import (
     main_menu_keyboard,
     main_reply_keyboard,
     pending_approvals_keyboard,
+    pending_campaign_keyboard,
+    suggestions_campaign_keyboard,
     welcome_text,
 )
 
@@ -205,6 +208,146 @@ def test_apply_live_reports_meta_error(monkeypatch):
     )
     assert resp.status_code == 200 and resp.json()["ok"] is False
     assert any("Meta rejected" in text for text, _ in sent)
+
+
+# --- Task 16: Suggestions / Alerts / Pending grouped by campaign ------------------
+
+
+def test_campaign_picker_keyboards_callbacks_and_limit():
+    long_id = "9" * 17  # Meta IDs are ~17 digits
+    groups = [{"id": long_id, "name": "X" * 80, "count": 3}]
+    for kb, prefix in [
+        (suggestions_campaign_keyboard(groups), "sug:c:"),
+        (alerts_campaign_keyboard(groups), "alr:c:"),
+        (pending_campaign_keyboard(groups), "apv:gc:"),
+    ]:
+        cds = _all_callback_data(kb)
+        assert cds == [f"{prefix}{long_id}"]
+        for cd in cds:
+            assert len(cd.encode("utf-8")) <= 64, cd
+        assert any("· 3" in b["text"] for row in kb["inline_keyboard"] for b in row)
+
+
+def test_campaign_picker_uses_none_sentinel_for_missing_campaign():
+    groups = [{"id": "", "name": "Other", "count": 1}]
+    assert _all_callback_data(suggestions_campaign_keyboard(groups)) == ["sug:c:none"]
+
+
+def test_campaign_picker_caps_at_twenty():
+    groups = [{"id": str(i), "name": f"C{i}", "count": 1} for i in range(50)]
+    assert len(suggestions_campaign_keyboard(groups)["inline_keyboard"]) == 20
+
+
+def test_group_by_campaign_orders_by_count_then_name():
+    items = [
+        {"after": {"campaign": {"id": "1", "name": "Alpha"}}},
+        {"after": {"campaign": {"id": "2", "name": "Beta"}}},
+        {"after": {"campaign": {"id": "2", "name": "Beta"}}},
+        {"actionType": "manage_campaigns"},  # no campaign -> Other bucket
+    ]
+    groups = telegram_router._group_by_campaign(items, telegram_router._approval_campaign)
+    assert [(g["id"], g["count"]) for g in groups] == [("2", 2), ("1", 1), ("", 1)]
+    assert telegram_router._find_group(groups, "none")["name"] == "manage_campaigns"
+    assert telegram_router._find_group(groups, "2")["count"] == 2
+
+
+def test_menu_suggestions_shows_campaign_picker(monkeypatch):
+    sent = _open_bot(monkeypatch)
+    monkeypatch.setattr(
+        telegram_router,
+        "list_approval_requests",
+        lambda: [
+            {"id": "a1", "status": "needs_review", "after": {"campaign": {"id": "11", "name": "VSL Test"}}},
+            {"id": "a2", "status": "needs_review", "after": {"campaign": {"id": "11", "name": "VSL Test"}}},
+            {"id": "a3", "status": "approved", "after": {"campaign": {"id": "22", "name": "Other"}}},
+        ],
+    )
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"from": {"id": 1, "username": "a"}, "message": {"chat": {"id": 1001}}, "data": "menu:suggestions"}},
+    )
+    assert resp.status_code == 200 and resp.json()["menu"] == "suggestions"
+    # Only the 2 needs_review items count; the picker offers campaign 11.
+    assert any("Suggestions</b> (2)" in text for text, _ in sent)
+    assert any(
+        any(b.get("callback_data") == "sug:c:11" for row in (kwargs.get("reply_markup") or {}).get("inline_keyboard", []) for b in row)
+        for _, kwargs in sent
+    )
+
+
+def test_suggestions_drill_sends_only_that_campaigns_cards(monkeypatch):
+    _open_bot(monkeypatch)
+    monkeypatch.setattr(telegram_outbound, "edit_message_text", lambda *a, **k: {"ok": True})
+    notified: list[str] = []
+    monkeypatch.setattr(telegram_outbound, "send_approval_notification", lambda approval: notified.append(approval.get("id")))
+    monkeypatch.setattr(
+        telegram_router,
+        "list_approval_requests",
+        lambda: [
+            {"id": "a1", "status": "needs_review", "after": {"campaign": {"id": "11", "name": "VSL Test"}}},
+            {"id": "a2", "status": "needs_review", "after": {"campaign": {"id": "11", "name": "VSL Test"}}},
+            {"id": "a3", "status": "needs_review", "after": {"campaign": {"id": "22", "name": "Other"}}},
+        ],
+    )
+    client = TestClient(app)
+    resp = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"from": {"id": 1, "username": "a"}, "message": {"chat": {"id": 1001}, "message_id": 7}, "data": "sug:c:11"}},
+    )
+    assert resp.status_code == 200
+    assert notified == ["a1", "a2"]  # campaign 22's suggestion is NOT sent
+
+
+def test_menu_alerts_picker_then_campaign_drill(monkeypatch):
+    import backend.monitoring_runner as monitoring_runner
+
+    sent = _open_bot(monkeypatch)
+    monkeypatch.setattr(telegram_outbound, "edit_message_text", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(
+        monitoring_runner,
+        "list_monitoring_alerts",
+        lambda **kw: [
+            {"id": "al1", "severity": "high", "title": "CPL spike", "campaignId": "11", "campaignName": "VSL Test", "recommendedActions": ["Lower bid"]},
+            {"id": "al2", "severity": "medium", "title": "CTR drop", "campaignId": "11", "campaignName": "VSL Test"},
+        ],
+    )
+    client = TestClient(app)
+    r1 = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"from": {"id": 1, "username": "a"}, "message": {"chat": {"id": 1001}}, "data": "menu:alerts"}},
+    )
+    assert r1.json()["menu"] == "alerts"
+    assert any("Alerts</b> (2)" in text for text, _ in sent)
+    r2 = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"from": {"id": 1, "username": "a"}, "message": {"chat": {"id": 1001}, "message_id": 8}, "data": "alr:c:11"}},
+    )
+    assert r2.json()["alerts"] == "11"
+
+
+def test_menu_pending_picker_then_campaign_drill(monkeypatch):
+    sent = _open_bot(monkeypatch)
+    monkeypatch.setattr(telegram_outbound, "edit_message_text", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(
+        telegram_router,
+        "list_approval_requests",
+        lambda: [
+            {"id": "a1", "status": "needs_review", "after": {"campaign": {"id": "11", "name": "VSL Test"}, "adsets": [{"name": "AS1"}]}},
+        ],
+    )
+    client = TestClient(app)
+    r1 = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"from": {"id": 1, "username": "a"}, "message": {"chat": {"id": 1001}}, "data": "menu:pending"}},
+    )
+    assert r1.json()["menu"] == "pending"
+    assert any("Pending Approvals</b> (1)" in text for text, _ in sent)
+    r2 = client.post(
+        "/api/telegram/command",
+        json={"callback_query": {"from": {"id": 1, "username": "a"}, "message": {"chat": {"id": 1001}, "message_id": 9}, "data": "apv:gc:11"}},
+    )
+    assert r2.json()["pending"] == "campaign" and r2.json()["campaign"] == "11"
 
 
 def test_question_routes_to_agentic_brain(monkeypatch):

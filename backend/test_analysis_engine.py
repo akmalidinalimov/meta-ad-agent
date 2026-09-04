@@ -3,12 +3,38 @@ from backend.analysis_engine import (
     action_value,
     analyze_interests,
     build_meta_analysis,
+    conversion_label,
+    count_conversion,
     finalize_metrics,
     quality_score,
     rank_audiences_for_next_campaign,
     summarize_overall,
 )
 from backend.dashboard_service import map_creative, map_metric_row
+
+
+def test_count_conversion_uses_the_campaigns_event_not_just_lead():
+    # A COMPLETE_REGISTRATION campaign reports its conversion under a non-`lead` action.
+    row = {
+        "actions": [
+            {"action_type": "landing_page_view", "value": "200"},
+            {"action_type": "offsite_complete_registration_add_meta_leads", "value": "30"},
+            {"action_type": "complete_registration", "value": "30"},  # same number, deduped via max
+        ]
+    }
+    assert count_conversion(row, "COMPLETE_REGISTRATION") == 30  # max over the registration group
+    assert count_conversion(row, "LEAD") == 0  # no `lead` action present
+    # Unknown/empty event → generic lead+registration fallback (here, the 30 registrations).
+    assert count_conversion(row, "") == 30
+
+
+def test_count_conversion_supports_custom_conversions_and_labels():
+    row = {"actions": [{"action_type": "offsite_conversion.custom.9988", "value": "12"}]}
+    assert count_conversion(row, "CUSTOM:9988") == 12
+    assert conversion_label("COMPLETE_REGISTRATION") == "Registration rate"
+    assert conversion_label("VIEW_CONTENT") == "View rate"
+    assert conversion_label("LEAD") == "Lead rate"
+    assert conversion_label("") == "Lead rate"  # default
 
 
 def test_map_creative_preserves_meta_attribution_and_media():
