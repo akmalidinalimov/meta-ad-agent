@@ -24,7 +24,6 @@ from .routers import agents as agents_router
 from .routers import auth as auth_router
 from .routers import approvals as approvals_router
 from .routers import campaigns as campaigns_router
-from .routers import capi as capi_router
 from .routers import crm as crm_router
 from .routers import dashboard as dashboard_router
 from .routers import funnel as funnel_router
@@ -197,8 +196,6 @@ _AUTH_PUBLIC_PATHS = {
     # ChatPlace bot webhook — authenticated by CHATPLACE_WEBHOOK_SECRET
     # (x-chatplace-secret header / `secret` body field), not a dashboard session.
     "/api/chatplace/events",
-    # ChatPlace Conversions API relay — same webhook secret as /api/chatplace/events.
-    "/api/capi/lead",
     # Landing-page funnel beacon — posted from end-user browsers, so it cannot
     # carry a dashboard session. It only appends anonymous funnel analytics events.
     "/api/funnel/events",
@@ -235,7 +232,6 @@ for module in (
     auth_router,
     planning_router,
     funnel_router,
-    capi_router,
     crm_router,
     campaigns_router,
     dashboard_router,

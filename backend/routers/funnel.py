@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from ..api_models import FunnelEventRequest
-from ..capi_bridge import remember_identity
 from ..chatplace_events import normalize_chatplace_event
 from ..funnel_events import build_funnel_summary, iter_funnel_events, save_funnel_event
 from ..funnel_history import (
@@ -28,7 +27,7 @@ router = APIRouter()
 
 
 @router.post("/api/funnel/events")
-def ingest_funnel_event(request: FunnelEventRequest, http_request: Request) -> dict[str, Any]:
+def ingest_funnel_event(request: FunnelEventRequest) -> dict[str, Any]:
     # Append-only. Do NOT compute build_funnel_summary() here: this is the highest-volume
     # endpoint (the landing tracker fires it constantly and ignores the response body), and
     # the summary re-reads + JSON-parses the ENTIRE ever-growing event log (twice). Doing
@@ -36,23 +35,7 @@ def ingest_funnel_event(request: FunnelEventRequest, http_request: Request) -> d
     # until the VM swap-thrashes (prod outage 2026-06-21). The summary is available on demand
     # at GET /api/funnel/summary.
     event = save_funnel_event(request.event)
-
-    # Same beacon also feeds the CAPI token bridge, so the landing page needs only one POST.
-    # Cheap by construction: an in-process dict plus one appended line — never a full-file
-    # reparse (see the note above on why that matters here).
-    payload = dict(request.event)
-    payload.setdefault("ip", _client_ip(http_request))
-    identity = remember_identity(payload)
-    return {"ok": True, "event": event, "identityStored": bool(identity)}
-
-
-def _client_ip(request: Request) -> str | None:
-    """Real client IP behind Cloudflare. client.host would be the proxy, which matches nothing."""
-    for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
-        value = request.headers.get(header)
-        if value:
-            return value.split(",")[0].strip()
-    return request.client.host if request.client else None
+    return {"ok": True, "event": event}
 
 
 @router.post("/api/chatplace/events")
